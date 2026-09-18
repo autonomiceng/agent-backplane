@@ -110,12 +110,21 @@ def drill():
                 print(json.dumps({'project': project, 'cycle': cycle, 'rtoSeconds': round(time.monotonic() - started, 3),
                                   'row': 'verified', 'login': 'verified', 'blob': 'verified', 'checkpoint': 'verified'}))
         finally:
-            command(compose + ['down', '--remove-orphans'])
-            command(['docker', 'volume', 'rm', *volumes])
-            command(['docker', 'run', '--rm', '--network', 'none', '--user', '0',
-                     '-v', f'{source}:/source', '-v', f'{recovery}:/recovery', '-v', f'{recovery_again}:/recovery-again',
-                     '--entrypoint', 'sh', postgres_image, '-ec',
-                     'chown -R "$1:$2" /source /recovery /recovery-again', 'sh', str(host_uid), str(host_gid)])
+            primary_error = sys.exc_info()[1]
+            cleanup_error = None
+            for label, args in [('compose down', compose + ['down', '--remove-orphans']),
+                                *((f'volume rm {volume}', ['docker', 'volume', 'rm', '--force', volume]) for volume in volumes),
+                                ('repository chown', ['docker', 'run', '--rm', '--network', 'none', '--user', '0',
+                                 '-v', f'{source}:/source', '-v', f'{recovery}:/recovery', '-v', f'{recovery_again}:/recovery-again',
+                                 '--entrypoint', 'sh', postgres_image, '-ec',
+                                 'chown -R "$1:$2" /source /recovery /recovery-again', 'sh', str(host_uid), str(host_gid)])]:
+                try:
+                    command(args)
+                except Exception as error:
+                    print(f'Drill cleanup failed ({label}): {error}', file=sys.stderr)
+                    cleanup_error = cleanup_error or error
+            if primary_error is None and cleanup_error is not None:
+                raise cleanup_error
         shutil.rmtree(root)
     except BaseException:
         print(f'Drill failed; retained disposable repository: {root}', file=sys.stderr)

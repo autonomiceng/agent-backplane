@@ -155,10 +155,14 @@ recover deleted object bytes.
 
 ## Upgrades
 
-When a migration takes exclusive locks, including 000028, 000030 and 000031, run
-`docker compose stop server` before `docker compose up -d --wait` with the same
-project, env file and overlays. The one-shot migration must finish before traffic
-resumes. Rolling upgrades are unsupported.
+When a migration takes exclusive locks, including 000028, 000030 and 000031, use the
+[reusable deployment Compose invocation](../../docs/operations/health.md) with the
+running deployment's project, env file, Compose files and profiles. Export
+`COMPOSE_PROJECT_NAME` for a custom project and follow the documented running-server
+guard before `deployment_compose stop server`, then run
+`deployment_compose up -d --build --wait`. Omit `--build` only when `BP_SERVER_IMAGE`
+names a prebuilt, already pulled image.
+The one-shot migration must finish before traffic resumes. Rolling upgrades are unsupported.
 
 Migration 000031 interprets existing timestamps without time zone as UTC; operators
 of independently managed clusters must verify that historical values, including
@@ -166,9 +170,15 @@ those written by `DEFAULT now()`, used UTC before upgrading.
 
 Existing project-managed volumes need an explicit cutover: set `BP_VOLUME_PREFIX`
 to their existing Compose prefix before preparing or upgrading. Confirm the rendered
-volume names with `docker compose --env-file .env config -q`; never substitute fresh
-volumes for an existing installation. Keep pre-image Checkpoints and their original
-server image separately; the new automatic image recovery requires a new Checkpoint.
+volume names using the same `deployment_compose` function:
+
+```sh
+deployment_compose config --format json | python3 -c 'import json, sys; print("\n".join(v["name"] for v in json.load(sys.stdin)["volumes"].values()))'
+```
+
+This prints only the resolved volume names. Never substitute fresh volumes for an
+existing installation. Keep pre-image Checkpoints and their original server image
+separately; the new automatic image recovery requires a new Checkpoint.
 
 The legacy wrappers and `bp restore-drill` require `BP_BACKUP_ADMIN_URL_FILE`, the
 path to an operator-owned regular file with no group or other permissions containing

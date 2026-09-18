@@ -16,8 +16,9 @@
 (operator-deny) {
 	@operator path_regexp (?i)^/+(health/+operations|metrics)\.*(/|$)
 	respond @operator 404
-	# The operator token unlocks readiness details only on the loopback server port.
-	request_header /health/ready -Authorization
+	# Public ingress strips the token; direct server access can unlock readiness details.
+	@ready path /health/ready /health/ready/*
+	request_header @ready -Authorization
 }
 
 :80 {
@@ -35,6 +36,10 @@ https://{$BP_PUBLIC_HOST} {
 
 	route {
 		import operator-deny
+		# Edge and server share default and external BP_PLATFORM_NETWORK; server resolves on both.
+		# Only server -> http://workerd:8080 is confined to default; platform peers reach server in plaintext.
+		# Plaintext upstreams require a trusted host and Docker peers (ADR-0021).
+		# Restrict Docker access and network membership; isolate untrusted peers or use authenticated HTTPS.
 		reverse_proxy server:3000 {
 			header_up -Forwarded
 			header_up -X-Forwarded-*

@@ -83,12 +83,17 @@ async function scenario() {
   const ready = await send(edge.origin, "/health/ready");
   assert.equal(ready.statusCode, 200); assert.equal(ready.headers["strict-transport-security"], "max-age=31536000");
   assert.equal(JSON.parse(await text(ready)).enrollment.state, "claimed", "enroll a User before acceptance");
+  for (const path of ["/health/ready", "/health/ready/"]) {
+    const response = await send(edge.origin, path, { authorization: `Bearer ${token}` });
+    assert.deepEqual({ status: response.statusCode, keys: Object.keys(JSON.parse(await text(response))).sort() },
+      { status: 200, keys: ["enrollment", "problems", "status"] }, `readiness details exposed: ${path}`);
+  }
   // Pass raw paths to node:http so the client cannot erase traversal before Caddy receives it.
   for (const path of ["/health/operations", "/metrics", "//health//operations/", "/METRICS/", "/health/%6fperations",
     "/health%2foperations", "/health/./operations", "/x/../metrics", "/x/%2e%2e/metrics", "/%6detrics?probe=1",
     "/health/operations.", "/health/operations%2e", "/metrics..", "/metrics%2e%2e/"]) {
     for (const origin of [httpOrigin, edge.origin]) {
-      const response = await send(origin, path, { authorization: `Bearer ${token}` });
+      const response = await send(origin, path, { authorization: origin === edge.origin ? `Bearer ${token}` : "Bearer public-http-decoy" });
       assert.equal(response.statusCode, 404, `operator path exposed: ${path}`);
       assert.equal(response.headers["strict-transport-security"], origin === edge.origin ? "max-age=31536000" : undefined);
       await text(response);
@@ -141,7 +146,7 @@ async function scenario() {
     const readyData = JSON.parse(initial.first.split("data: ")[1] ?? "");
     cursor = `v1:${workspace}:${readyData.generation}:${readyData.head}`;
     const end = performance.now() + 20_000;
-    for (;;) { const frame = await initial.frame(Math.max(1, end - performance.now())); if (frame === ": heartbeat") break; assert(!frame.startsWith("event: error")); }
+    for (;;) { const frame = await initial.frame(Math.max(1, end - performance.now())); if (frame === "event: heartbeat\ndata: {}") break; assert(!frame.startsWith("event: error")); }
     assert(performance.now() <= end, "Caddy buffered heartbeat");
     assert.equal(await streamCount(), baseline + 1);
   } finally { initial.close(); }

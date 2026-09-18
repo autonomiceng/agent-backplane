@@ -3,7 +3,7 @@
 `GET /health/ready` is the container readiness probe. `ready` (200) means the
 runtime role, PostgreSQL/PGMQ versions, schema and enrollment state allow the
 process to serve. `not_ready` (503) returns problem codes in `problems`. Public responses contain
-only `status` and `problems`; the detailed readiness document requires
+only `enrollment.state`, `status` and `problems`; the detailed readiness document requires
 `Authorization: Bearer $BP_OPERATIONS_TOKEN` on the same endpoint. To recover: restore
 database connectivity, apply pending migrations with the one-shot `migrate`
 service, repair enrollment, or restore the required pinned versions. An active restore gate reports `not_ready`; the server still accepts User
@@ -102,7 +102,29 @@ taken before a purge still contain those bytes. See
 valid Checkpoint manifest for this database identity. A missing manifest yields
 `NaN`, matching the other backup signals.
 
-Before upgrades whose migrations take exclusive locks (including 000028 and
-000030), run `docker compose stop server`, then `docker compose up -d --wait`
-with the same env file, project and overlays. This lets the migration one-shot
-finish before the server resumes traffic.
+Before upgrades whose migrations take exclusive locks (including 000028, 000030
+and 000031), reuse the deployment's original env file, project, Compose files and
+profiles for both commands. From the repository root, define the invocation once
+with those settings; this example includes the edge overlay. Export
+`COMPOSE_PROJECT_NAME` for a custom project, including when it is normally stored
+in the env file:
+
+```sh
+deployment_compose() {
+  docker compose --env-file .env --project-name "${COMPOSE_PROJECT_NAME:-agent-backplane}" \
+    -f compose.yaml -f compose.edge.yaml --profile edge "$@"
+}
+test -n "$(deployment_compose ps -q server)" || {
+  echo "wrong project/files: no running server" >&2
+  exit 1
+}
+deployment_compose stop server
+deployment_compose up -d --build --wait
+```
+
+Replace the example settings with the running deployment's settings, including
+every active overlay/profile (for core only, omit `-f compose.edge.yaml --profile edge`).
+The guard requires a running server in the selected project before stopping it.
+Source upgrades rebuild the image shared by migrations and server. Omit `--build`
+only when `BP_SERVER_IMAGE` names a prebuilt, already pulled image.
+The migration one-shot finishes before the server resumes traffic.
