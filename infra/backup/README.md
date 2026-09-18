@@ -166,8 +166,20 @@ volume names with `docker compose --env-file .env config -q`; never substitute f
 volumes for an existing installation. Keep pre-image Checkpoints and their original
 server image separately; the new automatic image recovery requires a new Checkpoint.
 
-The legacy wrappers require `BP_BACKUP_ADMIN_URL` in the process environment and
-accept `DATA_DIR BACKUP_DIR ARCHIVE_DIR PG_BIN_DIR` as positional arguments. Load
-the credential through the operator’s secret mechanism; keep it out of argv and
-shell history. Untrusted processes sharing the operator UID can read environment
-credentials; isolate those workloads under a separate UID or equivalent boundary.
+The legacy wrappers require `BP_BACKUP_ADMIN_URL_FILE`, the path to an operator-owned
+regular file with no group or other permissions containing the administrator URL.
+They accept `DATA_DIR BACKUP_DIR ARCHIVE_DIR PG_BIN_DIR` as positional arguments.
+Provision the file through the operator's secret manager, use mode `0600`, and
+remove it after the command finishes. Keep the URL out of argv, environment and
+shell history. Only the file path is inherited by Bun; recovery helpers receive
+an environment containing only `PATH` and `LANG`. Untrusted processes sharing the
+operator UID can still read its files, so isolate them under a separate UID.
+
+PostgreSQL uses its default `archive_timeout=0`; completed segments archive normally,
+and Checkpoint capture explicitly switches WAL through the named restore point.
+There is no timed database-only archival bound between Checkpoints. A one-minute
+forced switch can archive about 22.5 GiB/day of mostly empty 16 MiB segments under
+light activity. Configure a timed override only with an explicit recovery target
+and archive capacity budget. Use durable mounted backup storage, monitor archiver
+failures and free space, and repair retention causes through PostgreSQL. Never
+manually delete live `pg_wal` or acknowledge an archive copy that was not saved.

@@ -96,7 +96,7 @@ export function subscribeAudit(origin: string, workspaceId: string, runId: strin
     close();
     const reason = error instanceof StreamFailure ? error.reason : "transport_error";
     if (reason === "cursor_expired") dispatch({ type: "expired", epoch });
-    else if (["unauthorized", "workspace_forbidden", "invalid_input", "protocol_error", "event_too_large"].includes(reason)) {
+    else if (["unauthorized", "workspace_forbidden", "invocation_scope_forbidden", "invalid_input", "protocol_error", "event_too_large"].includes(reason)) {
       dispatch({ type: "failed", error: reason, epoch });
     } else {
       dispatch({ type: "disconnected", epoch });

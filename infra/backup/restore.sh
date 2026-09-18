@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# BP_BACKUP_ADMIN_URL is required in the environment.
+# BP_BACKUP_ADMIN_URL_FILE names an operator-owned mode 0600 credential file.
 # Arguments: DATA_DIR BACKUP_DIR ARCHIVE_DIR PG_BIN_DIR.
 set -euo pipefail
 script_root=$(cd "$(dirname "$0")/../.." && pwd)

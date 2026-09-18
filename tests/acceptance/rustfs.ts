@@ -352,10 +352,12 @@ async function orchestrate() {
     const pg = (...args: string[]) => compose("exec", "-T", "--user", "postgres", "postgres", ...args);
     const dataDir = (await pg("psql", "-U", "postgres", "-d", state.database, "-Atc", "SHOW data_directory")).trim();
     const binDir = (await pg("pg_config", "--bindir")).trim();
-    const url = `postgres://postgres:postgres@localhost:5432/${state.database}`;
-    await pg("/tmp/s33-bun", "/tmp/s33-recovery.ts", "backup", url, dataDir, "/tmp/s33-backup", "/backup/archive", binDir);
+    const recovery = (operation: string, directory: string) => pg("sh", "-ec",
+      `umask 077; file=$(mktemp); trap 'rm -f "$file"' EXIT; printf 'postgres://postgres:%s@localhost:5432/%s' "$POSTGRES_PASSWORD" "$1" > "$file"; export BP_BACKUP_ADMIN_URL_FILE="$file"; unset POSTGRES_PASSWORD; shift; "$@"`,
+      "sh", state.database, "/tmp/s33-bun", "/tmp/s33-recovery.ts", operation, directory, "/tmp/s33-backup", "/backup/archive", binDir);
+    await recovery("backup", dataDir);
     await compose("exec", "-T", "--user", "0", "postgres", "chown", "postgres:postgres", "/recovery");
-    await pg("/tmp/s33-bun", "/tmp/s33-recovery.ts", "restore", url, "/recovery/data", "/tmp/s33-backup", "/backup/archive", binDir);
+    await recovery("restore", "/recovery/data");
     await compose("stop", "postgres");
     await compose("up", "--detach", "--no-deps", "restored-postgres");
     for (let attempt = 0; ; attempt++) {
@@ -365,7 +367,11 @@ async function orchestrate() {
     await worker("--recovery");
     console.log("PASS 3: lost database acknowledgement destroys committed bytes or cleanup ignores recovery");
   } finally {
-    try { await compose("down", "--volumes", "--remove-orphans"); }
+    try { await compose("--profile", "*", "down", "--volumes", "--remove-orphans");
+      const remaining = await command(["docker", "ps", "-aq", "--filter", `label=com.docker.compose.project=${project}`], env);
+      assert.equal(remaining.code, 0); assert.equal(remaining.out.trim(), "", "acceptance containers survived cleanup");
+      const volumes = await command(["docker", "volume", "ls", "-q", "--filter", `label=com.docker.compose.project=${project}`], env);
+      assert.equal(volumes.code, 0); assert.equal(volumes.out.trim(), "", "acceptance volumes survived cleanup"); }
     finally { await rm(scratch, { recursive: true, force: true }); }
   }
 }

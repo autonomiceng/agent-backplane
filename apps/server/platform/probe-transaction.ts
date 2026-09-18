@@ -5,9 +5,10 @@ import type { Pool } from "./pool.ts";
 export async function probeTransaction<T>(pool: Pool, timeoutMs: number, read: (tx: TransactionSQL) => Promise<T>): Promise<T> {
   const controller = new AbortController();
   let connection: ReservedSQL | undefined;
+  let closing: Promise<void> | undefined;
   const timer = setTimeout(() => {
     controller.abort(new Error("probe_deadline"));
-    void connection?.close().catch(() => {});
+    closing = connection?.close().catch(() => {});
   }, timeoutMs);
   try {
     connection = await pool.reserve({ signal: controller.signal });
@@ -18,6 +19,7 @@ export async function probeTransaction<T>(pool: Pool, timeoutMs: number, read: (
     });
   } finally {
     clearTimeout(timer);
+    await closing;
     connection?.release();
   }
 }

@@ -36,8 +36,6 @@ services:
       - -c
       - archive_mode=on
       - -c
-      - archive_timeout=60s
-      - -c
       - archive_command=/backup-tools/archive.sh "%p" "%f" /backup/archive
     environment:
       POSTGRES_DB: backplane

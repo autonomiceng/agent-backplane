@@ -93,3 +93,20 @@ test("adapter reconnect loses the Workspace cursor, duplicates sources or events
     expect(probes).toHaveLength(2);
   } finally { unsubscribe(); jest.useRealTimers(); }
 });
+
+
+test("invocation scope denial ends streaming without retrying", async () => {
+  let calls = 0;
+  const published = Promise.withResolvers<TimelineState>();
+  const fetcher: typeof fetch = Object.assign(async () => {
+    calls++;
+    return Response.json({ error: "invocation_scope_forbidden" }, { status: 403 });
+  }, { preconnect: fetch.preconnect });
+  const unsubscribe = subscribeAudit("http://localhost", "workspace", "run", state => { if (state.error) published.resolve(state); },
+    { fetch: fetcher, EventSource: class extends EventTarget {} as unknown as typeof EventSource });
+  try {
+    expect((await published.promise).error).toBe("invocation_scope_forbidden");
+    await Bun.sleep(1100);
+    expect(calls).toBe(1);
+  } finally { unsubscribe(); }
+});

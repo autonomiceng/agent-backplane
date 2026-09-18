@@ -4,6 +4,7 @@ export async function* frames(body: ReadableStream<Uint8Array>) {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffered = "";
+  let primaryError = false;
   try {
     while (true) {
       const next = await reader.read();
@@ -20,7 +21,11 @@ export async function* frames(body: ReadableStream<Uint8Array>) {
             AuditPage["events"][number] & { head: string; generation: string; after: string } };
       }
     }
-  } finally { await reader.cancel(); }
+  } catch (error) { primaryError = true; throw error; }
+  finally {
+    try { await reader.cancel(); } catch (error) { if (!primaryError) throw error; }
+    finally { reader.releaseLock(); }
+  }
 }
 
 export async function nextFrame(stream: ReturnType<typeof frames>) {

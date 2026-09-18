@@ -94,6 +94,12 @@ test("Projection failure changes a committed Migration or prevents ledger-driven
     const last = await app.handle(new Request(`${url}?afterRevision=1`, { headers: { cookie: f.cookie } }));
     expect(await last.json()).toMatchObject({ currentRevision: 2, nextAfterRevision: null, migrations: [{ revision: 2 }] });
     expect((await app.handle(new Request(url, { headers: { cookie: f.cookie, authorization: "invalid" } }))).status).toBe(401);
+    const brokenApp = await testApp(f.pool, { migrationProjection: { project() { throw new Error("synchronous failure"); } } });
+    const unavailable = await brokenApp.handle(new Request(`${url}/projection`, {
+      method: "POST", headers: { cookie: f.cookie, origin: "http://localhost", "content-type": "application/json" }, body: "{}",
+    }));
+    expect(unavailable.status).toBe(503);
+    expect(await unavailable.json()).toEqual({ error: "projection_unavailable" });
   } finally {
     try { await f.pool.close(); } finally { await rm(directory, { recursive: true, force: true }); } }
 });

@@ -71,3 +71,13 @@ test("expired, foreign, malformed, or overflow cursors silently start a fresh su
     await must(zero.body).cancel();
   } finally { await pool.close(); }
 });
+
+
+test("frame parsing preserves the primary error when cancellation also fails", async () => {
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) { controller.enqueue(new TextEncoder().encode("data: invalid-json\n\n")); },
+    cancel() { throw new Error("cancel_failed"); },
+  });
+  await expect(frames(body).next()).rejects.toBeInstanceOf(SyntaxError);
+  expect(body.locked).toBe(false);
+});

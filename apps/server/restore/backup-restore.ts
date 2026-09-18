@@ -2,12 +2,15 @@
 // Direct SQL clients are an exception here: recovery runs before and outside the application pool.
 // The repository must be encrypted and replicated off-host by the operator, including continuous WAL.
 import { SQL } from "bun";
-import { cp, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { cp, open, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve, relative, sep } from "node:path";
 import { tmpdir } from "node:os";
 type Options = { adminUrl: string; dataDir: string; backupDir: string; archiveDir: string; binDir: string };
 type Snapshot = { systemId: string; timeline: number; postgres: string; schema: number; pgmq: string;
   heads: { workspaceId: string; head: string }[] };
+// Recovery helpers need no inherited database or provider credentials.
+const helperEnv = { PATH: Bun.env.PATH ?? "/usr/bin:/bin", LANG: "C" };
 const quote = (s: string) => `'${s.replaceAll("'", "'\\''")}'`;
 const setting = (s: string) => `'${s.replaceAll("\\", "\\\\").replaceAll("'", "''")}'`;
 async function canonicalPath(path: string): Promise<string> {
@@ -76,7 +79,7 @@ export async function backup(options: Options, afterCopy?: () => Promise<void>, 
     await waitFor(() => Bun.file(join(archiveDir, wal.segment)).exists());
     const manifest = { name, before, after, targetLsn: String(point.lsn), segment: String(wal.segment) };
     await writeFile(join(backupDir, "manifest.json"), JSON.stringify(manifest));
-    if (await Bun.spawn(["sync", "-f", backupDir]).exited) throw new Error("backup_sync_failed");
+    if (await Bun.spawn(["sync", "-f", backupDir], { env: helperEnv }).exited) throw new Error("backup_sync_failed");
     return manifest;
   } finally {
     if (started) await sql`SELECT pg_backup_stop(false)`.catch(() => {});
@@ -94,7 +97,7 @@ export async function restore(options: Options): Promise<{ epoch: string; active
   const connect = () => sql ??= new SQL({ username: decodeURIComponent(admin.username), database: decodeURIComponent(admin.pathname.slice(1)),
     path: join(socket, ".s.PGSQL.5432"), max: 1, connectionTimeout: 5 });
   const ctl = async (...args: string[]) => {
-    const child = Bun.spawn([join(binDir, "pg_ctl"), "-D", dataDir, "-w", "-t", "25", ...args], { stdout: "pipe", stderr: "pipe" });
+    const child = Bun.spawn([join(binDir, "pg_ctl"), "-D", dataDir, "-w", "-t", "25", ...args], { stdout: "pipe", stderr: "pipe", env: helperEnv });
     const [code, out, err] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
     if (code) throw new Error(`pg_ctl failed: ${out}${err}`);
   };
@@ -140,10 +143,21 @@ export async function restore(options: Options): Promise<{ epoch: string; active
 }
 if (import.meta.main) {
   const [command, dataDir, backupDir, archiveDir, binDir] = Bun.argv.slice(2);
-  // The operator must isolate this process from untrusted processes sharing its UID.
-  const adminUrl = Bun.env.BP_BACKUP_ADMIN_URL;
+  // Only a non-secret locator crosses argv/environment; the operator owns its lifecycle.
+  const credentialPath = Bun.env.BP_BACKUP_ADMIN_URL_FILE;
+  let adminUrl: string | undefined;
+  if (credentialPath) {
+    const file = await open(credentialPath, constants.O_RDONLY | constants.O_NOFOLLOW);
+    try {
+      const info = await file.stat();
+      if (!info.isFile() || info.uid !== process.getuid?.() || (info.mode & 0o077) !== 0 || info.size > 16384) {
+        throw new Error("backup_credential_file_must_be_private_and_owned");
+      }
+      adminUrl = (await file.readFile("utf8")).trim();
+    } finally { await file.close(); }
+  }
   if ((command !== "backup" && command !== "restore") || !adminUrl || !dataDir || !backupDir || !archiveDir || !binDir) {
-    throw new Error("usage: BP_BACKUP_ADMIN_URL required; backup|restore DATA_DIR BACKUP_DIR ARCHIVE_DIR PG_BIN_DIR");
+    throw new Error("usage: BP_BACKUP_ADMIN_URL_FILE required; backup|restore DATA_DIR BACKUP_DIR ARCHIVE_DIR PG_BIN_DIR");
   }
   const options = { adminUrl, dataDir: resolve(dataDir), backupDir: resolve(backupDir), archiveDir: resolve(archiveDir), binDir: resolve(binDir) };
   console.log(JSON.stringify(await (command === "backup" ? backup(options) : restore(options))));

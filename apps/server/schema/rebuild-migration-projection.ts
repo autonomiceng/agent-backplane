@@ -21,6 +21,8 @@ export async function rebuildMigrationProjection(pool: Pool, context: Extract<Ru
     logger.error({ ...context, stage: "request", error: "projection_unavailable" });
     return { ok: false, status: 503, error: "projection_unavailable" };
   }
-  return projection ? projection.project(context).catch(() => ({ ok: false, status: 503, error: "projection_unavailable" }))
-    : { ok: false, status: 503, error: "projection_unavailable" };
+  try {
+    if (projection) return await projection.project(context);
+  } catch { /* Projection failures share the declared unavailable response. */ }
+  return { ok: false, status: 503, error: "projection_unavailable" };
 }
