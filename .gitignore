@@ -1,0 +1,21 @@
+node_modules/
+dist/
+build/
+*.log
+.DS_Store
+.env
+.env.local
+data/
+.archive/
+
+# Agent scratch space
+.agents/
+.scratch/
+.devloop/
+.plans/
+
+.env.*
+!.env.example
+.claude/
+backups/
+__pycache__/
