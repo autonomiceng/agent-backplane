@@ -23,6 +23,8 @@
   },
   "include": [
     "apps",
-    "db"
+    "db",
+    "packages",
+    "infra/compose/validate-edge.ts"
   ]
 }

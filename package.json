@@ -7,10 +7,12 @@
   "scripts": {
     "check": "bun run typecheck && bun run lint",
     "typecheck": "tsc --noEmit",
-    "lint": "oxlint apps db",
+    "lint": "oxlint apps db packages infra/compose/validate-edge.ts",
     "test": "bun test --preload ./apps/server/testing/preload.ts",
     "test:integration": "bun run test",
-    "migrate": "bun db/migrate-cli.ts"
+    "migrate": "bun db/migrate-cli.ts",
+    "dev": "bun --watch apps/server/main.ts",
+    "dev:cluster": "bun apps/server/testing/dev-cluster.ts"
   },
   "devDependencies": {
     "@types/bun": "1.4.2",

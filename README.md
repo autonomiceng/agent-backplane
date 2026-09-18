@@ -2,9 +2,9 @@
 
 A self-hosted backend for AI agents.
 
-This stage contains the protected database schema, ordered migrations, PGMQ
-initialization SQL and migration verification tests. API capabilities follow in
-subsequent pull requests. This stage does not start an application listener.
+This stage provides the protected database and migrations, enrollment, human and
+Principal credentials, Workspaces, Runs, admission, health and operations endpoints.
+Queue, SQL, blob and dashboard capabilities follow in later pull requests.
 
 Use Bun 1.4.2, pinned in `mise.toml`:
 
@@ -14,7 +14,10 @@ bun run check
 bun run test
 ```
 
-Tests start a disposable embedded PostgreSQL cluster. Apply migrations to an
-explicitly selected database with `BP_ADMIN_DATABASE_URL` and `bun run migrate`.
-Read the [design](docs/DESIGN.md) and [decisions](docs/adr/) for the complete target
-architecture. PGMQ’s [license](infra/init/core/PGMQ-LICENSE) accompanies its SQL.
+Tests start a disposable embedded PostgreSQL cluster. Development requires a
+migrated database; `bun run dev:cluster` starts a disposable local database and
+prints its connection settings. Configure the server environment as described in
+[the design](docs/DESIGN.md), then run `bun run dev`.
+
+The [ADRs](docs/adr/) describe the complete target architecture. Deployment
+packaging follows after the API and clients. PGMQ’s license accompanies its SQL.
