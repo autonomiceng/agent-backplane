@@ -1,0 +1,25 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", ":pinDigests", "schedule:weekly"],
+  "enabledManagers": ["docker-compose", "dockerfile", "github-actions", "mise"],
+  "docker-compose": {
+    "managerFilePatterns": ["/^compose(?:\\.[^.]+)?\\.yaml$/"]
+  },
+  "dockerfile": {
+    "managerFilePatterns": ["/(^|/)[^/]*Dockerfile$/"]
+  },
+  "packageRules": [
+    {
+      "matchManagers": ["docker-compose", "dockerfile"],
+      "matchUpdateTypes": ["major"],
+      "groupName": null,
+      "labels": ["major", "needs-maintenance-window"]
+    },
+    {
+      "matchManagers": ["docker-compose", "dockerfile"],
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "groupName": "stack images"
+    }
+  ],
+  "automerge": false
+}

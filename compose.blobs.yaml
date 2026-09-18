@@ -1,0 +1,85 @@
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  blob-image-check:
+    image: ${BP_BLOB_BOOTSTRAP_IMAGE:?required digest-pinned server image}
+    profiles: [blobs]
+    entrypoint: ["bun", "/app/infra/init/blobs/bootstrap.js", "--images"]
+    restart: "no"
+    read_only: true
+    network_mode: none
+    environment: &pins
+      BP_RUSTFS_IMAGE: rustfs/rustfs:1.0.0@sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff
+      BP_BLOB_BOOTSTRAP_IMAGE: ${BP_BLOB_BOOTSTRAP_IMAGE:?required digest}
+
+  rustfs:
+    image: rustfs/rustfs:1.0.0@sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff
+    profiles: [blobs]
+    depends_on:
+      blob-image-check:
+        condition: service_completed_successfully
+    command: ["/data"]
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 2g
+    mem_reservation: 1g
+    environment:
+      RUSTFS_ACCESS_KEY: ${BP_RUSTFS_ROOT_USER:?required}
+      RUSTFS_SECRET_KEY: ${BP_RUSTFS_ROOT_PASSWORD:?required}
+      RUSTFS_ADDRESS: ":9000"
+      RUSTFS_CONSOLE_ENABLE: "false"
+    volumes:
+      - rustfs-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9000/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks: [blob-internal]
+
+  blob-bootstrap:
+    image: ${BP_BLOB_BOOTSTRAP_IMAGE:?required digest-pinned server image}
+    profiles: [blobs]
+    depends_on:
+      rustfs:
+        condition: service_healthy
+    entrypoint: ["bun", "/app/infra/init/blobs/bootstrap.js"]
+    restart: "no"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      <<: *pins
+      BP_RUSTFS_ROOT_USER: ${BP_RUSTFS_ROOT_USER:?required}
+      BP_RUSTFS_ROOT_PASSWORD: ${BP_RUSTFS_ROOT_PASSWORD:?required}
+      BP_BLOB_S3_BUCKET: ${BP_BLOB_S3_BUCKET:-backplane}
+      BP_BLOB_S3_ACCESS_KEY: ${BP_BLOB_S3_ACCESS_KEY:?required}
+      BP_BLOB_S3_SECRET_KEY: ${BP_BLOB_S3_SECRET_KEY:?required}
+    networks: [blob-internal]
+
+  server:
+    depends_on:
+      blob-bootstrap:
+        condition: service_completed_successfully
+    environment:
+      BP_BLOB_BACKEND: s3
+      BP_BLOB_S3_ENDPOINT: http://rustfs:9000
+      BP_BLOB_S3_REGION: us-east-1
+      BP_BLOB_S3_BUCKET: ${BP_BLOB_S3_BUCKET:-backplane}
+      BP_BLOB_S3_ACCESS_KEY: ${BP_BLOB_S3_ACCESS_KEY:?required}
+      BP_BLOB_S3_SECRET_KEY: ${BP_BLOB_S3_SECRET_KEY:?required}
+    networks: [default, blob-internal]
+
+networks:
+  blob-internal:
+    internal: true
+
+volumes:
+  rustfs-data:
+    external: true
+    name: ${BP_VOLUME_PREFIX:-agent-backplane}_rustfs-data

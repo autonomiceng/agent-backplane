@@ -1,0 +1,51 @@
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  server:
+    environment:
+      BP_PUBLIC_URL: ${BP_PUBLIC_URL:-${BP_AUTH_URL:-https://${BP_PUBLIC_HOST:-backplane.${BP_PUBLIC_DOMAIN:-localhost}}${BP_HTTPS_PORT:+:${BP_HTTPS_PORT}}}}
+
+  edge:
+    image: caddy:2.11.4@sha256:13ba145cba2f3e28fa801994876e4c086d1b95d5aa2a520a734765ffb6b12017
+    profiles: [edge]
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 256m
+    mem_reservation: 64m
+    depends_on:
+      server:
+        condition: service_healthy
+    environment:
+      # BP_PUBLIC_HOST and BP_EDGE_CA remain explicit overrides for one release.
+      BP_PUBLIC_HOST: ${BP_PUBLIC_HOST:-backplane.${BP_PUBLIC_DOMAIN:-localhost}}
+      BP_EDGE_CA: ${BP_EDGE_CA:-${BP_TLS_ISSUER:-none}}
+      BP_PUBLIC_URL: ${BP_PUBLIC_URL:-${BP_AUTH_URL:-https://${BP_PUBLIC_HOST:-backplane.${BP_PUBLIC_DOMAIN:-localhost}}${BP_HTTPS_PORT:+:${BP_HTTPS_PORT}}}}
+    ports:
+      - "${BP_EDGE_BIND_HOST:-${BP_BIND_HOST:-127.0.0.1}}:${BP_HTTP_PORT:-80}:80"
+      - "${BP_EDGE_BIND_HOST:-${BP_BIND_HOST:-127.0.0.1}}:${BP_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./infra/compose/Caddyfile:/etc/caddy/Caddyfile:ro
+      - edge-data:/data
+      - edge-config:/config
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    networks:
+      default:
+      platform:
+        aliases: [bp-gateway]
+
+volumes:
+  edge-data:
+    external: true
+    name: ${BP_VOLUME_PREFIX:-agent-backplane}_edge-data
+  edge-config:
+    external: true
+    name: ${BP_VOLUME_PREFIX:-agent-backplane}_edge-config

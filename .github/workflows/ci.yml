@@ -21,3 +21,4 @@ jobs:
       # Tests start embedded PostgreSQL; no service container is needed.
       # Docker acceptance scripts require a prepared deployment and run outside CI.
       - run: bun run test
+      - run: docker build -f infra/compose/server.Dockerfile .

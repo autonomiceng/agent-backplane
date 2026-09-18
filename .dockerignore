@@ -1,0 +1,17 @@
+node_modules/
+.git/
+.env*
+data/
+.archive/
+.backups/
+.scratch/
+.devloop/
+.agents/
+/dist/
+/tests/
+
+**/node_modules/
+apps/web/dist/
+
+backups/
+.claude/

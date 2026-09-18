@@ -1,0 +1,17 @@
+name: Feature request
+description: Describe a problem the backplane could help solve.
+body:
+  - type: textarea
+    id: pain
+    attributes:
+      label: The pain
+      description: What are you trying to do, and what gets in your way?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: The proposal
+      description: What change would help?
+    validations:
+      required: true

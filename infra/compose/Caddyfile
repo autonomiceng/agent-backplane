@@ -1,0 +1,46 @@
+{
+	auto_https disable_redirects
+	skip_install_trust
+}
+
+(ca-acme) {
+	tls {
+		issuer acme
+	}
+}
+
+(ca-internal) {
+	tls internal
+}
+
+(operator-deny) {
+	@operator path_regexp (?i)^/+(health/+operations|metrics)\.*(/|$)
+	respond @operator 404
+	# The operator token unlocks readiness details only on the loopback server port.
+	request_header /health/ready -Authorization
+}
+
+:80 {
+	route {
+		@health path /health
+		respond @health 200
+		import operator-deny
+		redir {$BP_PUBLIC_URL}{uri} 308
+	}
+}
+
+https://{$BP_PUBLIC_HOST} {
+	import ca-{$BP_EDGE_CA}
+	header Strict-Transport-Security "max-age=31536000"
+
+	route {
+		import operator-deny
+		reverse_proxy server:3000 {
+			header_up -Forwarded
+			header_up -X-Forwarded-*
+			header_up -X-Real-IP
+			header_up -CF-Connecting-IP
+			header_up -True-Client-IP
+		}
+	}
+}

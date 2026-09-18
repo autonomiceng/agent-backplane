@@ -1,0 +1,31 @@
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  server:
+    environment:
+      BP_COMPUTE_URL: http://workerd:8080
+      BP_COMPUTE_TOKEN: ${BP_COMPUTE_TOKEN:?required}
+      BP_WORKERD_DIGEST: ${BP_WORKERD_DIGEST:?required}
+  workerd:
+    image: ${BP_WORKERD_REPOSITORY:?required}@sha256:${BP_WORKERD_DIGEST:?required}
+    pull_policy: never
+    profiles: [compute]
+    entrypoint: ["/usr/bin/workerd"]
+    command: ["serve", "/compute/config.capnp", "--experimental"]
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      BP_COMPUTE_TOKEN: ${BP_COMPUTE_TOKEN:?required}
+    volumes:
+      - ./apps/server/compute/workerd:/compute:ro
+    read_only: true
+    user: "65534:65534"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 512m
+    mem_reservation: 128m
+    cpus: 1
