@@ -120,9 +120,16 @@ export async function backup(options: Options, afterCopy?: () => Promise<void>, 
     if (await Bun.spawn(["sync", "-f", backupDir], { env: helperEnv }).exited) throw new Error("backup_sync_failed");
     const temporary = join(backupDir, ".manifest.json.tmp");
     const file = await open(temporary, "wx", 0o600);
-    try { await file.writeFile(JSON.stringify(manifest)); await file.sync(); }
-    finally { await file.close(); }
-    await rename(temporary, join(backupDir, "manifest.json"));
+    try {
+      try { await file.writeFile(JSON.stringify(manifest)); await file.sync(); }
+      catch (error) { await file.close().catch(() => {}); throw error; }
+      await file.close();
+      await rename(temporary, join(backupDir, "manifest.json"));
+    } catch (error) {
+      // Only remove the temporary file created by this invocation; preserve its error.
+      await rm(temporary, { force: true }).catch(() => {});
+      throw error;
+    }
     const directory = await open(backupDir, constants.O_RDONLY | constants.O_DIRECTORY);
     try { await directory.sync(); } finally { await directory.close(); }
     return manifest;

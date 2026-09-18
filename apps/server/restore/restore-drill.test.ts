@@ -85,6 +85,10 @@ describe.serial("physical restore", () => {
     await expect(backup(blocked, undefined, () => mkdir(join(blocked.backupDir, ".manifest.json.tmp"))))
       .rejects.toThrow();
     expect(await Bun.file(join(blocked.backupDir, "manifest.json")).exists()).toBe(false);
+    const failedRename = { ...options, backupDir: join(root, "manifest-rename-failure") };
+    await expect(backup(failedRename, undefined, () => mkdir(join(failedRename.backupDir, "manifest.json"))))
+      .rejects.toThrow();
+    expect(await readdir(failedRename.backupDir)).not.toContain(".manifest.json.tmp");
     const complete = { ...options, backupDir: join(root, "manifest-complete") };
     const manifest = await backup(complete);
     expect(await Bun.file(join(complete.backupDir, "manifest.json")).json()).toEqual(manifest);

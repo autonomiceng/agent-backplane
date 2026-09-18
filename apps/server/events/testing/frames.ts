@@ -1,5 +1,13 @@
 import type { AuditPage } from "../read-audit-input.ts";
 
+async function closeReader(reader: ReadableStreamDefaultReader<Uint8Array>, primaryError: boolean) {
+  let failed = false;
+  let failure: unknown;
+  try { await reader.cancel(); } catch (error) { failed = true; failure = error; }
+  try { reader.releaseLock(); } catch (error) { if (!failed) { failed = true; failure = error; } }
+  if (failed && !primaryError) throw failure;
+}
+
 export async function* frames(body: ReadableStream<Uint8Array>) {
   const reader = body.getReader();
   const decoder = new TextDecoder();
@@ -22,10 +30,7 @@ export async function* frames(body: ReadableStream<Uint8Array>) {
       }
     }
   } catch (error) { primaryError = true; throw error; }
-  finally {
-    try { await reader.cancel(); } catch (error) { if (!primaryError) throw error; }
-    finally { reader.releaseLock(); }
-  }
+  finally { await closeReader(reader, primaryError); }
 }
 
 export async function nextFrame(stream: ReturnType<typeof frames>) {
