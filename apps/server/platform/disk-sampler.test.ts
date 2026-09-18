@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import { Elysia } from "elysia";
 import { createPool, poolLimit, poolSnapshot } from "./pool.ts";
 import { migratedDatabase } from "../testing/postgres.ts";
-import { principalFixture } from "../testing/session.ts";
+import { recoveryFixture } from "../testing/session.ts";
 import { operationsRoute } from "./operations-route.ts";
 import { readOperationsConfig } from "./operations.ts";
 import { PrincipalAdmission } from "./principal-admission.ts";
@@ -14,7 +14,7 @@ test("a live pool reports reservations and waiters and operations never returns 
   const reserved: Awaited<ReturnType<typeof pool.reserve>>[] = [];
   let queued: ReturnType<typeof pool.reserve> | undefined;
   try {
-    await principalFixture(pool);
+    await recoveryFixture(pool);
     await sampleDisk(pool); await sampleDisk(pool);
     for (let i=0; i<poolLimit; i++) reserved.push(await pool.reserve());
     queued = pool.reserve();

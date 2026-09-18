@@ -4,7 +4,8 @@ A self-hosted backend for AI agents.
 
 This stage provides the protected database and migrations, enrollment, human and
 Principal credentials, Workspaces, Runs, admission, health and operations endpoints.
-Queue, SQL, blob and dashboard capabilities follow in later pull requests.
+Queue delivery, Receipts, Effects, Reconciliation and audit reads are available.
+SQL, blob and dashboard capabilities follow in later pull requests.
 
 Use Bun 1.4.2, pinned in `mise.toml`:
 

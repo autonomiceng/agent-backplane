@@ -8,18 +8,22 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Elysia } from "elysia";
 import { adminUrl, migratedDatabase } from "../testing/postgres.ts";
-import { principalFixture, testApp } from "../testing/session.ts";
+import { advanceDeliveryClock, recoveryFixture, testApp } from "../testing/session.ts";
 import { PrincipalAdmission } from "./principal-admission.ts";
 import { operationsRoute } from "./operations-route.ts";
 import { readOperationsConfig } from "./operations.ts";
 
-test("Operator authentication or stale backup state is misreported", async () => {
+test("Stale backup and undetected expired leases appear healthy", async () => {
   const url=await migratedDatabase(), pool=new SQL({url,max:1}), admin=new SQL({url:adminUrl(url),max:1});
   const dir=await mkdtemp(join(tmpdir(),"bp-operations-"));
   try {
     await pool`SET statement_timeout = '7s'`;
     await pool`SET lock_timeout = '3s'`;
-    const fixture=await principalFixture(pool);
+    const fixture=await recoveryFixture(pool);
+    expect((await fixture.send("leased")).status).toBe(201);
+    const claimed=await fixture.claim(); expect(claimed.status).toBe(200);
+    const delivery=await claimed.json();
+    expect((await fixture.send("ready")).status).toBe(201);
     const [identity]=await admin`SELECT (pg_control_system()).system_identifier::text AS id,clock_timestamp() AS now`;
     const manifest=join(dir,"manifest.json"), snapshot={systemId:identity.id,timeline:1,postgres:"180000",schema:23,pgmq:"1",heads:[]};
     await writeFile(manifest,JSON.stringify({name:`bp_${"a".repeat(32)}`,before:snapshot,after:snapshot,targetLsn:"0/1",segment:"000000010000000000000001"}));
@@ -36,14 +40,23 @@ test("Operator authentication or stale backup state is misreported", async () =>
     const response=await request(first,"/health/operations"), body=await response.json();
     expect(response.status).toBe(503); expect(body.backup.ageSeconds.status).toBe("stale");
     expect(body.codes).toContain("backup_stale"); expect(body.codes).not.toContain("queue_expiry_stale");
+    expect(body.queues[0].counts.value.ready).toBe("1");
     const metrics=await (await request(first,"/metrics")).text();
     expect(metrics).toContain('bp_signal_status{signal="backup.ageSeconds",status="stale"} 1');
+    expect(metrics).toContain(`bp_queue_deliveries{workspace_id="${fixture.workspaceId}",state="ready"} 1`);
     expect(await state()).toEqual(before);
+    await advanceDeliveryClock(admin,{workspaceId:fixture.workspaceId,principalId:fixture.principalId,runId:fixture.runId},delivery.deliveryId,"leased");
     const [clock]=await admin`SELECT clock_timestamp() AS now`; await utimes(manifest,clock.now,clock.now);
-    const refreshed=await (await request(app(),"/health/operations")).json();
-    expect(refreshed.backup.ageSeconds.status).toBe("ok");
-    expect(refreshed.codes).not.toContain("backup_stale");
-    expect(await state()).toEqual(before);
+    const expired=await state(), second=app(), expiryResponse=await request(second,"/health/operations"), expiry=await expiryResponse.json();
+    expect(expiryResponse.status).toBe(503); expect(expiry.backup.ageSeconds.status).toBe("ok");
+    expect(expiry.codes).toContain("queue_expiry_stale"); expect(expiry.codes).not.toContain("backup_stale");
+    expect(expiry.queues[0].expiredLeases.value).toBe("1");
+    const expiryMetrics=await (await request(second,"/metrics")).text();
+    expect(expiryMetrics).toContain(`bp_queue_expired_leases{workspace_id="${fixture.workspaceId}"} 1`);
+    expect(expiryMetrics).toContain('bp_operations_status{status="degraded"} 1');
+    expect(await state()).toEqual(expired);
+    expect(expiry.global.queues.expiredLeases.value).toBe("1");
+    expect(expiryMetrics).toContain("bp_global_queue_expired_leases 1\n");
     const settings=async()=> (await pool`SELECT current_setting('statement_timeout') AS statement,current_setting('lock_timeout') AS lock,current_setting('transaction_read_only') AS readonly`)[0];
     expect(await settings()).toEqual({statement:"7s",lock:"3s",readonly:"off"});
     await admin.begin(async tx=>{
