@@ -3,6 +3,11 @@
 import type { Enrollment } from "./auth/enrollment.ts";
 import { enrollmentRoute } from "./auth/enrollment-route.ts";
 import { stripForwardedHeaders } from "./platform/forwarded-headers.ts";
+import { invokeFunctionRoute } from "./compute/invoke-function-route.ts";
+import { computeRoutes } from "./compute/compute-routes.ts";
+import type { ComputeLauncher } from "./compute/compute-launcher.ts";
+import { blobRoutes } from "./blobs/blob-routes.ts";
+import type { BlobStore } from "./blobs/blob-store.ts";
 import { operationsRoute } from "./platform/operations-route.ts";
 import type { OperationsConfig } from "./platform/operations.ts";
 import { PrincipalAdmission, principalAdmission } from "./platform/principal-admission.ts";
@@ -46,6 +51,8 @@ export type AppDeps = {
   enrollment: Enrollment;
   pool: Pool; expectedSchemaVersion: number; auth: Auth; authUrl: string;
   migrationProjection?: MigrationProjection;
+  compute?: ComputeLauncher | undefined;
+  blobStore?: BlobStore;
   operations?: OperationsConfig;
   insecureOrigin?: boolean;
 };
@@ -68,7 +75,8 @@ export function createApp(deps: AppDeps) {
     .use(listPrincipalsRoute(pool, auth, authUrl))
     .use(setQuotasRoute(pool, auth, authUrl))
     .use(createRunRoute(pool))
-    .use(readAuditRoute(pool, auth));
+    .use(readAuditRoute(pool, auth))
+    .use(blobRoutes(pool, auth, authUrl, deps.blobStore));
   const queue = new Elysia()
     .use(createQueueRoute(pool))
     .use(sendMessageRoute(pool))
@@ -92,6 +100,8 @@ export function createApp(deps: AppDeps) {
     .use(listMigrationsRoute(pool, auth))
     .use(rebuildMigrationProjectionRoute(pool, auth, authUrl, deps.migrationProjection));
   const governance = new Elysia()
+    .use(computeRoutes(pool, auth, authUrl, deps.compute))
+    .use(invokeFunctionRoute(pool, deps.compute))
     .use(approvalRoutes(pool, auth, authUrl))
     .use(reconciliationRoutes(pool, auth, authUrl));
   return new Elysia().onRequest(({ request }) => {

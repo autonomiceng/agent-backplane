@@ -41,7 +41,7 @@ async function session(app: App, email: string, verb: string): Promise<string> {
 }
 
 // Shared app wiring explicitly permits identity-only outsiders after first-User enrollment.
-export async function testApp(pool: Pool, deps: Pick<AppDeps, "migrationProjection" | "operations"> = {}): Promise<App> {
+export async function testApp(pool: Pool, deps: Pick<AppDeps, "blobStore" | "compute" | "migrationProjection" | "operations"> = {}): Promise<App> {
   const dataDir = await mkdtemp(join(tmpdir(), "bp-enrollment-fixture-"));
   // Register in the calling test file: imported module hooks only run for their first file.
   afterAll(async () => {
@@ -58,8 +58,8 @@ export async function testApp(pool: Pool, deps: Pick<AppDeps, "migrationProjecti
 }
 
 // Credential scenarios provision their Workspace and Principal through authenticated HTTP routes.
-export async function principalFixture(pool: Pool) {
-  const app = await testApp(pool);
+export async function principalFixture(pool: Pool, deps: Pick<AppDeps, "blobStore"> = {}) {
+  const app = await testApp(pool, deps);
   const cookie = await signUp(app, "credentials@example.com");
   const workspaceResponse = await app.handle(new Request("http://localhost/api/v1/workspaces", {
     method: "POST", headers: { cookie, origin: "http://localhost", "content-type": "application/json" }, body: JSON.stringify({ name: "Research" }),

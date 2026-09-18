@@ -7,7 +7,7 @@
   "scripts": {
     "check": "bun run typecheck && bun run lint",
     "typecheck": "tsc --noEmit",
-    "lint": "oxlint apps db packages infra/compose/validate-edge.ts",
+    "lint": "oxlint apps db packages tests infra/compose/validate-edge.ts",
     "test": "bun test --preload ./apps/server/testing/preload.ts",
     "test:integration": "bun run test",
     "migrate": "bun db/migrate-cli.ts",

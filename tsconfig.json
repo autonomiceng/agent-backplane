@@ -25,6 +25,7 @@
     "apps",
     "db",
     "packages",
-    "infra/compose/validate-edge.ts"
+    "infra/compose/validate-edge.ts",
+    "tests"
   ]
 }

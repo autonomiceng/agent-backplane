@@ -1,0 +1,13 @@
+# Compute runtime release gate
+
+No upstream workerd image digest was verified. **Release is blocked until an operator validates the runtime image.** S30 neither builds nor pulls an image. The operator must load the validated image into the local Docker image store under the configured repository and digest before enabling compute; `pull_policy: never` prevents Compose from fetching it. The overlay requires `BP_WORKERD_REPOSITORY`, a bare 64-character SHA-256 `BP_WORKERD_DIGEST`, and `BP_COMPUTE_TOKEN`; enable it together with the compute profile. The core profile omits the overlay and leaves `BP_COMPUTE_URL` unset.
+
+Validate image provenance, publisher, immutable digest, host architecture, `/usr/bin/workerd`, and support for `serve --experimental`, Worker Loader, `enable_ctx_exports`, `Check` RPC, and custom global outbound bindings. Run the deployment attribution scenario against that pinned container, including compilation failure, initializer timeout, restart/eviction, redirect rejection, private-address rejection, and cross-Workspace egress rejection. A project-packaged binary image requires an explicit ADR-0009 exception before release.
+
+The authenticated control endpoint is internal and publishes no port. Preparation imports the bundle in a child with empty bindings and no outbound access; it never invokes the submitted fetch handler. The compatibility date is `2026-01-01`. Both server and loader hash the identical trusted Check source into the fixed configuration tuple. Keep those sources synchronized when changing the wrapper.
+
+S31 must recover manifests from committed active deployments and bind Egress via `ctx.exports.Egress({ props: { workspaceId, urls: outboundUrls } })`. The designated API origin is `http://server:3000`; only `/api/v1/workspaces/<workspaceId>/` paths pass. External access permits exact normalized declared HTTPS URLs over workerd's public-only network. Children receive no disk, loader, raw network, or API bindings. Invocation and credential binding are outside S30.
+
+Workerd is not a hardened sandbox. Hostile code requires stronger isolation. The server deadline does not terminate workerd CPU execution; validate container resource limits and failure recovery.
+
+Runtime behavior references: [Worker Loader API](https://developers.cloudflare.com/dynamic-workers/api-reference/), [egress control](https://developers.cloudflare.com/dynamic-workers/usage/egress-control/), [upstream sandbox limitation](https://github.com/cloudflare/workerd#warning-workerd-is-not-a-hardened-sandbox).

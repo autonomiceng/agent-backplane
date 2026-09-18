@@ -1,6 +1,9 @@
 // Process entry. The only file that reads the environment and opens resources.
 // Refuses to listen on an incompatible cluster (ADR-0014); readiness keeps answering after start for outages.
+import { join } from "node:path";
 import { diskSampler } from "./platform/disk-sampler.ts";
+import { createComputeLauncher } from "./compute/compute-launcher.ts";
+import { createBlobStore } from "./blobs/blob-storage.ts";
 import { readOperationsConfig } from "./platform/operations.ts";
 import { loadMigrations } from "../../db/migrations.ts";
 import { createEnrollment } from "./auth/enrollment.ts";
@@ -13,6 +16,8 @@ import { createMigrationProjection } from "./schema/migration-projection.ts";
 
 const config = readConfig(Bun.env);
 if (Bun.env.BP_AUTH_URL) console.warn("BP_AUTH_URL is deprecated; use BP_PUBLIC_URL");
+const compute = createComputeLauncher({ url: Bun.env.BP_COMPUTE_URL, token: Bun.env.BP_COMPUTE_TOKEN, runtimeDigest: Bun.env.BP_WORKERD_DIGEST, timeoutMs: Bun.env.BP_COMPUTE_TIMEOUT_MS });
+const blobStore = createBlobStore(Bun.env, config.dataDir);
 const migrations = await loadMigrations(new URL("../../db/migrations", import.meta.url).pathname);
 const expectedSchemaVersion = migrations.at(-1)?.version ?? 0;
 const pool = createPool(config.databaseUrl);
@@ -28,8 +33,8 @@ const enrollment = createEnrollment(pool, config);
 await enrollment.prepare();
 const auth = createAuth(pool, config);
 const migrationProjection = createMigrationProjection(pool, config.dataDir, console, Bun.which("git", { PATH: Bun.env.PATH ?? "" }));
-const app = createApp({ enrollment, pool, expectedSchemaVersion, auth, authUrl: config.publicOrigin, insecureOrigin: config.insecureOrigin, migrationProjection, operations: readOperationsConfig(Bun.env) }).listen(config.port);
-const stopDisk = diskSampler(pool);
+const app = createApp({ enrollment, pool, expectedSchemaVersion, auth, authUrl: config.publicOrigin, insecureOrigin: config.insecureOrigin, migrationProjection, compute, blobStore, operations: readOperationsConfig(Bun.env) }).listen(config.port);
+const stopDisk = diskSampler(pool, Bun.env.BP_BLOB_BACKEND === "s3" ? undefined : join(config.dataDir, "blobs"));
 console.log(`agent-backplane listening on :${config.port}`);
 
 const shutdown = async () => {
