@@ -35,7 +35,7 @@ const enrollment = createEnrollment(pool, config);
 await enrollment.prepare();
 const auth = createAuth(pool, config);
 const migrationProjection = createMigrationProjection(pool, config.dataDir, console, Bun.which("git", { PATH: Bun.env.PATH ?? "" }));
-const app = createApp({ enrollment, pool, expectedSchemaVersion, auth, authUrl: config.publicOrigin, insecureOrigin: config.insecureOrigin, migrationProjection, compute, blobStore, operations: readOperationsConfig(Bun.env) }).listen(config.port);
+const app = createApp({ production: Bun.env.NODE_ENV === "production", enrollment, pool, expectedSchemaVersion, auth, authUrl: config.publicOrigin, insecureOrigin: config.insecureOrigin, migrationProjection, compute, blobStore, operations: readOperationsConfig(Bun.env) }).listen(config.port);
 const stopDisk = diskSampler(pool, Bun.env.BP_BLOB_BACKEND === "s3" ? undefined : join(config.dataDir, "blobs"));
 const stopPurge = scheduledPurge(pool, purgeInterval, blobStore);
 console.log(`agent-backplane listening on :${config.port}`);

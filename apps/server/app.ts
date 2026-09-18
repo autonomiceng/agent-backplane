@@ -12,6 +12,7 @@ import { operationsRoute } from "./platform/operations-route.ts";
 import type { OperationsConfig } from "./platform/operations.ts";
 import { PrincipalAdmission, principalAdmission } from "./platform/principal-admission.ts";
 import { setQuotasRoute } from "./platform/set-quotas-route.ts";
+import { dashboardRoutes } from "./dashboard/dashboard-routes.ts";
 import { openapiPlugin } from "./openapi-plugin.ts";
 import { Elysia } from "elysia";
 import type { Auth } from "./auth/auth.ts";
@@ -51,6 +52,7 @@ import { releaseRoute } from "./queue/release-route.ts";
 import { executeTransactionRoute } from "./tx/execute-transaction-route.ts";
 
 export type AppDeps = {
+  production?: boolean;
   enrollment: Enrollment;
   pool: Pool; expectedSchemaVersion: number; auth: Auth; authUrl: string;
   migrationProjection?: MigrationProjection;
@@ -109,7 +111,8 @@ export function createApp(deps: AppDeps) {
     .use(computeRoutes(pool, auth, authUrl, deps.compute))
     .use(invokeFunctionRoute(pool, deps.compute))
     .use(approvalRoutes(pool, auth, authUrl))
-    .use(reconciliationRoutes(pool, auth, authUrl));
+    .use(reconciliationRoutes(pool, auth, authUrl))
+    .use(dashboardRoutes(new URL("../web/dist/", import.meta.url), deps.production));
   return new Elysia().onRequest(({ request }) => {
     stripForwardedHeaders(request.headers);
   }).use(platform).use(queue).use(schema).use(governance);

@@ -2,17 +2,18 @@
   "name": "agent-backplane",
   "private": true,
   "workspaces": [
-    "apps/server"
+    "apps/*"
   ],
   "scripts": {
-    "check": "bun run typecheck && bun run lint",
+    "check": "bun run typecheck && bun run lint && bun run build:web",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint apps db packages tests infra/compose/validate-edge.ts",
     "test": "bun test --preload ./apps/server/testing/preload.ts",
     "test:integration": "bun run test",
     "migrate": "bun db/migrate-cli.ts",
     "dev": "bun --watch apps/server/main.ts",
-    "dev:cluster": "bun apps/server/testing/dev-cluster.ts"
+    "dev:cluster": "bun apps/server/testing/dev-cluster.ts",
+    "build:web": "bun run --filter @backplane/web build"
   },
   "devDependencies": {
     "@types/bun": "1.4.2",
@@ -21,7 +22,8 @@
     "typescript": "7.0.2"
   },
   "trustedDependencies": [
-    "@embedded-postgres/linux-x64"
+    "@embedded-postgres/linux-x64",
+    "esbuild"
   ],
   "dependencies": {
     "drizzle-orm": "0.45.2"

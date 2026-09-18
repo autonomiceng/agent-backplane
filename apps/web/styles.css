@@ -1,0 +1,17 @@
+:root { font-family: system-ui, sans-serif; color: #1e293b; background: #f8fafc; }
+body { margin: 0; }
+header { padding: 1rem 2rem; border-bottom: 1px solid #cbd5e1; background: white; }
+main { max-width: 64rem; margin: 2rem auto; padding: 0 1.5rem; }
+a { color: #1d4ed8; }
+h1 { font-size: 1.5rem; }
+ol { list-style: none; padding: 0; }
+li { padding: 1rem; margin: 1rem 0; border: 1px solid #cbd5e1; border-radius: .4rem; background: white; }
+time { display: inline-block; margin-left: .5rem; }
+p, pre { overflow-wrap: anywhere; }
+pre { white-space: pre-wrap; }
+summary, button { cursor: pointer; }
+form { max-width: 24rem; }
+label { display: block; margin: 1rem 0; }
+input { display: block; box-sizing: border-box; width: 100%; padding: .6rem; margin-top: .3rem; }
+button { padding: .6rem 1rem; }
+[role="alert"] { color: #991b1b; }

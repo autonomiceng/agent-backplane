@@ -1,51 +1,59 @@
 import { expect, test } from "bun:test";
 import { approvalFixture } from "./testing/session.ts";
 import type { ApprovalsPage } from "./list-approvals-input.ts";
-import type { decideResponse } from "./decide-input.ts";
+import { createApprovalInbox } from "../../web/client/approval-inbox.ts";
+import { renderApprovalInbox, renderApprovalRoute } from "../../web/testing/render-approval-inbox.tsx";
 
-test("stale decisions or cursor scope bypass Approval API checks", async () => {
+test("a stale or already-decided Approval appears successful in the inbox", async () => {
   const f = await approvalFixture();
+  let client: ReturnType<typeof createApprovalInbox> | undefined;
   try {
     const staleClaim = await f.claimed("stale"), stale = await f.request(staleClaim);
     const decidedClaim = await f.claimed("decided"), decided = await f.request(decidedClaim);
     const freshClaim = await f.claimed("fresh"), fresh = await f.request(freshClaim);
-    const listUrl = `${f.baseUrl}/approvals`;
-    const readPage = async (query = "?limit=2", headers: Record<string, string> = f.userHeaders) => {
-      const response = await f.app.handle(new Request(`${listUrl}${query}`, { headers }));
-      expect(response.status).toBe(200);
-      expect(response.headers.get("cache-control")).toBe("no-store");
-      return await response.json() as ApprovalsPage;
-    };
-    const first = await readPage();
-    expect(first.items.map(item => item.id)).toEqual([stale.id, decided.id]);
-    expect(first.items[0]).toMatchObject({ requestedBy: f.principalId, requestedRunId: f.runId,
+    const fetcher: typeof fetch = Object.assign(async (input: string | URL | Request, init?: RequestInit) => {
+      const request = new Request(input, init); request.headers.set("cookie", f.cookie);
+      return f.app.handle(request);
+    }, { preconnect: fetch.preconnect });
+    client = createApprovalInbox("http://localhost", f.workspaceId, fetcher, 2);
+    await client.refresh();
+    expect(client.getSnapshot().error).toBeNull();
+    expect(client.getSnapshot().items.map((item) => item.id)).toEqual([stale.id, decided.id]);
+    expect(client.getSnapshot().items[0]).toMatchObject({ requestedBy: f.principalId, requestedRunId: f.runId,
       expired: false, target: { kind: "message", queue: f.queue, messageId: staleClaim.messageId, deliveryId: staleClaim.deliveryId } });
-    const cursor = first.nextCursor;
+    const cursor = client.getSnapshot().nextCursor;
     expect(cursor).not.toBeNull();
-    if (cursor === null) throw new Error("Approval cursor missing");
-    const principalPage = await readPage("?limit=2", { authorization: f.headers.authorization });
-    expect(principalPage.items).toEqual(first.items);
-    const next = await readPage(`?limit=2&after=${encodeURIComponent(cursor)}`);
-    expect(next.items.map(item => item.id)).toEqual([fresh.id]);
-    expect(next.nextCursor).toBeNull();
-    expect((await readPage()).items).toEqual(first.items);
-
+    const listUrl = `${f.baseUrl}/approvals`;
+    const principalPage = await f.app.handle(new Request(`${listUrl}?limit=2`, { headers: { authorization: f.headers.authorization } }));
+    expect(principalPage.status).toBe(200);
+    expect(principalPage.headers.get("cache-control")).toBe("no-store");
+    expect((await principalPage.json() as ApprovalsPage).items).toEqual(client.getSnapshot().items);
+    await client.next();
+    expect(client.getSnapshot().items.map((item) => item.id)).toEqual([fresh.id]);
+    expect(client.getSnapshot().nextCursor).toBeNull();
+    await client.previous();
     expect((await f.call(`/deliveries/${staleClaim.deliveryId}/release`, {}, f.userHeaders)).status).toBe(201);
     expect((await f.decide(decided.id)).status).toBe(200);
-    const [staleResponse, decidedResponse] = await Promise.all([
-      f.decide(stale.id), f.decide(decided.id),
-    ]);
-    expect(staleResponse.status).toBe(409);
-    expect(await staleResponse.json()).toEqual({ error: "approval_stale" });
-    expect(decidedResponse.status).toBe(409);
-    expect(await decidedResponse.json()).toEqual({ error: "approval_decided" });
-    const refreshed = await readPage();
-    expect(refreshed.items.map(item => item.id)).toEqual([stale.id, fresh.id]);
-    const approved = await f.decide(fresh.id);
-    expect(approved.status).toBe(200);
-    const result = await approved.json() as typeof decideResponse.static;
+    client.reason(stale.id, "reviewed");
+    client.reason(decided.id, "reviewed");
+    await Promise.all([client.decide(stale.id, "approve"), client.decide(decided.id, "approve")]);
+    expect(client.getSnapshot().submissions[stale.id]).toMatchObject({ phase: "failed", status: 409, error: "approval_stale", result: null });
+    expect(client.getSnapshot().submissions[decided.id]).toMatchObject({ phase: "failed", status: 409, error: "approval_decided", result: null });
+    await client.refresh();
+    expect(renderApprovalInbox(client)).toContain("failed: 409 approval_stale");
+    expect(renderApprovalInbox(client)).toContain("failed: 409 approval_decided");
+    expect(renderApprovalInbox(client)).not.toContain("200: approve");
+    expect(client.getSnapshot().reasons[stale.id]).toBe("reviewed");
+    expect(client.getSnapshot().items.some((item) => item.id === decided.id)).toBe(false);
+    client.reason(fresh.id, "reviewed");
+    await client.decide(fresh.id, "approve");
+    const result = client.getSnapshot().submissions[fresh.id]?.result;
     expect(result).toMatchObject({ id: fresh.id, decision: "approve" });
-    expect(result.releasedDeliveryId).toBeString();
+    expect(result?.releasedDeliveryId).toBeString();
+    const markup = renderApprovalInbox(client);
+    expect(markup).toContain("200: approve");
+    expect(markup).toContain(result?.releasedDeliveryId ?? "missing Delivery");
+    expect(markup).toContain("failed: 409 approval_decided");
     const [user] = await f.pool<{ id: string }[]>`SELECT id FROM control."user"`;
     if (!user || !result?.releasedDeliveryId) throw new Error("Decision attribution or released Delivery missing");
     expect(await f.pool<{ id: string; user_id: string | null; principal_id: string | null; run_id: string | null }[]>`SELECT objects[1] AS id, user_id, principal_id, run_id FROM audit.events
@@ -66,5 +74,9 @@ test("stale decisions or cursor scope bypass Approval API checks", async () => {
     expect(noFallback.status).toBe(401);
     const forbidden = await f.app.handle(new Request(`http://localhost/api/v1/workspaces/${crypto.randomUUID()}/approvals`, { headers: f.userHeaders }));
     expect(forbidden.status).toBe(403);
-  } finally { await f.close(); }
+    const dashboard = await f.app.handle(new Request(`http://localhost/dashboard/workspaces/${f.workspaceId}/approvals`));
+    expect(dashboard.status).toBe(200);
+    expect(await dashboard.text()).toContain("/dashboard/assets/");
+    expect(renderApprovalRoute(f.workspaceId)).toContain("Loading Approvals");
+  } finally { client?.dispose(); await f.close(); }
 });
