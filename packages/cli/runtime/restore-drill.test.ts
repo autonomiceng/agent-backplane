@@ -90,7 +90,10 @@ process.exit(await Bun.spawn([${JSON.stringify(join(cluster.binDir, "pg_ctl"))},
     const failure = await restoreDrill(args("broken-backup"), env, async (manifest) => {
       await rm(join(archiveDir, manifest.segment));
     });
-    expect(failure).toMatchObject({ success: false, error: "pg_ctl_failed" });
+    expect(failure).toMatchObject({ success: false });
+    // Hot standby may briefly become ready before recovery discovers missing WAL.
+    // The failure can therefore arrive from pg_ctl or the subsequent connection.
+    expect(["pg_ctl_failed", "restore_drill_failed"]).toContain("error" in failure ? failure.error : "");
     expect(await pool<{ active: boolean }[]>`SELECT active FROM control.restore_gate`).toEqual([{ active: false }]);
     expect(stdout + JSON.stringify(failure)).not.toContain(adminUrl(url));
   } finally {
