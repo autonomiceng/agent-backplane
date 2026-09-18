@@ -1,5 +1,5 @@
 // Production telemetry must distinguish observable health from a missing backup or a saturated pool.
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { Elysia } from "elysia";
 import { createPool, poolLimit, poolSnapshot } from "./pool.ts";
 import { migratedDatabase } from "../testing/postgres.ts";
@@ -7,6 +7,9 @@ import { recoveryFixture } from "../testing/session.ts";
 import { operationsRoute } from "./operations-route.ts";
 import { readOperationsConfig } from "./operations.ts";
 import { PrincipalAdmission } from "./principal-admission.ts";
+import * as fs from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { sampleDisk } from "./disk-sampler.ts";
 
 test("a live pool reports reservations and waiters and operations never returns unknown", async () => {
@@ -63,4 +66,27 @@ test("global disk sampling needs no Workspace and a held lock writes no sample o
     expect(await pool`SELECT FROM control.runs`).toHaveLength(0);
     expect(await pool`SELECT FROM audit.events`).toHaveLength(0);
   } finally { await pool.close(); }
+});
+
+test("a blob removed during sampling leaves a valid sample and the next sample sees its replacement", async () => {
+  const pool = createPool(await migratedDatabase());
+  const dir = await fs.mkdtemp(join(tmpdir(), "bp-disk-race-")), path = join(dir, "blob");
+  const lstat = fs.lstat;
+  await fs.writeFile(path, "blob");
+  const race = spyOn(fs, "lstat").mockImplementationOnce(async () => {
+    await fs.unlink(path);
+    await lstat(path);
+    throw new Error("removed blob still exists");
+  });
+  try {
+    await sampleDisk(pool, dir);
+    race.mockRestore();
+    const [first] = await pool`SELECT database_bytes::float8 AS database, blob_bytes::int AS blob FROM control.disk_samples ORDER BY observed_at DESC LIMIT 1`;
+    expect(first.database).toBeGreaterThan(0);
+    expect(first.blob).toBe(0);
+    await fs.writeFile(path, "replacement");
+    await sampleDisk(pool, dir);
+    const [second] = await pool`SELECT blob_bytes::int AS blob FROM control.disk_samples ORDER BY observed_at DESC LIMIT 1`;
+    expect(second.blob).toBe(Buffer.byteLength("replacement"));
+  } finally { race.mockRestore(); await pool.close(); await fs.rm(dir, { recursive: true, force: true }); }
 });

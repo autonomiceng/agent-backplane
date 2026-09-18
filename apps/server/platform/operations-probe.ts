@@ -5,6 +5,7 @@ import { constants } from "node:fs";
 import { join, dirname } from "node:path";
 import { getSchemaValidator } from "elysia";
 import type { Pool } from "./pool.ts";
+import { probeTransaction } from "./probe-transaction.ts";
 import { databaseSchema, snapshotSchema, type Facts, type OperationsConfig, type Telemetry } from "./operations.ts";
 const record = (v: unknown): v is Record<string,unknown> => typeof v==="object" && v!==null && !Array.isArray(v);
 async function backupManifest(dir: string | undefined, systemId: string | undefined, signal: AbortSignal): Promise<Facts["backup"]> {
@@ -68,46 +69,27 @@ export function operationsProbe(pool: Pool, config: OperationsConfig, enrollment
     if (cache && performance.now()-cache.started<5000) return cache;
     if (inFlight) return inFlight;
     const started=performance.now(), empty={ snapshot:null,database:null,backup:null,telemetry:null,started,clockAt:started };
-    let expired=false;
-    const pending = new Set<{ cancel(): unknown }>();
-    const gather=async () => {
-      const connection=await pool.reserve();
-      const run=async <T>(query: import("bun").SQLQuery<T>) => {
-        if (expired) throw new Error("operations_deadline");
-        pending.add(query); try { return await query; } finally { pending.delete(query); }
-      };
-      try {
-        if (expired) return empty;
-        try {
-          await run(connection`BEGIN READ ONLY`);
-          await run(connection`SET LOCAL statement_timeout = '2000ms'`);
-          await run(connection`SET LOCAL lock_timeout = '250ms'`);
-          const [a]=await run(connection<{ value: unknown }[]>`SELECT queue.operational_snapshot() AS value`);
-          const [b]=await run(connection<{ value: unknown }[]>`SELECT control.operational_database() AS value`);
-          const [telemetry] = await run(connection<Telemetry[]>`
-            SELECT pg_database_size(current_database())::float8 AS "databaseBytes",
-              (SELECT blob_bytes::float8 FROM control.disk_samples ORDER BY observed_at DESC LIMIT 1) AS "blobBytes",
-              (SELECT observed_at::text FROM control.disk_samples ORDER BY observed_at DESC LIMIT 1) AS "diskAt",
-              (SELECT CASE WHEN count(*)<2 THEN NULL ELSE
-                ((array_agg(database_bytes+blob_bytes ORDER BY observed_at DESC))[1]-(array_agg(database_bytes+blob_bytes ORDER BY observed_at))[1])::float8
-                  / greatest(extract(epoch FROM max(observed_at)-min(observed_at)),1) END FROM control.disk_samples) AS growth,
-              (SELECT max(occurred_at)::text FROM audit.events) AS "newestEvent",
-              (SELECT max(occurred_at)::text FROM audit.events WHERE kind='retention.purged') AS "lastPurge"`);
-          const clockAt=performance.now();
-          const parse=(v: unknown): unknown => typeof v==="string" ? JSON.parse(v) : v;
-          const snapshot=parse(a?.value), database=parse(b?.value);
-          if (!snapshotValid(snapshot) || !databaseValid(database)) return empty;
-          return { snapshot,database,backup:null,telemetry: telemetry ?? null,started,clockAt };
-        } finally {
-          // Cleanup must finish even after the probe deadline cancels a query.
-          await connection`ROLLBACK`.catch(async (error: unknown)=>{ await connection.close(); throw error; });
-        }
-      } finally { connection.release(); }
-    };
-    let timer: ReturnType<typeof setTimeout>;
-    const deadline=new Promise<typeof empty>(resolve=>{ timer=setTimeout(()=>{ expired=true; for (const query of pending) query.cancel(); resolve(empty); },3000); });
-    const sql=gather().catch(()=>empty);
-    const work=Promise.race([sql,deadline]).then(async sample=>{
+    const gather=() => probeTransaction(pool, 3000, async connection => {
+      await connection`SET LOCAL statement_timeout = '2000ms'`;
+      await connection`SET LOCAL lock_timeout = '250ms'`;
+      const [a]=await connection<{ value: unknown }[]>`SELECT queue.operational_snapshot() AS value`;
+      const [b]=await connection<{ value: unknown }[]>`SELECT control.operational_database() AS value`;
+      const [telemetry] = await connection<Telemetry[]>`
+        SELECT pg_database_size(current_database())::float8 AS "databaseBytes",
+          (SELECT blob_bytes::float8 FROM control.disk_samples ORDER BY observed_at DESC LIMIT 1) AS "blobBytes",
+          (SELECT observed_at::text FROM control.disk_samples ORDER BY observed_at DESC LIMIT 1) AS "diskAt",
+          (SELECT CASE WHEN count(*)<2 THEN NULL ELSE
+            ((array_agg(database_bytes+blob_bytes ORDER BY observed_at DESC))[1]-(array_agg(database_bytes+blob_bytes ORDER BY observed_at))[1])::float8
+              / greatest(extract(epoch FROM max(observed_at)-min(observed_at)),1) END FROM control.disk_samples) AS growth,
+          (SELECT max(occurred_at)::text FROM audit.events) AS "newestEvent",
+          (SELECT max(occurred_at)::text FROM audit.events WHERE kind='retention.purged') AS "lastPurge"`;
+      const clockAt=performance.now();
+      const parse=(v: unknown): unknown => typeof v==="string" ? JSON.parse(v) : v;
+      const snapshot=parse(a?.value), database=parse(b?.value);
+      if (!snapshotValid(snapshot) || !databaseValid(database)) return empty;
+      return { snapshot,database,backup:null,telemetry: telemetry ?? null,started,clockAt };
+    });
+    const work=gather().catch(()=>empty).then(async sample=>{
       if (!sample.database) return sample;
       const controller=new AbortController();
       let fileTimer: ReturnType<typeof setTimeout> | undefined;
@@ -117,10 +99,8 @@ export function operationsProbe(pool: Pool, config: OperationsConfig, enrollment
         return {...sample,backup};
       } finally { clearTimeout(fileTimer); }
     });
-    const response=work.then(value=>{ cache=value; return value; });
+    const response=work.then(value=>{ cache=value; return value; }).finally(()=>{ inFlight=undefined; });
     inFlight=response;
-    void sql.finally(()=>clearTimeout(timer));
-    void Promise.all([sql,response]).finally(()=>{ inFlight=undefined; });
     return response;
   };
   return async () => ({ ...await sample(), enrollment: await enrollment?.observe() ?? { state: "unknown", capabilityFile: null, observedAt: null },

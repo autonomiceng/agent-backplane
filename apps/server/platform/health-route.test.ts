@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { testApp } from "../testing/session.ts";
 import { adminUrl, emptyDatabase, migratedDatabase } from "../testing/postgres.ts";
-import { createPool, type Pool } from "./pool.ts";
+import { createPool, poolSnapshot, type Pool } from "./pool.ts";
 import { readOperationsConfig } from "./operations.ts";
 import type { Readiness } from "./readiness.ts";
 
@@ -44,3 +44,31 @@ describe("GET /health/ready", () => {
     expect(body).toMatchObject({ status: "ready", postgres: { major: 18 }, pgmq: { compatible: true, version: "1.12.0" } });
   });
 });
+
+test("concurrent readiness requests share one probe and refresh a completed failure after the cache TTL", async () => {
+  const url = await migratedDatabase(), pool = createPool(url), admin = createPool(adminUrl(url));
+  pools.push(pool, admin);
+  const app = await testApp(pool);
+  const request = () => app.handle(new Request("http://localhost/health/ready"));
+  await admin.begin(async tx => {
+    await tx`LOCK TABLE control.schema_version IN ACCESS EXCLUSIVE MODE`;
+    const pending = Array.from({ length: 6 }, () => request());
+    const deadline = performance.now() + 1000;
+    while (performance.now() < deadline) {
+      const [blocked] = await admin`SELECT count(*)::int AS n FROM pg_stat_activity
+        WHERE datname = current_database() AND usename = 'bp_server' AND wait_event_type = 'Lock'`;
+      if (blocked.n > 0) break;
+      await Bun.sleep(10);
+    }
+    expect(poolSnapshot(pool)).toEqual({ inUse: 1, waiting: 0 });
+    const responses = await Promise.all(pending);
+    expect(responses.map(response => response.status)).toEqual([503, 503, 503, 503, 503, 503]);
+    expect(poolSnapshot(pool)).toEqual({ inUse: 0, waiting: 0 });
+    for (const response of responses) expect((await response.json()).problems).toContain("database_unavailable");
+  });
+  const cached = await request();
+  expect(cached.status).toBe(503);
+  expect(cached.headers.get("cache-control")).toBe("no-store");
+  await Bun.sleep(1100);
+  expect((await request()).status).toBe(200);
+}, 10000);

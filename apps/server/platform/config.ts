@@ -47,8 +47,9 @@ export function readConfig(env: Record<string, string | undefined>): Config {
   if (!databaseUrl) throw new ConfigError("BP_DATABASE_URL is required");
   const authSecret = env.BP_AUTH_SECRET;
   if (!authSecret) throw new ConfigError("BP_AUTH_SECRET is required");
+  if (authSecret.length < 32) throw new ConfigError("BP_AUTH_SECRET must be at least 32 characters");
   const port = Number(env.BP_PORT ?? 3000);
-  if (!Number.isInteger(port) || port <= 0) throw new ConfigError("BP_PORT must be a positive integer");
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) throw new ConfigError("BP_PORT must be an integer between 1 and 65535");
   const signup = env.BP_SIGNUP ?? "closed";
   if (signup !== "closed" && signup !== "open") throw new ConfigError("BP_SIGNUP must be closed or open");
   const publicOrigin = resolvePublicOrigin(env, `http://localhost:${port}`);

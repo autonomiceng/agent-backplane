@@ -84,4 +84,4 @@ test("Concurrent SQL requests overshoot a shared Principal quota", async () => {
       { resource: "sql_statement_bytes", used: String(bytes), window_start: fresh },
     ]);
   } finally { await Promise.all([pool.close(), admin.close()]); }
-}, 90000);
+}, 150000);

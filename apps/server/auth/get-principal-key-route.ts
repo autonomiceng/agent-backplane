@@ -10,7 +10,8 @@ import { validationError } from "./validation-error.ts";
 export function getPrincipalKeyRoute(pool: Pool, auth: Auth, authUrl: string) {
   return new Elysia({ name: "get-principal-key" }).use(userSession(auth, authUrl)).get(
     "/api/v1/workspaces/:workspaceId/principals/:principalId/keys",
-    async ({ user, params, status }) => {
+    async ({ user, params, status, set }) => {
+      set.headers["cache-control"] = "no-store";
       const result = await queryPrincipalKeyMetadata(pool, user.id, params.workspaceId, params.principalId);
       if (!result.ok) {
         if (result.reason === "workspace_forbidden") return status(403, { error: result.reason });
@@ -39,7 +40,7 @@ export function getPrincipalKeyRoute(pool: Pool, auth: Auth, authUrl: string) {
       error: validationError,
       mapResponse({ response }) {
         // Elysia maps a bare null to an empty body; the contract requires a JSON null.
-        if (response === null) return Response.json(null);
+        if (response === null) return Response.json(null, { headers: { "cache-control": "no-store" } });
       },
       detail: { "x-backplane-auth": "user", "x-backplane-run": "none", operationId: "getPrincipalKey", tags: ["auth"] },
     },

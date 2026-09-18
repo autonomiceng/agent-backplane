@@ -10,7 +10,7 @@ export function userSession(auth: Auth, authUrl: string) {
         if (request.method === "GET" || request.method === "HEAD") return;
         const origin = request.headers.get("origin");
         const contentType = request.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase();
-        if ((origin !== trustedOrigin && (origin !== null || request.headers.has("cookie"))) || contentType !== "application/json") {
+        if ((origin !== trustedOrigin && (origin !== null || request.headers.has("cookie"))) || (request.body !== null && contentType !== "application/json")) {
           return status(403, { error: "origin_forbidden" });
         }
       },

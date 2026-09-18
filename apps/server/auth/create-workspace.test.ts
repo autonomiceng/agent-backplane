@@ -5,7 +5,7 @@ import { adminUrl, migratedDatabase } from "../testing/postgres.ts";
 import { testApp, signUp } from "../testing/session.ts";
 import type { Workspace } from "./create-workspace.ts";
 
-test("Workspace creation loses User provenance or persists an overlong name", async () => {
+test("Workspace creation preserves User provenance and audits a rolled-back infrastructure failure", async () => {
   const url = await migratedDatabase();
   const pool = createPool(url);
   const admin = createPool(adminUrl(url));
@@ -36,6 +36,19 @@ test("Workspace creation loses User provenance or persists an overlong name", as
     expect(count?.n).toBe(1);
     const [auditCount] = await pool`SELECT count(*)::int AS n FROM audit.events`;
     expect(auditCount?.n).toBe(1);
+    await admin.begin(async tx => {
+      await tx`LOCK TABLE control.workspaces IN ACCESS EXCLUSIVE MODE`;
+      const failed = await app.handle(new Request("http://localhost/api/v1/workspaces", {
+        method: "POST", headers: { origin: "http://localhost", cookie, "content-type": "application/json" },
+        body: JSON.stringify({ name: "Locked" }),
+      }));
+      expect(failed.status).toBe(503);
+      expect(await failed.json()).toEqual({ error: "workspace_creation_failed" });
+    });
+    const [failure] = await pool`SELECT workspace_id, user_id, reason, sqlstate FROM audit.rejections WHERE reason = 'workspace_creation_failed'`;
+    expect(failure).toMatchObject({ user_id: user.id, reason: "workspace_creation_failed", sqlstate: "55P03" });
+    expect(await pool`SELECT id FROM control.workspaces WHERE id = ${failure.workspace_id}`).toHaveLength(0);
+    expect(await pool`SELECT FROM audit.events WHERE workspace_id = ${failure.workspace_id}`).toHaveLength(0);
     await withRunContext(pool, { workspaceId: workspace.id, userId: user.id }, async (tx) => {
       await tx`DELETE FROM control.member WHERE "userId" = ${user.id}`;
     });
@@ -44,7 +57,7 @@ test("Workspace creation loses User provenance or persists an overlong name", as
     }));
     expect(forbidden.status).toBe(403);
     expect(await forbidden.json()).toEqual({ error: "workspace_forbidden" });
-    const rejections = await pool`SELECT workspace_id, user_id, kind, objects, reason, sqlstate FROM audit.rejections`;
+    const rejections = await pool`SELECT workspace_id, user_id, kind, objects, reason, sqlstate FROM audit.rejections WHERE reason = 'workspace_forbidden'`;
     expect(rejections).toHaveLength(1);
     expect(rejections[0]).toMatchObject({
       user_id: user.id, kind: "workspace.created", objects: [], reason: "workspace_forbidden", sqlstate: null,

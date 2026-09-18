@@ -4,6 +4,7 @@ import { enrollmentState, signupSchema } from "../auth/enrollment-input.ts";
 import { Elysia, t } from "elysia";
 import type { Pool } from "./pool.ts";
 import { probeReadiness } from "./readiness-probe.ts";
+import type { Readiness } from "./readiness.ts";
 import { originDiagnostic } from "./readiness.ts";
 
 const readinessSchema = t.Object({
@@ -19,6 +20,17 @@ const readinessSchema = t.Object({
 
 // GET /health/ready answers 200 when the server may serve and 503 with the reasons when it may not.
 export function healthRoute(pool: Pool, expectedSchemaVersion: number, enrollment: Enrollment, insecureOrigin = false, token?: string) {
+  let cached: { value: Readiness; at: number } | undefined;
+  let inFlight: Promise<Readiness> | undefined;
+  const readiness = () => {
+    // Bootstrap retries immediately after enrollment; never reuse a pending observation.
+    if (cached && cached.value.enrollment.state !== "pending" && performance.now() - cached.at < 1000) return Promise.resolve(cached.value);
+    inFlight ??= probeReadiness(pool, expectedSchemaVersion, enrollment).then(value => {
+      cached = { value, at: performance.now() };
+      return value;
+    }).finally(() => { inFlight = undefined; });
+    return inFlight;
+  };
   const hash = (value: string) => createHash("sha256").update(value).digest();
   // The public form: enrollment state (the CLI bootstrap polls it before any credential exists), status and problem codes.
   const publicSchema = t.Pick(readinessSchema, ["enrollment", "status", "problems"]);
@@ -27,11 +39,11 @@ export function healthRoute(pool: Pool, expectedSchemaVersion: number, enrollmen
     "/health/ready",
     async ({ set, request }) => {
       set.headers["cache-control"] = "no-store";
-      const readiness = originDiagnostic(await probeReadiness(pool, expectedSchemaVersion, enrollment), insecureOrigin);
-      if (readiness.status !== "ready") set.status = 503;
+      const result = originDiagnostic(await readiness(), insecureOrigin);
+      if (result.status !== "ready") set.status = 503;
       const supplied = request.headers.get("authorization")?.match(/^Bearer (.+)$/)?.[1] ?? "";
-      if (token && timingSafeEqual(hash(token), hash(supplied))) return readiness;
-      const problems = readiness.problems.map(problem => {
+      if (token && timingSafeEqual(hash(token), hash(supplied))) return result;
+      const problems = result.problems.map(problem => {
         if (/^[a-z_]+$/.test(problem)) return problem;
         if (problem.startsWith("database unavailable:")) return "database_unavailable";
         if (problem.startsWith("runtime role")) return "runtime_role_invalid";
@@ -43,8 +55,8 @@ export function healthRoute(pool: Pool, expectedSchemaVersion: number, enrollmen
         if (problem.startsWith("schema version")) return "schema_version_incompatible";
         return "restore_gate_unavailable";
       });
-      if (readiness.restoreGate && !problems.includes("database_unavailable")) problems.push("restore_gated");
-      return { enrollment: { state: readiness.enrollment.state }, status: readiness.status, problems: [...new Set(problems)] };
+      if (result.restoreGate && !problems.includes("database_unavailable")) problems.push("restore_gated");
+      return { enrollment: { state: result.enrollment.state }, status: result.status, problems: [...new Set(problems)] };
     },
     { response: { 200: responseSchema, 503: responseSchema }, detail: { "x-backplane-auth": "none", "x-backplane-run": "none", operationId: "healthReady", tags: ["health"] } },
   );

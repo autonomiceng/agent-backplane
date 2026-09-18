@@ -4,6 +4,7 @@ import { APIError } from "better-auth/api";
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { Config } from "../platform/config.ts";
 import type { Pool } from "../platform/pool.ts";
+import { probeTransaction } from "../platform/probe-transaction.ts";
 import { capabilityPath, enrollmentFile, removeEnrollmentFile } from "./enrollment-file.ts";
 import { EnrollmentFailure, enrollFirstUser, type EnrollmentBarrier } from "./enroll-first-user.ts";
 import type { EnrollmentInput, enrollmentState } from "./enrollment-input.ts";
@@ -15,7 +16,7 @@ export function createEnrollment(pool: Pool, config: Pick<Config, "dataDir" | "p
   let observation: Promise<EnrollmentObservation> | undefined;
   const signup = { configured: config.signup, effective: signupPolicy(config.signup, isPublicOrigin(config.publicOrigin)) };
   const publicSignup = signup.configured === "open" && signup.effective === "closed";
-  const facts = async (tx: import("bun").TransactionSQL): Promise<EnrollmentState> => {
+  const facts = async (tx: import("bun").SavepointSQL): Promise<EnrollmentState> => {
     if ((await tx`SELECT singleton FROM control.enrollment`).length) return "claimed";
     return (await tx`SELECT id FROM control."user" LIMIT 1`).length ? "recovery_required" : "pending";
   };
@@ -31,21 +32,18 @@ export function createEnrollment(pool: Pool, config: Pick<Config, "dataDir" | "p
         });
       } catch { failed = true; }
     },
-    async observe(): Promise<EnrollmentObservation> {
+    async observe(tx?: import("bun").TransactionSQL): Promise<EnrollmentObservation> {
       const unknown: EnrollmentObservation = { state: "unknown", capabilityFile: null, observedAt: null };
-      try {
-        observation ??= pool.begin(async (tx) => {
-          await tx`SET LOCAL statement_timeout = '2s'`;
-          const fact = await facts(tx);
-          const state = fact !== "pending" ? fact : failed ? "recovery_required" : hash ? "pending" : "unknown";
-          const [clock] = await tx<{ now: Date }[]>`SELECT clock_timestamp() AS now`;
-          if (!clock) return unknown;
-          return { state, capabilityFile: state === "pending" ? path : null, observedAt: clock.now.toISOString() };
-        }).catch(() => unknown).finally(() => { observation = undefined; });
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        const deadline = new Promise<EnrollmentObservation>(resolve => { timer = setTimeout(() => resolve(unknown), 2500); });
-        return await Promise.race([observation, deadline]).finally(() => clearTimeout(timer));
-      } catch { return unknown; }
+      const read = async (tx: import("bun").SavepointSQL): Promise<EnrollmentObservation> => {
+        const fact = await facts(tx);
+        const state = fact !== "pending" ? fact : failed ? "recovery_required" : hash ? "pending" : "unknown";
+        const [clock] = await tx<{ now: Date }[]>`SELECT clock_timestamp() AS now`;
+        if (!clock) return unknown;
+        return { state, capabilityFile: state === "pending" ? path : null, observedAt: clock.now.toISOString() };
+      };
+      if (tx) return tx.savepoint(read).catch(() => unknown);
+      observation ??= probeTransaction(pool, 2500, read).catch(() => unknown).finally(() => { observation = undefined; });
+      return observation;
     },
     async enroll(input: EnrollmentInput): Promise<{ status: 201; userId: string } | { status: 400 | 403 | 409 | 503; error: string }> {
       const valid = timingSafeEqual(digest(input.capability), hash ?? Buffer.alloc(32));

@@ -28,6 +28,8 @@ export async function createWorkspace(pool: Pool, userId: string, name: string):
       await recordRejection(pool, { context, kind: "workspace.created", objects: [], reason: "workspace_forbidden", sqlstate: null });
       return { ok: false, reason: "workspace_forbidden" };
     }
+    const sqlstate = typeof error === "object" && error !== null && "errno" in error && typeof error.errno === "string" ? error.errno : null;
+    await recordRejection(pool, { context, kind: "workspace.created", objects: [], reason: "workspace_creation_failed", sqlstate });
     return { ok: false, reason: "workspace_creation_failed" };
   }
 }

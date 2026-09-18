@@ -14,7 +14,13 @@ async function directoryBytes(path: string, signal: AbortSignal): Promise<number
     signal.throwIfAborted();
     const child = join(path, entry.name);
     if (entry.isDirectory()) bytes += await directoryBytes(child, signal);
-    else if (entry.isFile()) bytes += (await lstat(child)).size;
+    else if (entry.isFile()) {
+      const stat = await lstat(child).catch((error: unknown) => {
+        if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
+        throw error;
+      });
+      bytes += stat?.size ?? 0;
+    }
   }
   return bytes;
 }

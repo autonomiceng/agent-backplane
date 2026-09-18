@@ -14,6 +14,7 @@ test("plaintext key storage leaks credential material into rows, audit metadata 
     const empty = await app.handle(new Request(url, { headers: { cookie } }));
     expect(empty.status).toBe(200);
     expect(await empty.json()).toBeNull();
+    expect(empty.headers.get("cache-control")).toBe("no-store");
     const response = await app.handle(new Request(url, { method: "POST", headers: { origin: "http://localhost", cookie, "content-type": "application/json" } }));
     expect(response.status).toBe(201);
     expect(response.headers.get("cache-control")).toBe("no-store");
@@ -24,6 +25,7 @@ test("plaintext key storage leaks credential material into rows, audit metadata 
     expect(rows).toEqual([{ hash }]);
     const metadata = await app.handle(new Request(url, { headers: { cookie } }));
     expect(metadata.status).toBe(200);
+    expect(metadata.headers.get("cache-control")).toBe("no-store");
     expect(await metadata.json()).toEqual({
       prefix: credential.prefix, createdAt: credential.createdAt, rotatedAt: null, lastUsedAt: null, revokedAt: null,
     });
