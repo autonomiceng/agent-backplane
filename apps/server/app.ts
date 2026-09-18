@@ -22,6 +22,8 @@ import { healthRoute } from "./platform/health-route.ts";
 import type { Pool } from "./platform/pool.ts";
 import { createRunRoute } from "./runs/create-run-route.ts";
 import { readAuditRoute } from "./events/read-audit-route.ts";
+import { retentionRoutes } from "./retention/retention-routes.ts";
+import { streamAuditRoute } from "./events/stream-audit-route.ts";
 import { createQueueRoute } from "./queue/create-queue-route.ts";
 import { sendMessageRoute } from "./queue/send-message-route.ts";
 import { getMessageRoute } from "./queue/get-message-route.ts";
@@ -43,6 +45,7 @@ import { beginEffectRoute } from "./queue/begin-effect-route.ts";
 import { holdRoute } from "./queue/hold-route.ts";
 import { approvalRoutes } from "./approvals/approval-routes.ts";
 import { reconciliationRoutes } from "./queue/reconciliation-routes.ts";
+import { restoreRoutes } from "./restore/restore-routes.ts";
 import { releaseRoute } from "./queue/release-route.ts";
 
 import { executeTransactionRoute } from "./tx/execute-transaction-route.ts";
@@ -74,9 +77,12 @@ export function createApp(deps: AppDeps) {
     .use(principalCredentialRoutes(pool, auth, authUrl))
     .use(listPrincipalsRoute(pool, auth, authUrl))
     .use(setQuotasRoute(pool, auth, authUrl))
+    .use(restoreRoutes(pool, auth, authUrl))
     .use(createRunRoute(pool))
     .use(readAuditRoute(pool, auth))
-    .use(blobRoutes(pool, auth, authUrl, deps.blobStore));
+    .use(retentionRoutes(pool, auth, authUrl, deps.blobStore))
+    .use(blobRoutes(pool, auth, authUrl, deps.blobStore))
+    .use(streamAuditRoute(pool, auth, streams));
   const queue = new Elysia()
     .use(createQueueRoute(pool))
     .use(sendMessageRoute(pool))

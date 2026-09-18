@@ -103,6 +103,7 @@ test("invocation credentials escape their Run, Workspace, operation scope or lif
         { headers: { authorization: `Bearer ${value.props.token}` } })), 403, "run_forbidden");
       await denied(await f.callback(value, "/runs", {}), 403, "invocation_scope_forbidden");
       await denied(await f.callback(value, "/functions/escape/invoke", { input: null }), 403, "invocation_scope_forbidden");
+      await denied(await f.app.handle(new Request(`${f.base}/events`, { headers: f.headers(value.props.token, value.props.runId) })), 403, "invocation_scope_forbidden");
       await denied(await f.post("/principals", { name: "Escape" }, { ...f.userHeaders, authorization: `Bearer ${value.props.token}` }), 403, "invocation_scope_forbidden");
       const takeover = await f.post("/sql", { statement: "SELECT 1", params: [] }, f.headers(f.ownerKey, value.props.runId));
       expect(takeover.status).not.toBe(200);

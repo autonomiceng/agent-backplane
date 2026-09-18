@@ -1,8 +1,9 @@
 import { expect, test } from "bun:test";
+import { applyMigration } from "../testing/session.ts";
 import { withRunContext } from "../runs/with-run-context.ts";
 import { fixture, uploaded } from "./testing/blob-fixture.ts";
 
-test("failed upload leaves committed metadata or cleanup destroys an uncertain commit", async () => {
+test("failed upload leaves committed metadata, or cleanup destroys an uncertain commit and strands expired bytes", async () => {
   const f = await fixture();
   try {
     expect((await f.put("oversized", Buffer.alloc(4194305))).status).toBe(413);
@@ -27,5 +28,18 @@ test("failed upload leaves committed metadata or cleanup destroys an uncertain c
     expect((await f.get(committed.id)).status).toBe(404); expect(await f.disk.open(f.workspaceId, committed.id)).toEqual(Buffer.from("private bytes"));
     f.faults(""); await uploaded(await f.put("retry"));
     await expect(f.disk.open(f.workspaceId, committed.id)).rejects.toThrow();
+    expect((await f.json("/retention", { seconds: 1 }, "PUT")).status).toBe(200);
+    await applyMigration(f.app, f.key, f.runId, f.workspaceId, "CREATE TABLE retained_blob (id integer PRIMARY KEY)");
+    const expiring = await uploaded(await f.put("expired"));
+    await f.pool`SELECT pg_sleep(greatest(0,extract(epoch FROM expires_at-clock_timestamp()))+0.02) FROM control.blobs WHERE workspace_id=${f.workspaceId} AND id=${expiring.id}`;
+    expect((await f.get(expiring.id)).status).toBe(410);
+    const first = await f.json("/retention/purge", { limit: 1 }); expect(first.status).toBe(200);
+    expect(await first.json()).toMatchObject({ counts: { migrationSql: 1, blobs: 0 }, hasMore: true });
+    f.faults("remove"); const second = await f.json("/retention/purge", { limit: 1 }); expect(second.status).toBe(200);
+    expect(await second.json()).toMatchObject({ counts: { blobs: 1 }, hasMore: false, cleanupPending: true });
+    expect((await f.get(expiring.id)).status).toBe(404);
+    expect((await f.audit()).find((e) => e.kind === "blob.delete" && e.objects.includes(expiring.id))).toMatchObject({ metadata: { reason: "expired" }, principal_id: null, run_id: null });
+    f.faults(""); expect(await (await f.json("/retention/purge", { limit: 1 })).json()).toMatchObject({ cleanupPending: false });
+    await expect(f.disk.open(f.workspaceId, expiring.id)).rejects.toThrow();
   } finally { await f.close(); }
 }, 30000);
