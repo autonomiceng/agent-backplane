@@ -188,3 +188,8 @@ light activity. Configure a timed override only with an explicit recovery target
 and archive capacity budget. Use durable mounted backup storage, monitor archiver
 failures and free space, and repair retention causes through PostgreSQL. Never
 manually delete live `pg_wal` or acknowledge an archive copy that was not saved.
+
+The legacy physical helpers require a TCP administrator URL with an explicit username,
+and canonical `postgresql.conf`, `pg_hba.conf` and `pg_ident.conf` files directly in the
+data directory. Socket-only URLs and relocated or symlinked configuration are refused
+before capture. These constraints do not alter the core Compose Checkpoint interface.

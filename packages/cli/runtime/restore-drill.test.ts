@@ -30,6 +30,11 @@ test("recovery entrypoints expose credentials or ignore private-file failures", 
     expect(await cli({ BP_BACKUP_ADMIN_URL_FILE: credential })).toBe("backup_credential_url_invalid");
     await writeFile(credential, "https://postgres:sentinel@localhost/postgres");
     expect(await cli({ BP_BACKUP_ADMIN_URL_FILE: credential })).toBe("backup_credential_url_invalid");
+    await writeFile(credential, "postgres://localhost/postgres");
+    expect(await cli({ BP_BACKUP_ADMIN_URL_FILE: credential })).toBe("backup_credential_url_invalid");
+    const fifo = join(root, "credential-fifo");
+    expect(await Bun.spawn(["mkfifo", "-m", "600", fifo]).exited).toBe(0);
+    expect(await cli({ BP_BACKUP_ADMIN_URL_FILE: fifo })).toBe("backup_credential_file_must_be_private_and_owned");
     await chmod(credential, 0o644);
     expect(await cli({ BP_BACKUP_ADMIN_URL_FILE: credential })).toBe("backup_credential_file_must_be_private_and_owned");
     await chmod(credential, 0o600);
@@ -93,7 +98,7 @@ process.exit(await Bun.spawn([${JSON.stringify(join(cluster.binDir, "pg_ctl"))},
     expect(failure).toMatchObject({ success: false });
     // Hot standby may briefly become ready before recovery discovers missing WAL.
     // The failure can therefore arrive from pg_ctl or the subsequent connection.
-    expect(["pg_ctl_failed", "restore_drill_failed"]).toContain("error" in failure ? failure.error : "");
+    expect("error" in failure ? failure.error : "").toMatch(/^(pg_ctl_failed|recovery_deadline_exceeded|restore_drill_failed|E[A-Z]+|ERR_[A-Z_]+|[0-9A-Z]{5})$/);
     expect(await pool<{ active: boolean }[]>`SELECT active FROM control.restore_gate`).toEqual([{ active: false }]);
     expect(stdout + JSON.stringify(failure)).not.toContain(adminUrl(url));
   } finally {

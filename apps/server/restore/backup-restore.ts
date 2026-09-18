@@ -14,7 +14,7 @@ export const helperEnv = { PATH: Bun.env.PATH ?? "/usr/bin:/bin", LANG: "C" };
 function credentialUrl(value: string) {
   try {
     const url = new URL(value);
-    if (!["postgres:", "postgresql:"].includes(url.protocol) || !url.hostname) throw new Error();
+    if (!["postgres:", "postgresql:"].includes(url.protocol) || !url.hostname || !url.username) throw new Error();
     for (const part of [url.username, url.password, url.pathname]) decodeURIComponent(part);
     return url;
   } catch { throw new Error("backup_credential_url_invalid"); }
@@ -22,7 +22,7 @@ function credentialUrl(value: string) {
 // Only the locator crosses argv/environment; checks stay bound to the open descriptor.
 export async function loadBackupAdminUrl(path: string | undefined): Promise<string> {
   if (!path) throw new Error("BP_BACKUP_ADMIN_URL_FILE_required");
-  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     const info = await file.stat();
     if (!info.isFile() || info.uid !== process.getuid?.() || (info.mode & 0o077) !== 0 || info.size > 16384) {
@@ -94,9 +94,8 @@ export async function backup(options: Options, afterCopy?: () => Promise<void>, 
       current_setting('config_file') AS config, current_setting('hba_file') AS hba, current_setting('ident_file') AS ident,
       (SELECT count(*)::int FROM pg_tablespace WHERE spcname NOT IN ('pg_default','pg_global')) AS tablespaces`;
     if (await realpath(source.directory) !== dataDir || source.tablespaces) throw new Error("unsupported_backup_source");
-    for (const path of [source.config, source.hba, source.ident]) {
-      const distance = relative(dataDir, await realpath(path));
-      if (distance === ".." || distance.startsWith(`..${sep}`)) throw new Error("unsupported_backup_source");
+    for (const [path, name] of [[source.config, "postgresql.conf"], [source.hba, "pg_hba.conf"], [source.ident, "pg_ident.conf"]]) {
+      if (await realpath(path) !== join(dataDir, name)) throw new Error("unsupported_backup_source");
     }
     const before = await snapshot(sql);
     await mkdir(backupDir, { mode: 0o700 });
@@ -185,7 +184,16 @@ export async function restore(options: Options): Promise<{ epoch: string; active
     });
     await sql.close();
     await ctl("-m", "fast", "stop"); launched = false;
-    await writeFile(join(dataDir, "postgresql.auto.conf"), auto);
+    const temporary = join(dataDir, ".postgresql.auto.conf.restore.tmp");
+    const config = await open(temporary, "wx", 0o600);
+    try {
+      try { await config.writeFile(auto); await config.sync(); }
+      catch (error) { await config.close().catch(() => {}); throw error; }
+      await config.close();
+      await rename(temporary, join(dataDir, "postgresql.auto.conf"));
+    } catch (error) { await rm(temporary, { force: true }).catch(() => {}); throw error; }
+    const directory = await open(dataDir, constants.O_RDONLY | constants.O_DIRECTORY);
+    try { await directory.sync(); } finally { await directory.close(); }
     return { epoch, active };
   } finally {
     await sql?.close();

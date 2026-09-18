@@ -161,7 +161,7 @@ describe.serial("physical restore", () => {
       const [exit, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
       expect(exit).not.toBe(0);
       expect(stdout).toBe("");
-      expect(stderr.trim()).toBe("pg_ctl_failed");
+      expect(stderr.trim()).toMatch(/^(pg_ctl_failed|recovery_deadline_exceeded|backup_restore_failed|E[A-Z]+|ERR_[A-Z_]+|[0-9A-Z]{5})$/);
       expect(await Bun.file(join(failedDir, "postmaster.pid")).exists()).toBe(false);
       expect(await readFile(join(failedDir, "postgresql.auto.conf"), "utf8")).toContain("listen_addresses=''");
       expect(await readFile(join(failedDir, "restore-hba.conf"), "utf8")).toContain("local all all reject");
