@@ -35,7 +35,8 @@ async function scenario() {
   assert(!config.services.server.env_file, "server env_file exposes host secrets");
   const serverEnv = config.services.server.environment;
   assert.equal(new URL(serverEnv.BP_PUBLIC_URL).origin, edge.origin);
-  const allowed = new Set(["BP_DATABASE_URL", "BP_ADMIN_DATABASE_URL", "BP_PORT", "BP_DATA_DIR", "BP_OPERATIONS_TOKEN",
+  const allowed = new Set(["BP_DATABASE_URL", "BP_PORT", "BP_DATA_DIR", "BP_OPERATIONS_TOKEN",
+    "NODE_ENV", "BP_RETENTION_PURGE_INTERVAL", "BP_BACKUP_KEEP",
     "BP_BACKUP_DIR", "BP_AUTH_SECRET", "BP_PUBLIC_URL", "BP_AUTH_URL", "BP_SIGNUP"]);
   assert(Object.keys(serverEnv).every(key => allowed.has(key)), "unexpected core server environment key");
   const ids = (await compose("ps", "-q", "server", "postgres", "edge")).trim().split(/\s+/);
@@ -45,7 +46,11 @@ async function scenario() {
   for (const service of ["server", "postgres"]) {
     const container = containers.find((value: { Config: { Labels: Record<string, string> } }) => value.Config.Labels["com.docker.compose.service"] === service);
     assert(container?.State.Running, `${service} is not running`);
-    const target = service === "server" ? "3000/tcp" : "5432/tcp";
+    if (service === "postgres") {
+      assert(Object.values(container.NetworkSettings.Ports).every(value => value === null), "core Postgres must remain unpublished");
+      continue;
+    }
+    const target = "3000/tcp";
     const ports: { HostIp: string; HostPort: string }[] = container.NetworkSettings.Ports[target];
     assert(ports?.length, `${service} must publish its loopback port`);
     for (const port of ports) {

@@ -6,7 +6,7 @@ HTTP is allowed only for `localhost`, literal `127.0.0.0/8` or `::1`, without DN
 
 The CLI and MCP resolve `BP_PUBLIC_URL`, then `BP_URL`, then `BP_AUTH_URL`. Configured aliases must identify the same origin before any credential is sent. They reject non-loopback HTTP even when the server override is enabled and never follow credential-bearing redirects. Login uses that same origin for its Origin header and stored session identity.
 
-Core Compose publishes the server and Postgres on `BP_BIND_HOST=127.0.0.1` by default. The server receives an explicit environment allowlist. The blobs and compute overlays supply their own server keys. Host `.env` values are Compose interpolation inputs, and the server has no `env_file`. The core allowlist does not pass the insecure HTTP override.
+Core Compose publishes only the server on `127.0.0.1`; Postgres remains unpublished. The development overlay can publish Postgres on loopback. The server receives an explicit environment allowlist. The blobs and compute overlays supply their own server keys. Host `.env` values are Compose interpolation inputs, and the server has no `env_file`. The core allowlist does not pass the insecure HTTP override.
 
 Supply `BP_OPERATIONS_*` thresholds through a Compose override; empty passthrough values become zero and fail operations configuration validation.
 
