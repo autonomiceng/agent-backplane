@@ -6,11 +6,13 @@ import { join } from "node:path";
 import { createEnrollment } from "../auth/enrollment.ts";
 import { capabilityPath } from "../auth/enrollment-file.ts";
 import { createApp, type App, type AppDeps } from "../app.ts";
+import { SQL } from "bun";
 import { createAuth } from "../auth/auth.ts";
 import type { Pool } from "../platform/pool.ts";
 import type { RunContext } from "../runs/run-context.ts";
 import { withRunContext } from "../runs/with-run-context.ts";
-import { latestMigrationVersion } from "./postgres.ts";
+import { latestMigrationVersion, migratedDatabase } from "./postgres.ts";
+import type { ApplyInput, ApplyResponse } from "../schema/apply-migration-input.ts";
 
 const enrollmentDirs = new Map<App, string>();
 export async function signUp(app: App, email: string): Promise<string> {
@@ -39,7 +41,7 @@ async function session(app: App, email: string, verb: string): Promise<string> {
 }
 
 // Shared app wiring explicitly permits identity-only outsiders after first-User enrollment.
-export async function testApp(pool: Pool, deps: Pick<AppDeps, "operations"> = {}): Promise<App> {
+export async function testApp(pool: Pool, deps: Pick<AppDeps, "migrationProjection" | "operations"> = {}): Promise<App> {
   const dataDir = await mkdtemp(join(tmpdir(), "bp-enrollment-fixture-"));
   // Register in the calling test file: imported module hooks only run for their first file.
   afterAll(async () => {
@@ -117,6 +119,55 @@ export async function queueFixture(pool: Pool, name = "handoff") {
   return { ...fixture, key, runId, headers, queue: name, messagesUrl: `http://localhost/api/v1/workspaces/${workspaceId}/queues/${name}/messages` };
 }
 
+// SQL scenarios share a max-1 runtime pool so the next request necessarily reuses the same connection.
+export async function sqlFixture(ddl: string) {
+  const url = await migratedDatabase();
+  const pool = new SQL({ url, max: 1 });
+  try {
+    const fixture = await principalFixture(pool);
+    const { app, cookie, workspaceId, principalId } = fixture;
+    const key = await issueKey(app, cookie, workspaceId, principalId);
+    const runId = await createRun(app, key, workspaceId);
+    await applyMigration(app, key, runId, workspaceId, ddl);
+    const sql = (statement: string, params: unknown[] = [], actor = { key, runId }) => app.handle(new Request(
+      `http://localhost/api/v1/workspaces/${workspaceId}/sql`, {
+        method: "POST", headers: { authorization: `Bearer ${actor.key}`, "x-backplane-run": actor.runId, "content-type": "application/json" },
+        body: JSON.stringify({ statement, params }),
+      },
+    ));
+    return { ...fixture, pool, url, key, runId, sql };
+  } catch (error) { await pool.close(); throw error; }
+}
+
+// Migration scenarios use the public routes and may start with no Workspace schema at all.
+export async function migrationFixture(max = 1) {
+  const url = await migratedDatabase();
+  const pool = new SQL({ url, max });
+  try {
+    const fixture = await principalFixture(pool);
+    const { app, cookie, workspaceId, principalId } = fixture;
+    const key = await issueKey(app, cookie, workspaceId, principalId);
+    const runId = await createRun(app, key, workspaceId);
+    const schema = `ws_${workspaceId.replaceAll("-", "")}`;
+    const headers = { authorization: `Bearer ${key}`, "x-backplane-run": runId, "content-type": "application/json" };
+    const preview = (sql: string, destructive = false, expectedRevision = 0) => app.handle(new Request(
+      `http://localhost/api/v1/workspaces/${workspaceId}/migrations/preview`, {
+        method: "POST", headers, body: JSON.stringify({ name: "test migration", sql, destructive, expectedRevision }),
+      },
+    ));
+    const sql = (statement: string) => app.handle(new Request(`http://localhost/api/v1/workspaces/${workspaceId}/sql`, {
+      method: "POST", headers, body: JSON.stringify({ statement, params: [] }),
+    }));
+    const apply = (input: ApplyInput, actor = { key, runId }) => app.handle(new Request(
+      `http://localhost/api/v1/workspaces/${workspaceId}/migrations`, {
+        method: "POST", headers: { ...headers, authorization: `Bearer ${actor.key}`, "x-backplane-run": actor.runId },
+        body: JSON.stringify(input),
+      },
+    ));
+    return { ...fixture, url, pool, key, runId, schema, preview, apply, sql };
+  } catch (error) { await pool.close(); throw error; }
+}
+
 // Recovery scenarios share HTTP requests while assertions remain in their owning tests.
 export async function recoveryFixture(pool: Pool) {
   const fixture = await queueFixture(pool);
@@ -156,3 +207,43 @@ export async function advanceDeliveryClock(admin: Pool, context: Extract<RunCont
   });
 }
 
+// Valid Workspace fixtures obtain a real preview receipt and apply it through the same HTTP routes as agents.
+export async function applyMigration(app: App, key: string, runId: string, workspaceId: string, sql: string,
+  expectedRevision = 0): Promise<ApplyResponse> {
+  const headers = { authorization: `Bearer ${key}`, "x-backplane-run": runId, "content-type": "application/json" };
+  const input = { name: "fixture", sql, expectedRevision, destructive: true };
+  const url = `http://localhost/api/v1/workspaces/${workspaceId}/migrations`;
+  const preview = await app.handle(new Request(`${url}/preview`, { method: "POST", headers, body: JSON.stringify(input) }));
+  if (preview.status !== 200) throw new Error(`fixture preview failed (${preview.status}): ${await preview.text()}`);
+  const receipt = await preview.json();
+  if (typeof receipt !== "object" || receipt === null || !("sqlHash" in receipt) || typeof receipt.sqlHash !== "string"
+    || !("previewPosition" in receipt) || typeof receipt.previewPosition !== "string") throw new Error("fixture preview missing receipt");
+  const response = await app.handle(new Request(url, { method: "POST", headers,
+    body: JSON.stringify({ ...input, sqlHash: receipt.sqlHash, previewPosition: receipt.previewPosition }) }));
+  if (response.status !== 201) throw new Error(`fixture apply failed (${response.status}): ${await response.text()}`);
+  const applied = await response.json();
+  if (typeof applied !== "object" || applied === null || !("revision" in applied) || typeof applied.revision !== "number"
+    || !("name" in applied) || typeof applied.name !== "string" || !("sqlHash" in applied) || typeof applied.sqlHash !== "string"
+    || !("appliedAt" in applied) || typeof applied.appliedAt !== "string") throw new Error("fixture apply missing result");
+  return { revision: applied.revision, name: applied.name, sqlHash: applied.sqlHash, appliedAt: applied.appliedAt };
+}
+
+export async function transactionFixture(max = 1) {
+  const url = await migratedDatabase();
+  const pool = new SQL({ url, max });
+  try {
+    const fixture = await queueFixture(pool, "intake");
+    const { app, key, workspaceId, runId, headers } = fixture;
+    const baseUrl = `http://localhost/api/v1/workspaces/${workspaceId}`;
+    const post = (path: string, body: unknown, actorHeaders: Record<string, string> = headers) => app.handle(new Request(`${baseUrl}${path}`, {
+      method: "POST", headers: actorHeaders, body: JSON.stringify(body),
+    }));
+    const ddl = "CREATE TABLE items (id int PRIMARY KEY, updates int NOT NULL)";
+    await applyMigration(app, key, runId, workspaceId, ddl);
+    const seeded = await post("/sql", { statement: "INSERT INTO items (id, updates) VALUES (1, 0), (2, 0)", params: [] });
+    if (seeded.status !== 200) throw new Error(`SQL seed failed (${seeded.status}): ${await seeded.text()}`);
+    const review = await post("/queues", { name: "review" });
+    if (review.status !== 201) throw new Error(`Queue creation failed (${review.status}): ${await review.text()}`);
+    return { ...fixture, pool, url, baseUrl, post };
+  } catch (error) { await pool.close(); throw error; }
+}

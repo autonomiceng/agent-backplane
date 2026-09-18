@@ -9,6 +9,7 @@ import { createApp } from "./app.ts";
 import { readConfig } from "./platform/config.ts";
 import { createPool } from "./platform/pool.ts";
 import { probeReadiness } from "./platform/readiness-probe.ts";
+import { createMigrationProjection } from "./schema/migration-projection.ts";
 
 const config = readConfig(Bun.env);
 if (Bun.env.BP_AUTH_URL) console.warn("BP_AUTH_URL is deprecated; use BP_PUBLIC_URL");
@@ -26,7 +27,8 @@ if (readiness.problems.length > 0) {
 const enrollment = createEnrollment(pool, config);
 await enrollment.prepare();
 const auth = createAuth(pool, config);
-const app = createApp({ enrollment, pool, expectedSchemaVersion, auth, authUrl: config.publicOrigin, insecureOrigin: config.insecureOrigin, operations: readOperationsConfig(Bun.env) }).listen(config.port);
+const migrationProjection = createMigrationProjection(pool, config.dataDir, console, Bun.which("git", { PATH: Bun.env.PATH ?? "" }));
+const app = createApp({ enrollment, pool, expectedSchemaVersion, auth, authUrl: config.publicOrigin, insecureOrigin: config.insecureOrigin, migrationProjection, operations: readOperationsConfig(Bun.env) }).listen(config.port);
 const stopDisk = diskSampler(pool);
 console.log(`agent-backplane listening on :${config.port}`);
 

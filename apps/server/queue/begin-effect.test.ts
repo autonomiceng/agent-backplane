@@ -95,6 +95,13 @@ test("attempt-derived or overwritten Effect Keys fail retry and replay identity"
     const held = await f.receipt(claimed.deliveryId, claimed.receipt, "hold");
     expect(held.status).toBe(409);
     expect(await held.json()).toEqual({ error: "delivery_conflict" });
+    const txHold = await app.handle(new Request(`${baseUrl}/transactions`, {
+      method: "POST", headers, body: JSON.stringify({ idempotencyKey: "hold-begun", operations: [
+        { hold: { deliveryId: claimed.deliveryId, receipt: claimed.receipt } },
+      ] }),
+    }));
+    expect(txHold.status).toBe(409);
+    expect(await txHold.json()).toMatchObject({ error: "delivery_conflict" });
     expect((await f.receipt(claimed.deliveryId, claimed.receipt, "renew")).status).toBe(200);
     const begunList = await f.list("?state=begun");
     expect(begunList.status).toBe(200);

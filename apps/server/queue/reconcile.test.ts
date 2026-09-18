@@ -68,6 +68,8 @@ test("consumer credentials bypass reconciliation delegation", async () => {
     const { claim } = await f.ambiguous("authorization");
     await denied(await f.decide(claim.deliveryId, "unknown", { authorization: `Bearer ${claim.receipt}`, "content-type": "application/json" }), 401, "unauthorized");
     await denied(await f.decide(claim.deliveryId, "unknown", f.headers), 403, "reconciliation_forbidden");
+    expect((await f.call(`/approvals/delegations/${f.principalId}`, { enabled: true }, f.userHeaders, "PUT")).status).toBe(200);
+    await denied(await f.decide(claim.deliveryId, "unknown", f.headers), 403, "reconciliation_forbidden");
     await denied(await f.decide(claim.deliveryId, "unknown", { ...f.headers, cookie: f.cookie }), 403, "reconciliation_forbidden");
     await denied(await f.decide(claim.deliveryId, "unknown", { ...f.userHeaders, authorization: "malformed" }), 401, "unauthorized");
     await denied(await f.delegate(f.principalId, true, { ...f.headers, cookie: f.cookie }), 403, "reconciliation_forbidden");

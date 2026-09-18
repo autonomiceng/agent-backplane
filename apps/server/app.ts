@@ -20,6 +20,12 @@ import { readAuditRoute } from "./events/read-audit-route.ts";
 import { createQueueRoute } from "./queue/create-queue-route.ts";
 import { sendMessageRoute } from "./queue/send-message-route.ts";
 import { getMessageRoute } from "./queue/get-message-route.ts";
+import { applyMigrationRoute } from "./schema/apply-migration-route.ts";
+import { previewMigrationRoute } from "./schema/preview-migration-route.ts";
+import { listMigrationsRoute } from "./schema/list-migrations-route.ts";
+import { rebuildMigrationProjectionRoute } from "./schema/rebuild-migration-projection-route.ts";
+import type { MigrationProjection } from "./schema/migration-projection.ts";
+import { executeSqlRoute } from "./sql/execute-sql-route.ts";
 import { claimRoute } from "./queue/claim-route.ts";
 import { renewRoute } from "./queue/renew-route.ts";
 import { ackRoute } from "./queue/ack-route.ts";
@@ -30,13 +36,16 @@ import { cancelRoute } from "./queue/cancel-route.ts";
 import { recoverRoute } from "./queue/recover-route.ts";
 import { beginEffectRoute } from "./queue/begin-effect-route.ts";
 import { holdRoute } from "./queue/hold-route.ts";
+import { approvalRoutes } from "./approvals/approval-routes.ts";
 import { reconciliationRoutes } from "./queue/reconciliation-routes.ts";
 import { releaseRoute } from "./queue/release-route.ts";
 
+import { executeTransactionRoute } from "./tx/execute-transaction-route.ts";
 
 export type AppDeps = {
   enrollment: Enrollment;
   pool: Pool; expectedSchemaVersion: number; auth: Auth; authUrl: string;
+  migrationProjection?: MigrationProjection;
   operations?: OperationsConfig;
   insecureOrigin?: boolean;
 };
@@ -64,6 +73,8 @@ export function createApp(deps: AppDeps) {
     .use(createQueueRoute(pool))
     .use(sendMessageRoute(pool))
     .use(getMessageRoute(pool))
+    .use(executeSqlRoute(pool))
+    .use(executeTransactionRoute(pool))
     .use(claimRoute(pool))
     .use(renewRoute(pool))
     .use(ackRoute(pool))
@@ -75,12 +86,17 @@ export function createApp(deps: AppDeps) {
     .use(beginEffectRoute(pool))
     .use(holdRoute(pool))
     .use(releaseRoute(pool, auth, authUrl));
-
+  const schema = new Elysia()
+    .use(previewMigrationRoute(pool))
+    .use(applyMigrationRoute(pool, deps.migrationProjection))
+    .use(listMigrationsRoute(pool, auth))
+    .use(rebuildMigrationProjectionRoute(pool, auth, authUrl, deps.migrationProjection));
   const governance = new Elysia()
+    .use(approvalRoutes(pool, auth, authUrl))
     .use(reconciliationRoutes(pool, auth, authUrl));
   return new Elysia().onRequest(({ request }) => {
     stripForwardedHeaders(request.headers);
-  }).use(platform).use(queue).use(governance);
+  }).use(platform).use(queue).use(schema).use(governance);
 }
 
 export type App = ReturnType<typeof createApp>;
