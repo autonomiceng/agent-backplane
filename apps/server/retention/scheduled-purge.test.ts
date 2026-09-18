@@ -44,7 +44,7 @@ test("system Principal installation drops legacy roles and runs as bp_provisione
   try {
     const fixture = await principalFixture(pool);
     const roles = await pool<{ role_name: string }[]>`SELECT role_name FROM control.principals WHERE system IS NOT NULL`;
-    await migrate(sqlMigrationRunner(admin), await loadMigrations(new URL("../../../db/migrations", import.meta.url).pathname));
+    await migrate(sqlMigrationRunner(admin), (await loadMigrations(new URL("../../../db/migrations", import.meta.url).pathname)).filter(m => m.version <= 30));
     const owners = await pool`SELECT p.proname,r.rolname,r.rolsuper FROM pg_proc p JOIN pg_roles r ON r.oid=p.proowner
       WHERE p.oid IN ('control.install_system_principals(uuid)'::regprocedure,'control.workspace_system_principals()'::regprocedure)`;
     expect(owners).toHaveLength(2);

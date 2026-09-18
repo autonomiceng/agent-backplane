@@ -143,7 +143,7 @@ test("purge leaves original or successor bytes behind or breaks Receipts and per
     const legacyMessage = await f.send("legacy"); const legacyClaim = await f.claim(); await f.begin(legacyClaim);
     expect((await f.receipt(legacyClaim.deliveryId, legacyClaim.receipt, "nack")).status).toBe(200);
     const legacyDecision = await (await f.decide(legacyClaim, "unknown")).json() as typeof reconcileResponse.static;
-    await migrate(sqlMigrationRunner(f.admin), await loadMigrations(migrationsDir));
+    await migrate(sqlMigrationRunner(f.admin), (await loadMigrations(migrationsDir)).filter(m => m.version <= 30));
     expect(await f.admin<{ valid: boolean }[]>`SELECT expires_at=created_at+interval '30 days' AS valid FROM queue.messages WHERE id=${legacyMessage.id}`).toEqual([{ valid: true }]);
     expect(await f.admin<{ valid: boolean }[]>`SELECT expires_at=created_at+interval '30 days' AS valid FROM control.reconciliations WHERE id=${legacyDecision.id}`).toEqual([{ valid: true }]);
     await f.policy(1);

@@ -155,7 +155,7 @@ recover deleted object bytes.
 
 ## Upgrades
 
-When a migration takes exclusive locks, including 000028 and 000030, run
+When a migration takes exclusive locks, including 000028, 000030 and 000031, run
 `docker compose stop server` before `docker compose up -d --wait` with the same
 project, env file and overlays. The one-shot migration must finish before traffic
 resumes. Rolling upgrades are unsupported.
