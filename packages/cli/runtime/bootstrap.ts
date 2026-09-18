@@ -3,7 +3,7 @@ import { parseArgs } from "node:util";
 import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { CliError, credentials } from "./credentials.ts";
-import { credentialValue, privateRead, privateWrite, privateLock, canonicalUuid } from "./credential-file.ts";
+import { credentialValue, parseCredentialFile, privateRead, privateWrite, privateLock, canonicalUuid } from "./credential-file.ts";
 import { safeDirectory } from "./secure-directory.ts";
 import { login, sessionHeaders } from "./login.ts";
 import { request, json, record } from "./http.ts";
@@ -27,6 +27,7 @@ export async function bootstrap(argv: string[], io: Execution, invoke: (id: stri
   let failed = false;
   try {
     const previous = await privateRead(path);
+    if (previous === undefined && !io.env.BP_USER_EMAIL) throw new CliError("email_required", 1, undefined, { flag: "--email" });
     const parsedState = parseCheckpoint(previous ?? JSON.stringify({ version: 1, url: origin, email: io.env.BP_USER_EMAIL }));
     if ("error" in parsedState) throw new CliError(parsedState.error, 1, undefined, { reason: parsedState.reason,
       recovery: "Preserve checkpoint and credential files. Reconcile IDs against server records and the matching User session; repair from evidence or restore a known-good checkpoint." });
@@ -184,7 +185,7 @@ export async function bootstrap(argv: string[], io: Execution, invoke: (id: stri
         case "key:ambiguous": case "key:saved": {
           const recovery = values["recover-key-file"];
           if (!recovery) return state.step === "key:saved" ? await finish(state.credentialFile) : ambiguous();
-          const recovered = await verify(JSON.parse(await privateRead(recovery) ?? "null")), recoveryFile = join(directory, `${digest}.${crypto.randomUUID()}.credentials.json`);
+          const recovered = await verify(parseCredentialFile(await privateRead(recovery), recovery)), recoveryFile = join(directory, `${digest}.${crypto.randomUUID()}.credentials.json`);
           try {
             await privateWrite(recoveryFile, JSON.stringify(recovered));
             state = await save(state.step === "key:saved" ? fromKeySaved(state, recoveryFile) : fromKeyAmbiguous(state, recoveryFile));

@@ -230,6 +230,8 @@ test("saved credentials cannot operate CLI or the MCP child over real HTTP", asy
     await expect(credentialEnvironment({ BP_CREDENTIALS_FILE: output.credentialsFile, BP_KEY: "conflicting" })).rejects.toMatchObject({ error: "credential_environment_conflict" });
     const extra = join(f.directory, "extra.json"); await privateWrite(extra, JSON.stringify({ ...saved, BP_ADMIN_DATABASE_URL: "forbidden" }));
     await expect(credentialEnvironment({ BP_CREDENTIALS_FILE: extra })).rejects.toMatchObject({ error: "credential_file_invalid" });
+    const malformed = join(f.directory, "malformed.json"); await privateWrite(malformed, "{broken");
+    await expect(credentialEnvironment({ BP_CREDENTIALS_FILE: malformed })).rejects.toMatchObject({ error: "credential_file_invalid" });
     await chmod(output.credentialsFile, 0o644);
     await expect(privateRead(output.credentialsFile)).rejects.toMatchObject({ error: "unsafe_private_file" });
   } finally { if (child && child.exitCode === null) { child.kill(); await child.exited; } await f.close(); }

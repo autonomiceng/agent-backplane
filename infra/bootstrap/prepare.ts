@@ -45,12 +45,13 @@ export async function prepare(argv: string[], env: Environment, run: Runner = do
     const url = entries.BP_PUBLIC_URL ?? "http://localhost:3000";
     if (credentials({ BP_URL: url }, "none", undefined).url !== new URL(url).origin) throw new CliError("invalid_public_url", 1);
     if (entries.BP_PUBLIC_URL === undefined) { entries.BP_PUBLIC_URL = url; additions.push(`BP_PUBLIC_URL='${url}'`); }
-    if (!entries.BP_BACKUP_DIR || !(await stat(entries.BP_BACKUP_DIR)).isDirectory()) throw new CliError("backup_directory_required", 1);
+    if (!entries.BP_BACKUP_DIR || !(await stat(entries.BP_BACKUP_DIR).catch(() => undefined))?.isDirectory()) throw new CliError("backup_directory_required", 1);
     const child = Object.fromEntries(Object.entries(env).filter(([k]) => !k.startsWith("BP_") && !["COMPOSE_FILE", "COMPOSE_PROFILES", "COMPOSE_PROJECT_NAME", "COMPOSE_ENV_FILES"].includes(k)));
     if (env.DOCKER_HOST && !env.DOCKER_HOST.startsWith("unix://")) throw new CliError("remote_docker_unsupported", 1);
     const endpoint = (await run(["context", "inspect", "--format", "{{.Endpoints.docker.Host}}"], child)).trim();
     if (!endpoint.startsWith("unix://")) throw new CliError("remote_docker_unsupported", 1);
     const network = entries.BP_PLATFORM_NETWORK ?? "platform", prefix = entries.BP_VOLUME_PREFIX ?? "agent-backplane";
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(network)) throw new CliError("invalid_platform_network", 1);
     if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(prefix)) throw new CliError("invalid_volume_prefix", 1);
     try { await run(["network", "inspect", network], child); }
     catch { await run(["network", "create", network], child); }

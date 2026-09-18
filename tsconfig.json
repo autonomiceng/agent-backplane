@@ -26,6 +26,7 @@
     "db",
     "packages",
     "tooling",
+    "infra/compose",
     "tests"
   ]
 }

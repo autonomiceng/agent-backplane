@@ -83,6 +83,9 @@ export function commands(document: unknown) {
       return { in: location, name, flag: kebab(name), required: p.required === true, schema };
     }).filter((p) => p !== null);
     const flags = parameters.map((p) => p.flag);
+    const runtimeFlags = operationId === "issuePrincipalKey" ? ["credential-out"]
+      : operationId === "releaseRestore" ? ["epoch", "source-fenced"] : [];
+    if (flags.some(flag => runtimeFlags.includes(flag))) throw new Error(`Flag collision: ${operationId}`);
     if (new Set(flags).size !== flags.length || flags.some((f) => ["body", "help", "follow", "file", "out", "force"].includes(f) || f === "authorization")) throw new Error(`Flag collision: ${operationId}`);
     schemas[`${operationId}.request`] = request;
     schemas[`${operationId}.responses`] = op.responses;

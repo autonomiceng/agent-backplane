@@ -3,10 +3,12 @@ import { chmod, lstat, mkdir } from "node:fs/promises";
 import { join, parse, resolve } from "node:path";
 import { CliError } from "./credentials.ts";
 import { record } from "./http.ts";
-type DirectoryEntry = { isDirectory(): boolean; isSymbolicLink(): boolean; uid: number };
+type DirectoryEntry = { isDirectory(): boolean; isSymbolicLink(): boolean; uid: number; mode: number };
 export function assertSecureDirectory(entry: DirectoryEntry, owner?: number): void {
-  if (!entry.isDirectory() || entry.isSymbolicLink()) throw new CliError("unsafe_cache_directory");
-  if (owner !== undefined && entry.uid !== owner) throw new CliError("unsafe_cache_owner");
+  if (!entry.isDirectory() || entry.isSymbolicLink()) throw new CliError("unsafe_directory");
+  const rootSticky = entry.uid === 0 && (entry.mode & 0o1000) !== 0;
+  if (!rootSticky && (entry.mode & 0o022) !== 0) throw new CliError("unsafe_directory_permissions");
+  if (owner !== undefined && entry.uid !== owner) throw new CliError("unsafe_directory_owner");
 }
 export async function safeDirectory(directory: string): Promise<void> {
   const path = resolve(directory), root = parse(path).root;

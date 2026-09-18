@@ -42,9 +42,14 @@ export async function privateWrite(path: string, text: string, replace = false):
     if (replace && await readPrivate(parent.path, false) === undefined) throw new CliError("private_file_missing", 1);
     const target = replace ? `${parent.path}.${crypto.randomUUID()}` : parent.path;
     const file = await open(target, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
-    try { await file.chmod(0o600); await file.writeFile(text); await file.sync(); } finally { await file.close(); }
-    if (replace) await rename(target, parent.path);
-    await parent.directory.sync();
+    try {
+      try { await file.chmod(0o600); await file.writeFile(text); await file.sync(); } finally { await file.close(); }
+      if (replace) await rename(target, parent.path);
+      await parent.directory.sync();
+    } catch (error) {
+      if (replace) await rm(target, { force: true }).catch(() => {});
+      throw error;
+    }
   } finally { await parent.directory.close(); }
 }
 export async function privateLock(path: string): Promise<() => Promise<void>> {
@@ -63,9 +68,13 @@ export function credentialValue(value: unknown): CredentialFile {
   if (new URL(config.url).origin !== value.url) throw new CliError("credential_origin_invalid", 1);
   return { url: value.url, workspaceId, principalId, key: value.key };
 }
+export function parseCredentialFile(text: string | undefined, path: string): unknown {
+  try { return JSON.parse(text ?? "null"); }
+  catch { throw new CliError("credential_file_invalid", 1, undefined, { path }); }
+}
 export async function credentialEnvironment(env: Environment): Promise<Environment> {
   if (!env.BP_CREDENTIALS_FILE) return env;
-  const value = credentialValue(JSON.parse(await privateRead(env.BP_CREDENTIALS_FILE) ?? "null"));
+  const value = credentialValue(parseCredentialFile(await privateRead(env.BP_CREDENTIALS_FILE), env.BP_CREDENTIALS_FILE));
   const loaded = { BP_URL: value.url, BP_WORKSPACE_ID: value.workspaceId, BP_PRINCIPAL_ID: value.principalId, BP_KEY: value.key };
   for (const [key, value] of Object.entries(loaded)) if (env[key] !== undefined && env[key] !== value) throw new CliError("credential_environment_conflict", 1);
   if (env.BP_AUTH_URL !== undefined && env.BP_AUTH_URL !== value.url) throw new CliError("credential_environment_conflict", 1);
