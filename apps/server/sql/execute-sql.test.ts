@@ -184,3 +184,19 @@ test("unbounded execution or results bypass the row cap, mutation count, lock de
       .toEqual([{ reason: "sql_result_too_large" }]);
   } finally { await admin.close(); await pool.close(); }
 }, 10000);
+
+test("bytea casts and row output stay canonical with nondefault database output settings", async () => {
+  const f = await sqlFixture("CREATE TABLE binary_rows (id int PRIMARY KEY, payload bytea, at timestamptz, day date)");
+  try {
+    await f.pool`SET TimeZone = 'Pacific/Honolulu'`;
+    await f.pool`SET DateStyle = 'SQL, DMY'`;
+    await f.pool`SET bytea_output = 'escape'`;
+    const params = ["\\x0041ff", "2026-01-01T00:00:00Z", "2026-01-02"];
+    const row = { payload: "\\x0041ff", at: "2026-01-01T00:00:00+00:00", day: "2026-01-02" };
+    expect((await successful(await f.sql(
+      "INSERT INTO binary_rows (id, payload, at, day) VALUES (1, $1::bytea, $2::timestamptz, $3::date) RETURNING payload, at, day", params))).rows).toEqual([row]);
+    expect((await successful(await f.sql("SELECT payload, at, day FROM binary_rows WHERE payload = $1::bytea", [params[0]!]))).rows).toEqual([row]);
+    expect(await f.pool<{ zone: string; bytes: string }[]>`SELECT current_setting('TimeZone') AS zone, current_setting('bytea_output') AS bytes`)
+      .toEqual([{ zone: "Pacific/Honolulu", bytes: "escape" }]);
+  } finally { await f.pool.close(); }
+});

@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { frames, nextFrame } from "./testing/frames.ts";
 import { Elysia, t } from "elysia";
 import { createPool } from "../platform/pool.ts";
 import { runSession } from "../runs/run-session.ts";
@@ -55,14 +56,14 @@ test("idle, aborted, oversized, or stalled streams retain pool capacity, admissi
     const limited = await open();
     expect(limited.status).toBe(429);
     expect(await limited.json()).toEqual({ error: "stream_limit_exceeded" });
-    const readyReader = must(must(active[0]).body).getReader();
-    expect(new TextDecoder().decode((await readyReader.read()).value)).toContain("event: ready\n");
+    const readyReader = frames(must(must(active[0]).body));
+    expect((await nextFrame(readyReader)).event).toBe("ready");
     const [activity] = await admin<{ idle: number }[]>`SELECT count(*)::int AS idle FROM pg_stat_activity
       WHERE datname = current_database() AND usename = 'bp_server' AND state LIKE 'idle in transaction%'`;
     expect(must(activity).idle).toBe(0);
     expect((await f.sql("INSERT INTO items (id) VALUES (1)")).status).toBe(200);
     must(controllers[0]).abort();
-    await readyReader.cancel().catch(() => {});
+    await readyReader.return().catch(() => {});
     const [start] = await admin<{ at: Date }[]>`SELECT clock_timestamp() AS at`;
     let replacement: Response;
     while (true) {

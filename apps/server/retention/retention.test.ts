@@ -143,7 +143,7 @@ test("purge leaves original or successor bytes behind or breaks Receipts and per
     const legacyMessage = await f.send("legacy"); const legacyClaim = await f.claim(); await f.begin(legacyClaim);
     expect((await f.receipt(legacyClaim.deliveryId, legacyClaim.receipt, "nack")).status).toBe(200);
     const legacyDecision = await (await f.decide(legacyClaim, "unknown")).json() as typeof reconcileResponse.static;
-    await migrate(sqlMigrationRunner(f.admin), await loadMigrations(migrationsDir));
+    await migrate(sqlMigrationRunner(f.admin), (await loadMigrations(migrationsDir)).filter(m => m.version <= 30));
     expect(await f.admin<{ valid: boolean }[]>`SELECT expires_at=created_at+interval '30 days' AS valid FROM queue.messages WHERE id=${legacyMessage.id}`).toEqual([{ valid: true }]);
     expect(await f.admin<{ valid: boolean }[]>`SELECT expires_at=created_at+interval '30 days' AS valid FROM control.reconciliations WHERE id=${legacyDecision.id}`).toEqual([{ valid: true }]);
     await f.policy(1);
@@ -216,8 +216,11 @@ test("purge leaves original or successor bytes behind or breaks Receipts and per
     expect(await f.pool<{ retention_floor: string; generation: string }[]>`SELECT retention_floor::text,generation FROM audit.cursor WHERE workspace_id=${f.workspaceId}`)
       .toEqual([{ retention_floor: cursor.retention_floor, generation: cursor.generation }]);
     const [user] = await f.pool<{ id: string }[]>`SELECT id FROM control."user" WHERE email='credentials@example.com'`;
-    for (const purged of after.filter((e) => e.kind === "retention.purged")) {
-      expect(purged).toMatchObject({ objects: [], user_id: user?.id, principal_id: null, run_id: null });
+    if (!user) throw new Error("purging User missing");
+    const purges = after.filter((e) => e.kind === "retention.purged");
+    expect(purges.length).toBeGreaterThan(0);
+    for (const purged of purges) {
+      expect(purged).toMatchObject({ objects: [], user_id: user.id, principal_id: null, run_id: null });
       expect(Object.keys(purged.metadata).sort()).toEqual(Object.keys(counts).sort());
       expect(Object.values(purged.metadata).every((n) => typeof n === "number")).toBe(true);
     }

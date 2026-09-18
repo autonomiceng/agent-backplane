@@ -54,7 +54,7 @@ const operators = new Set("= <> < <= > >= + - * / % || -> ->> @> ?".split(" "));
 const aggregates = new Set(["count", "sum", "min", "max", "avg", "jsonb_agg"]);
 const functions = new Set([...aggregates, "coalesce", "nullif", "lower", "upper", "length", "trim", "now",
   "clock_timestamp", "gen_random_uuid", "jsonb_build_object", "to_jsonb", "date_trunc"]);
-const types = new Set(["text", "int4", "int8", "numeric", "bool", "uuid", "jsonb", "timestamptz", "date"]);
+const types = new Set(["text", "int4", "int8", "numeric", "bool", "uuid", "bytea", "jsonb", "timestamptz", "date"]);
 
 function object(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

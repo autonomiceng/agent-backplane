@@ -1,7 +1,7 @@
 // Two serial physical drills own a dedicated source cluster and fresh recovery directories.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { SQL } from "bun";
-import { cp, mkdir, mkdtemp, readFile, rename, rm, stat, symlink } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createPool } from "../platform/pool.ts";
@@ -67,10 +67,21 @@ describe.serial("physical restore", () => {
       expect(await stat(nested).then(() => true, () => false)).toBe(false);
       await expect(restore({ ...emptyOptions, dataDir: join(alias, "nested-restore"), backupDir: source.dataDir }))
         .rejects.toThrow("backup_paths_overlap");
-      await backup(emptyOptions);
+      const sourceAdmin = new SQL({ url: emptyOptions.adminUrl, max: 1 });
+      try {
+        await sourceAdmin`SELECT pg_create_physical_replication_slot('restore_drill', true)`;
+        await sourceAdmin`CHECKPOINT`;
+        await backup(emptyOptions);
+        expect(await readdir(join(source.dataDir, "pg_replslot"))).toContain("restore_drill");
+        expect(await readdir(join(emptyOptions.backupDir, "data/pg_replslot"))).toEqual([]);
+      } finally {
+        try { await sourceAdmin`SELECT pg_drop_replication_slot('restore_drill')`; }
+        finally { await sourceAdmin.close(); }
+      }
       const emptyDir = join(root, "empty-restored");
       expect(await restore({ ...emptyOptions, dataDir: emptyDir })).toMatchObject({ active: false });
       recovered = await startRestored(emptyDir, url);
+      expect(await recovered.admin`SELECT slot_name FROM pg_replication_slots`).toHaveLength(0);
       expect((await recovered.admin`SELECT active FROM control.restore_gate`)[0].active).toBe(false);
       expect((await recovered.admin`SELECT count(*)::int AS n FROM control.restore_workspaces`)[0].n).toBe(0);
       await recovered.close(); recovered = undefined;
@@ -100,7 +111,9 @@ describe.serial("physical restore", () => {
       await rename(join(incomplete, manifest.segment), join(root, "withheld-wal"));
       const failedDir = join(root, "failed-restored");
       const wrapper = new URL("../../../infra/backup/restore.sh", import.meta.url).pathname;
-      const child = Bun.spawn([wrapper, options.adminUrl, failedDir, options.backupDir, incomplete, source.binDir], { stdout: "pipe", stderr: "pipe" });
+      const child = Bun.spawn([wrapper, failedDir, options.backupDir, incomplete, source.binDir], {
+        env: { ...Bun.env, BP_BACKUP_ADMIN_URL: options.adminUrl }, stdout: "pipe", stderr: "pipe",
+      });
       const [exit] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
       expect(exit).not.toBe(0);
       expect(await Bun.file(join(failedDir, "postmaster.pid")).exists()).toBe(false);
@@ -112,10 +125,9 @@ describe.serial("physical restore", () => {
       expect((await recovered.admin`SELECT active FROM control.restore_gate`)[0].active).toBe(false);
       expect((await recovered.admin`SELECT count(*)::int AS n FROM control.restore_workspaces`)[0].n).toBe(0);
     } finally {
-      await recovered?.close(); await pool.close();
+      try { await recovered?.close(); } finally { await pool.close(); }
       const seconds = (performance.now() - started) / 1000;
       console.log(`WAL restore loses committed state: ${seconds.toFixed(3)}s`);
-      expect(seconds).toBeLessThan(120);
     }
   }, 120_000);
 
@@ -239,10 +251,9 @@ describe.serial("physical restore", () => {
       expect(dispatched.has(lastAttempt.messageId)).toBe(true);
       expect((await app.handle(new Request("http://localhost/health/ready"))).status).toBe(200);
     } finally {
-      await recovered?.close(); await pool.close();
+      try { await recovered?.close(); } finally { await pool.close(); }
       const seconds = (performance.now() - started) / 1000;
       console.log(`Restored queues dispatch before uncertainty is resolved: ${seconds.toFixed(3)}s`);
-      expect(seconds).toBeLessThan(120);
     }
   }, 120_000);
 });

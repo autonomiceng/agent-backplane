@@ -155,7 +155,7 @@ recover deleted object bytes.
 
 ## Upgrades
 
-When a migration takes exclusive locks, including 000028 and 000030, run
+When a migration takes exclusive locks, including 000028, 000030 and 000031, run
 `docker compose stop server` before `docker compose up -d --wait` with the same
 project, env file and overlays. The one-shot migration must finish before traffic
 resumes. Rolling upgrades are unsupported.
@@ -165,3 +165,9 @@ to their existing Compose prefix before preparing or upgrading. Confirm the rend
 volume names with `docker compose --env-file .env config -q`; never substitute fresh
 volumes for an existing installation. Keep pre-image Checkpoints and their original
 server image separately; the new automatic image recovery requires a new Checkpoint.
+
+The legacy wrappers require `BP_BACKUP_ADMIN_URL` in the process environment and
+accept `DATA_DIR BACKUP_DIR ARCHIVE_DIR PG_BIN_DIR` as positional arguments. Load
+the credential through the operator’s secret mechanism; keep it out of argv and
+shell history. Untrusted processes sharing the operator UID can read environment
+credentials; isolate those workloads under a separate UID or equivalent boundary.

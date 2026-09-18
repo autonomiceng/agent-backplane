@@ -13,7 +13,7 @@ test("failed upload leaves committed metadata, or cleanup destroys an uncertain 
     expect(await f.pool`SELECT id FROM control.blobs WHERE workspace_id=${f.workspaceId}`).toHaveLength(0);
     expect((await f.audit()).filter((e) => e.kind === "blob.put")).toHaveLength(0);
     expect(await f.objects()).toHaveLength(0);
-    f.faults("commit"); const committed = await uploaded(await f.put("committed"));
+    f.faults("commit"); const committed = await uploaded(await f.put("committed", "private bytes", { ...f.headers, "content-type": "Application/Octet-Stream; charset=binary" }));
     expect(await (await f.get(committed.id)).text()).toBe("private bytes");
     const stageId = crypto.randomUUID(), finalId = crypto.randomUUID();
     await withRunContext(f.pool, f, async () => {
@@ -43,3 +43,21 @@ test("failed upload leaves committed metadata, or cleanup destroys an uncertain 
     await expect(f.disk.open(f.workspaceId, expiring.id)).rejects.toThrow();
   } finally { await f.close(); }
 }, 30000);
+
+test("stalled storage upload expires its transaction without committing blob metadata", async () => {
+  const f = await fixture();
+  const stage = f.store.stage;
+  try {
+    f.store.stage = async (...args) => {
+      await stage(...args);
+      await Bun.sleep(10_100);
+    };
+    const response = await f.put("stalled");
+    expect(response.status).toBe(503);
+    expect(await f.pool`SELECT id FROM control.blobs WHERE workspace_id=${f.workspaceId}`).toHaveLength(0);
+    expect((await f.audit()).filter((event) => event.kind === "blob.put")).toHaveLength(0);
+    f.store.stage = stage;
+    const next = await uploaded(await f.put("after-stall"));
+    expect(await (await f.get(next.id)).text()).toBe("private bytes");
+  } finally { f.store.stage = stage; await f.close(); }
+}, 20_000);

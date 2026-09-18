@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { frames, nextFrame } from "./testing/frames.ts";
 import { createPool } from "../platform/pool.ts";
 import { migratedDatabase } from "../testing/postgres.ts";
 import { validateStreamCursor } from "./stream-audit-input.ts";
@@ -20,14 +21,12 @@ test("expired, foreign, malformed, or overflow cursors silently start a fresh su
     const bootstrap = await open();
     expect(bootstrap.status).toBe(200);
     expect(bootstrap.headers.get("content-type")).toBe("text/event-stream; charset=utf-8");
-    const reader = must(bootstrap.body).getReader();
-    const ready = new TextDecoder().decode((await reader.read()).value);
-    expect(ready).toStartWith("event: ready\n");
-    const state = JSON.parse(must(must(ready.split("data: ")[1]).split("\n")[0])) as {
-      generation: string; head: string; retentionFloor: string; after: string;
-    };
+    const reader = frames(must(bootstrap.body));
+    const ready = await nextFrame(reader);
+    expect(ready.event).toBe("ready");
+    const state = ready.data;
     expect(state).toMatchObject({ after: "0", retentionFloor: "0" });
-    await reader.cancel();
+    await reader.return();
     const id = `v1:${workspaceId}:${state.generation}:${state.head}`;
     const unknown = crypto.randomUUID();
     const expired = { error: "cursor_expired", resync: true, generation: state.generation, head: state.head, retentionFloor: "0" };
@@ -59,11 +58,11 @@ test("expired, foreign, malformed, or overflow cursors silently start a fresh su
     expect(unknownQuery.status).toBe(422);
     const precedence = await open("?since=broken&generation=broken", id);
     expect(precedence.status).toBe(200);
-    const resumed = must(precedence.body).getReader();
-    const resumedReady = new TextDecoder().decode((await resumed.read()).value);
-    expect(resumedReady).toContain(`id: ${id}\n`);
-    expect(resumedReady).toContain(`"after":"${state.head}"`);
-    await resumed.cancel();
+    const resumed = frames(must(precedence.body));
+    const resumedReady = await nextFrame(resumed);
+    expect(resumedReady.id).toBe(id);
+    expect(resumedReady.data.after).toBe(state.head);
+    await resumed.return();
     const head = await open(`?since=${state.head}&generation=${state.generation}`);
     expect(head.status).toBe(200);
     await must(head.body).cancel();

@@ -67,6 +67,9 @@ test("a stale or already-decided Approval appears successful in the inbox", asyn
     const decidedPage = await f.app.handle(new Request(`${listUrl}?state=decided`, { headers: f.userHeaders }));
     expect(decidedPage.status).toBe(200);
     expect((await decidedPage.json() as ApprovalsPage).items.map((item) => [item.id, item.decision])).toEqual([[decided.id, "approve"], [fresh.id, "approve"]]);
+    const invalidLimit = await f.app.handle(new Request(`${listUrl}?limit=abc`, { headers: f.userHeaders }));
+    expect(invalidLimit.status).toBe(422);
+    expect(await invalidLimit.json()).toEqual({ error: "invalid_input" });
     const crossedCursor = await f.app.handle(new Request(`${listUrl}?state=decided&after=${cursor}`, { headers: f.userHeaders }));
     expect(crossedCursor.status).toBe(422);
     expect(await crossedCursor.json()).toEqual({ error: "invalid_input" });

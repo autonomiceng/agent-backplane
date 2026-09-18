@@ -1,4 +1,4 @@
-// SSE responses become one JSON line per data frame; heartbeat comments carry no output.
+// SSE responses become one JSON line per data frame; heartbeats carry no output.
 export async function events(response: Response, write: (text: string) => void, signal?: AbortSignal): Promise<void> {
   const reader = response.body?.getReader();
   if (!reader) return;
@@ -8,7 +8,7 @@ export async function events(response: Response, write: (text: string) => void, 
   let pending = "", id = "", event = "message", data: string[] = [];
   const line = (text: string) => {
     if (!text) {
-      if (data.length) { const raw = data.join("\n"); let value: unknown; try { value = JSON.parse(raw); } catch { value = raw; } write(`${JSON.stringify({ id, event, data: value })}\n`); }
+      if (data.length && event !== "heartbeat") { const raw = data.join("\n"); let value: unknown; try { value = JSON.parse(raw); } catch { value = raw; } write(`${JSON.stringify({ id, event, data: value })}\n`); }
       event = "message"; data = []; return;
     }
     const colon = text.indexOf(":"), field = colon < 0 ? text : text.slice(0, colon), value = colon < 0 ? "" : text.slice(colon + 1).replace(/^ /, "");

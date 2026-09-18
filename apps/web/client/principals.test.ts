@@ -65,6 +65,9 @@ test("UI reports a rejected revocation as successful", async () => {
     expect(client.getSnapshot().items[0]?.status).toBe("active");
     expect(renderPrincipals(client)).toContain('role="alert">origin_forbidden');
     expect(renderPrincipals(client)).not.toContain("Principal revoked.");
+    expect(renderPrincipals(client)).toContain(">Close</button>");
+    client.cancel();
+    expect(client.getSnapshot().revocation).toBeNull();
     const begun = await f.list("?state=begun", f.userHeaders);
     expect(begun.status).toBe(200);
     expect(await begun.json()).toMatchObject({ items: [{ id: claim.deliveryId, state: "begun" }] });
@@ -80,6 +83,9 @@ test("UI reports a rejected revocation as successful", async () => {
     expect(client.getSnapshot().items[0]?.status).toBe("revoked");
     expect(renderPrincipals(client)).toContain("Principal revoked.");
     expect(renderPrincipals(client)).toContain("1 Effects paused by this request.");
+    expect(renderPrincipals(client)).toContain(">Close</button>");
+    client.cancel();
+    expect(renderPrincipals(client)).not.toContain("Principal revoked.");
     const paused = await f.list("?state=effect-paused", f.userHeaders);
     expect(paused.status).toBe(200);
     expect(await paused.json()).toMatchObject({ items: [{ id: claim.deliveryId, state: "effect-paused" }] });

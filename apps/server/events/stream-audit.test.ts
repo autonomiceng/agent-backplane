@@ -3,39 +3,11 @@ import { createPool } from "../platform/pool.ts";
 import { adminUrl } from "../testing/postgres.ts";
 import { applyMigration, createRun, migrationFixture } from "../testing/session.ts";
 import type { AuditPage } from "./read-audit-input.ts";
+import { frames, nextFrame } from "./testing/frames.ts";
 
 function must<T>(value: T | undefined | null): T {
   if (value === undefined || value === null) throw new Error("expected fixture value");
   return value;
-}
-
-async function* frames(body: ReadableStream<Uint8Array>) {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let buffered = "";
-  try {
-    while (true) {
-      const next = await reader.read();
-      if (next.done) return;
-      buffered += decoder.decode(next.value, { stream: true });
-      let end: number;
-      while ((end = buffered.indexOf("\n\n")) >= 0) {
-        const frame = buffered.slice(0, end);
-        buffered = buffered.slice(end + 2);
-        const lines = frame.split("\n");
-        yield { event: lines.find((line) => line.startsWith("event: "))?.slice(7),
-          id: lines.find((line) => line.startsWith("id: "))?.slice(4),
-          data: JSON.parse(lines.find((line) => line.startsWith("data: "))?.slice(6) ?? "null") as
-            AuditPage["events"][number] & { head: string; generation: string } };
-      }
-    }
-  } finally { await reader.cancel(); }
-}
-
-async function nextFrame(stream: ReturnType<typeof frames>) {
-  const next = await stream.next();
-  if (next.done) throw new Error("stream ended before the expected frame");
-  return next.value;
 }
 
 test("reconnect skips or duplicates committed events across batches and an in-flight lower writer", async () => {

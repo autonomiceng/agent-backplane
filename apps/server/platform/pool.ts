@@ -5,8 +5,8 @@ export const poolLimit = 10;
 const observations = new WeakMap<Pool, { inUse: number; waiting: number }>();
 export function poolSnapshot(pool: Pool) { return observations.get(pool) ?? null; }
 
-export function createPool(databaseUrl: string): Pool {
-  const sql = new SQL({ url: databaseUrl, max: poolLimit, connectionTimeout: 5, idleTimeout: 30 });
+export function createPool(databaseUrl: string, max = poolLimit): Pool {
+  const sql = new SQL({ url: databaseUrl, max, connectionTimeout: 5, idleTimeout: 30 });
   const counts = { inUse: 0, waiting: 0 };
   const reserve = async (options?: { signal?: AbortSignal }) => {
     counts.waiting++;

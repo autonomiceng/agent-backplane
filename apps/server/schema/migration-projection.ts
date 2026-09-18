@@ -41,7 +41,7 @@ export function createMigrationProjection(pool: Pool, dataDir: string, logger: P
       if (!/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(workspaceId)) throw new Error("invalid_workspace");
       let page = await listMigrations(pool, workspaceId, { limit: 100 });
       revision = page.currentRevision;
-      const entries: (MigrationEntry & { filename: string })[] = [];
+      const entries: (Omit<MigrationEntry, "sql"> & { filename: string })[] = [];
       const parent = resolve(dataDir, "projections"), root = join(parent, workspaceId);
       stage = "files";
       await directory(parent);
@@ -55,7 +55,8 @@ export function createMigrationProjection(pool: Pool, dataDir: string, logger: P
           const slug = row.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 80).replace(/^-|-$/g, "") || "migration";
           const filename = `${String(row.revision).padStart(4, "0")}-${slug}.sql`;
           await atomic(join(migrations, filename), row.sql);
-          entries.push({ ...row, filename });
+          const { sql: _sql, ...metadata } = row;
+          entries.push({ ...metadata, filename });
         }
         if (page.nextAfterRevision === null) break;
         page = await listMigrations(pool, workspaceId, { limit: 100, afterRevision: page.nextAfterRevision }, revision);

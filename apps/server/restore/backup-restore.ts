@@ -60,7 +60,8 @@ export async function backup(options: Options, afterCopy?: () => Promise<void>, 
     const before = await snapshot(sql);
     await sql`SELECT pg_backup_start(${name},true)`; started = true;
     await cp(dataDir, join(backupDir, "data"), { recursive: true, dereference: true, filter: (path) =>
-      !["pg_wal", "postmaster.pid", "postmaster.opts", "log"].includes(relative(dataDir, path).split("/")[0] ?? "") });
+      !["pg_wal", "postmaster.pid", "postmaster.opts", "log"].includes(relative(dataDir, path).split("/")[0] ?? "")
+      && !relative(dataDir, path).startsWith(`pg_replslot${sep}`) });
     await afterCopy?.();
     const [stop] = await sql`SELECT * FROM pg_backup_stop(false)`; started = false;
     await writeFile(join(backupDir, "data/backup_label"), stop.labelfile);
@@ -138,9 +139,11 @@ export async function restore(options: Options): Promise<{ epoch: string; active
   }
 }
 if (import.meta.main) {
-  const [command, adminUrl, dataDir, backupDir, archiveDir, binDir] = Bun.argv.slice(2);
+  const [command, dataDir, backupDir, archiveDir, binDir] = Bun.argv.slice(2);
+  // The operator must isolate this process from untrusted processes sharing its UID.
+  const adminUrl = Bun.env.BP_BACKUP_ADMIN_URL;
   if ((command !== "backup" && command !== "restore") || !adminUrl || !dataDir || !backupDir || !archiveDir || !binDir) {
-    throw new Error("usage: backup|restore ADMIN_URL DATA_DIR BACKUP_DIR ARCHIVE_DIR PG_BIN_DIR");
+    throw new Error("usage: BP_BACKUP_ADMIN_URL required; backup|restore DATA_DIR BACKUP_DIR ARCHIVE_DIR PG_BIN_DIR");
   }
   const options = { adminUrl, dataDir: resolve(dataDir), backupDir: resolve(backupDir), archiveDir: resolve(archiveDir), binDir: resolve(binDir) };
   console.log(JSON.stringify(await (command === "backup" ? backup(options) : restore(options))));

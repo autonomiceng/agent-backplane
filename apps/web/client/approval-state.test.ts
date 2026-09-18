@@ -44,6 +44,9 @@ test("late refreshes erase decision conflicts or restore pending after success",
   expect(reduceApprovals(state, { type: "list-result", epoch: 0, requestId: 9, result: page })).toEqual(state);
   expect(reduceApprovals(state, { type: "decide-result", epoch: 0, requestId: 6, id: success.id, outcome })).toEqual(state);
   expect(state.submissions).toEqual({});
+  state = reduceApprovals(state, { type: "list-result", epoch: 1, requestId: 9, result: page });
+  expect(state).toMatchObject({ listId: null, pendingPage: null, error: "approval_workspace_mismatch", items: [] });
+  state = reduceApprovals(state, { type: "list-start", epoch: 1, requestId: 9, pagination });
   state = reduceApprovals(state, { type: "list-cancel", epoch: 1, requestId: 9 });
   expect(state).toMatchObject({ listId: null, pendingPage: null, error: null });
   expect(reduceApprovals(state, { type: "list-result", epoch: 1, requestId: 9, result: "approval_unavailable" })).toEqual(state);

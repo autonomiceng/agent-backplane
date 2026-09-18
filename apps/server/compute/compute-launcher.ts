@@ -16,16 +16,26 @@ export function createComputeLauncher(config: { url: string | undefined; token: 
   } catch { /* Configuration failure is reported only by compute routes. */ }
   return { runtimeDigest, timeoutMs: endpoint ? timeoutMs : 10000, async invoke(invocation, signal) {
     if (!endpoint) throw new Error("compute_unavailable");
-    return fetch(new URL(endpoint.href.replace(/\/prepare$/, "/invoke")), { method: "POST",
-      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-      body: JSON.stringify(invocation), signal, redirect: "manual" });
+    try {
+      return await fetch(new URL(endpoint.href.replace(/\/prepare$/, "/invoke")), { method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify(invocation), signal, redirect: "manual" });
+    } catch (error) {
+      if (signal.aborted) throw error;
+      throw new Error("compute_unavailable");
+    }
   }, async prepare(manifest, signal) {
     if (!endpoint) return computeFailure("compute_unavailable");
-    const response = await fetch(endpoint, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-      body: JSON.stringify(manifest), signal, redirect: "error" });
-    await response.body?.cancel();
-    if (response.status === 422) return computeFailure("bundle_invalid");
-    return response.status === 204 ? computeSuccess(null) : computeFailure("compute_unavailable");
+    try {
+      const response = await fetch(endpoint, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify(manifest), signal, redirect: "error" });
+      await response.body?.cancel();
+      if (response.status === 422) return computeFailure("bundle_invalid");
+      return response.status === 204 ? computeSuccess(null) : computeFailure("compute_unavailable");
+    } catch (error) {
+      if (signal.aborted) throw error;
+      return computeFailure("compute_unavailable");
+    }
   } };
 }
 export async function prepareDeployment(launcher: ComputeLauncher, manifest: Manifest): Promise<ComputeResult<null>> {

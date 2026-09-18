@@ -52,7 +52,15 @@ test("adapter reconnect loses the Workspace cursor, duplicates sources or events
     expect(published.at(-1)?.resumeId).toBe(id("3"));
 
     opening = Promise.withResolvers<FakeEventSource>();
-    first.dispatchEvent(new Event("error"));
+    jest.advanceTimersByTime(20000);
+    first.frame("heartbeat", {}, id("3"));
+    jest.advanceTimersByTime(20000);
+    expect(first.closed).toBe(false);
+    first.frame("audit", { ...event("3"), run_id: "other" }, id("3"));
+    jest.advanceTimersByTime(29999);
+    expect(first.closed).toBe(false);
+    jest.advanceTimersByTime(51);
+    expect(published.at(-1)?.phase).not.toBe("live");
     first.dispatchEvent(new Event("error"));
     expect(first.closed).toBe(true);
     jest.advanceTimersByTime(1000);

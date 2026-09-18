@@ -7364,6 +7364,24 @@
       },
       "description": "Response for status 200"
     },
+    "400": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "properties": {
+              "error": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "error"
+            ],
+            "type": "object"
+          }
+        }
+      },
+      "description": "Response for status 400"
+    },
     "401": {
       "content": {
         "application/json": {
@@ -7399,6 +7417,60 @@
         }
       },
       "description": "Response for status 403"
+    },
+    "404": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "properties": {
+              "error": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "error"
+            ],
+            "type": "object"
+          }
+        }
+      },
+      "description": "Response for status 404"
+    },
+    "409": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "properties": {
+              "error": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "error"
+            ],
+            "type": "object"
+          }
+        }
+      },
+      "description": "Response for status 409"
+    },
+    "410": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "properties": {
+              "error": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "error"
+            ],
+            "type": "object"
+          }
+        }
+      },
+      "description": "Response for status 410"
     },
     "422": {
       "content": {
@@ -13940,6 +14012,7 @@
                   "invalid_input",
                   "unauthorized",
                   "workspace_forbidden",
+                  "invocation_scope_forbidden",
                   "stream_limit_exceeded",
                   "events_unavailable",
                   "event_too_large",
@@ -13967,6 +14040,7 @@
                   "invalid_input",
                   "unauthorized",
                   "workspace_forbidden",
+                  "invocation_scope_forbidden",
                   "stream_limit_exceeded",
                   "events_unavailable",
                   "event_too_large",
@@ -14031,6 +14105,7 @@
                   "invalid_input",
                   "unauthorized",
                   "workspace_forbidden",
+                  "invocation_scope_forbidden",
                   "stream_limit_exceeded",
                   "events_unavailable",
                   "event_too_large",
@@ -14058,6 +14133,7 @@
                   "invalid_input",
                   "unauthorized",
                   "workspace_forbidden",
+                  "invocation_scope_forbidden",
                   "stream_limit_exceeded",
                   "events_unavailable",
                   "event_too_large",
@@ -14085,6 +14161,7 @@
                   "invalid_input",
                   "unauthorized",
                   "workspace_forbidden",
+                  "invocation_scope_forbidden",
                   "stream_limit_exceeded",
                   "events_unavailable",
                   "event_too_large",

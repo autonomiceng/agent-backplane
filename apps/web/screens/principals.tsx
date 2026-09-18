@@ -56,6 +56,7 @@ export function PrincipalsView({ state, actions }: { state: PrincipalsState; act
       {pending && <p role="status">Revoking</p>}
       {selected.error && <p role="alert">{selected.error}</p>}
       {(selected.phase === "failed" || selected.phase === "outcome-unknown") && <button onClick={() => actions.select(selected.principal)}>Retry revocation</button>}
+      {selected.phase !== "confirming" && !pending && <button onClick={actions.cancel}>Close</button>}
       {selected.phase === "confirmed" && <div role="status"><p>Principal revoked.</p>
         <p>{selected.effectsPausedThisRequest} Effects paused by this request.</p>
         <p>Zero does not describe Effects paused by earlier requests.</p></div>}

@@ -59,8 +59,11 @@ test("unauthorized credentials or a requester changing Runs gain approval author
     expect(await f.pool<{ decision: string | null }[]>`SELECT decision FROM control.approvals WHERE id = ${approval.id}`).toEqual([{ decision: null }]);
     expect(await f.pool<{ position: bigint }[]>`SELECT position FROM audit.events WHERE kind = 'approval.decide'`).toEqual([]);
     expect(await f.admin<{ id: string }[]>`SELECT id FROM queue.deliveries WHERE parent_id = ${original.deliveryId}`).toEqual([]);
-    expect((await f.call("/approvals/settings", { allowSelfApproval: true }, f.userHeaders, "PUT")).status).toBe(200);
-    expect((await f.call("/approvals/settings", { allowSelfApproval: true }, f.userHeaders, "PUT")).status).toBe(200);
+    const settings = await Promise.all([
+      f.call("/approvals/settings", { allowSelfApproval: true }, f.userHeaders, "PUT"),
+      f.call("/approvals/settings", { allowSelfApproval: true }, f.userHeaders, "PUT"),
+    ]);
+    expect(settings.map((response) => response.status)).toEqual([200, 200]);
     expect((await f.decide(approval.id, selfHeaders)).status).toBe(200);
     const [decision] = await f.pool<{ principal_id: string; run_id: string; metadata: string }[]>`
       SELECT principal_id, run_id, metadata::text FROM audit.events WHERE kind = 'approval.decide'`;

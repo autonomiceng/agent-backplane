@@ -1,11 +1,11 @@
 // Inbox reads accept either actor without a Run and record authenticated key use.
-import { Elysia, t } from "elysia";
+import { Elysia } from "elysia";
 import type { Auth } from "../auth/auth.ts";
 import { eitherSession } from "../auth/either-session.ts";
 import type { Pool } from "../platform/pool.ts";
 import { listApprovalsInput, listApprovalsResponse } from "./list-approvals-input.ts";
 import { approvalParams } from "./request-input.ts";
-import { validationError } from "../auth/validation-error.ts";
+import { approvalFailures, approvalValidation } from "./approval-input.ts";
 import { listApprovals } from "./list-approvals.ts";
 
 export function listApprovalsRoute(pool: Pool, auth: Auth) {
@@ -28,12 +28,9 @@ export function listApprovalsRoute(pool: Pool, auth: Auth) {
       query: listApprovalsInput,
       response: {
         200: listApprovalsResponse,
-        401: t.Object({ error: t.String() }),
-        403: t.Object({ error: t.String() }),
-        422: t.Object({ error: t.String() }),
-        503: t.Object({ error: t.String() }),
+        ...approvalFailures,
       },
-      error: validationError,
+      error: approvalValidation,
       detail: { "x-backplane-auth": "either", "x-backplane-run": "none", operationId: "listApprovals", tags: ["approvals"] },
     },
   );

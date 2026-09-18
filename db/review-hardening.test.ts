@@ -1,10 +1,12 @@
 // Exercise the privileged boundary and setup retry against owned PostgreSQL clusters.
 import { expect, test } from "bun:test";
 import { SQL } from "bun";
+import { loadMigrations, migrate } from "./migrations.ts";
+import { sqlMigrationRunner } from "./sql-migration-runner.ts";
 import { createPool } from "../apps/server/platform/pool.ts";
 import { withRunContext } from "../apps/server/runs/with-run-context.ts";
-import { migratedDatabase, startCluster } from "../apps/server/testing/postgres.ts";
-import { principalFixture, issueKey, createRun } from "../apps/server/testing/session.ts";
+import { adminUrl, migratedDatabase, startCluster } from "../apps/server/testing/postgres.ts";
+import { principalFixture, issueKey, createRun, testApp } from "../apps/server/testing/session.ts";
 
 test("a forged Principal role cannot grant server access to another role", async () => {
   const pool = createPool(await migratedDatabase());
@@ -42,3 +44,23 @@ test("failed login initialization is retryable after the role becomes available"
     } finally { await sql.close(); }
   } finally { await cluster.stop(); }
 }, 15_000);
+
+
+test("the auth timestamp upgrade preserves a session after the required server restart", async () => {
+  const url = await migratedDatabase(undefined, 30);
+  const before = createPool(url), admin = new SQL(adminUrl(url));
+  let after: ReturnType<typeof createPool> | undefined;
+  try {
+    const fixture = await principalFixture(before);
+    await before.close();
+    await migrate(sqlMigrationRunner(admin), await loadMigrations(new URL("./migrations", import.meta.url).pathname));
+    after = createPool(url);
+    const app = await testApp(after);
+    const response = await app.handle(new Request("http://localhost/api/v1/workspaces", {
+      method: "POST", headers: { cookie: fixture.cookie, origin: "http://localhost", "content-type": "application/json" },
+      body: JSON.stringify({ name: "Upgraded workspace" }),
+    }));
+    expect(response.status).toBe(201);
+    expect((await response.json()).id).toBeString();
+  } finally { await before.close(); await after?.close(); await admin.close(); }
+});

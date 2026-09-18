@@ -13,7 +13,8 @@ test("Projection failure changes a committed Migration or prevents ledger-driven
   try {
     const logger = { error: (value: unknown) => { logs.push(value); } };
     let projection = createMigrationProjection(f.pool, directory, logger, null);
-    const app = await testApp(f.pool, { migrationProjection: { project: (context) => projection.project(context) } });
+    let projected: ReturnType<typeof projection.project> | undefined;
+    const app = await testApp(f.pool, { migrationProjection: { project: (context) => projected = projection.project(context) } });
     const url = `http://localhost/api/v1/workspaces/${f.workspaceId}/migrations`, root = join(directory, "projections", f.workspaceId);
     const rebuild = (headers: Record<string, string> = { cookie: f.cookie }) => app.handle(new Request(`${url}/projection`, {
       method: "POST", headers: { "content-type": "application/json", origin: "http://localhost", ...headers }, body: "{}",
@@ -42,6 +43,7 @@ test("Projection failure changes a committed Migration or prevents ledger-driven
     expect(ledger[0]).toMatchObject({ sql, revision: 1, applied_by: f.principalId, run_id: f.runId });
     expect(await f.pool<{ principal_id: string; run_id: string }[]>`SELECT principal_id, run_id FROM audit.events WHERE workspace_id = ${f.workspaceId} AND kind = 'migration.applied'`)
       .toEqual([{ principal_id: f.principalId, run_id: f.runId }]);
+    await projected;
     expect(logs).toHaveLength(1);
     expect(logs[0]).toMatchObject({ workspaceId: f.workspaceId, revision: 1, stage: "files", error: "projection_unavailable" });
     await rm(join(directory, "projections"));
@@ -56,8 +58,9 @@ test("Projection failure changes a committed Migration or prevents ledger-driven
     const file = join(root, "migrations", "0001-fixture.sql");
     expect(await readFile(file)).toEqual(Buffer.from(sql));
     const manifest = JSON.parse(await readFile(join(root, "manifest.json"), "utf8"));
-    expect(manifest).toMatchObject({ workspaceId: f.workspaceId, revision: 1, migrations: [{ sql, sqlHash: applied.sqlHash,
+    expect(manifest).toMatchObject({ workspaceId: f.workspaceId, revision: 1, migrations: [{ sqlHash: applied.sqlHash,
       appliedBy: f.principalId, runId: f.runId, filename: "0001-fixture.sql", appliedAt: applied.appliedAt }] });
+    expect(manifest.migrations[0]).not.toHaveProperty("sql");
     const caughtUp = await rebuild();
     expect(caughtUp.status).toBe(200);
     const git = await caughtUp.json() as ProjectionResponse;
@@ -75,6 +78,7 @@ test("Projection failure changes a committed Migration or prevents ledger-driven
     expect(await readFile(file)).toEqual(Buffer.from(sql));
     expect(await readdir(join(root, "migrations"))).toEqual(["0001-fixture.sql"]);
     await applyMigration(app, f.key, f.runId, f.workspaceId, "ALTER TABLE projected ADD COLUMN note text", 1);
+    await projected;
     expect(await readFile(join(root, "migrations", "0002-fixture.sql"), "utf8")).toBe("ALTER TABLE projected ADD COLUMN note text");
     expect(await f.pool`SELECT * FROM control.workspace_migrations WHERE workspace_id = ${f.workspaceId} AND revision = 1`).toEqual(ledger);
     const queued = await Promise.all([projection.project(context), projection.project(context), projection.project(context)]);

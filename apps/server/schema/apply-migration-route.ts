@@ -18,7 +18,7 @@ export function applyMigrationRoute(pool: Pool, projection?: MigrationProjection
         ...(result.sqlstate ? { sqlstate: result.sqlstate } : {}),
         ...(result.statementIndex !== undefined ? { statementIndex: result.statementIndex } : {}) },
       { status: result.status, headers: { "cache-control": "no-store" } });
-      await projection?.project(run).catch(() => undefined);
+      void projection?.project(run).catch(() => undefined);
       return Response.json(result.response, { status: 201, headers: { "cache-control": "no-store" } });
     },
     { run: true, transform({ set }) { set.headers["cache-control"] = "no-store"; },

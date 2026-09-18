@@ -55,13 +55,19 @@ export function filesystemStore(dataDir: string): BlobStore {
       await path(workspace, { id: workspace, staging: false });
       const dir = scans.get(workspace) ?? await opendir(join(root, workspace)); scans.set(workspace, dir);
       const refs: BlobRef[] = [];
-      for (let n = 0; n < 64; n++) {
-        const entry = await dir.read();
-        if (!entry) { await dir.close(); scans.delete(workspace); break; }
-        const id = entry.name.replace(/\.stage$/, "");
-        if (blobUuid.test(id)) refs.push({ id, staging: entry.name.endsWith(".stage") });
+      try {
+        for (let n = 0; n < 64; n++) {
+          const entry = await dir.read();
+          if (!entry) { scans.delete(workspace); await dir.close(); break; }
+          const id = entry.name.replace(/\.stage$/, "");
+          if (blobUuid.test(id)) refs.push({ id, staging: entry.name.endsWith(".stage") });
+        }
+        return refs;
+      } catch (error) {
+        scans.delete(workspace);
+        await dir.close().catch(() => {});
+        throw error;
       }
-      return refs;
     },
   };
 }

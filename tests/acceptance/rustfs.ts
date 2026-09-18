@@ -169,7 +169,8 @@ async function transportScenario() {
   const listings: URL[] = [];
   const proxy = Bun.serve({ hostname: "0.0.0.0", port: 0, async fetch(request) {
     const url = new URL(request.url); if (url.searchParams.has("list-type")) listings.push(url);
-    return fetch(`http://rustfs:9000${url.pathname}${url.search}`, { method: request.method, headers: request.headers,
+    const headers = new Headers(request.headers); headers.set("host", url.host);
+    return fetch(`http://rustfs:9000${url.pathname}${url.search}`, { method: request.method, headers,
       ...(request.method === "PUT" ? { body: await request.arrayBuffer() } : {}), redirect: "error" });
   } });
   const endpoint = `http://localhost:${proxy.port}`, disk = s3Store(options(endpoint));
@@ -179,8 +180,11 @@ async function transportScenario() {
     async promote(w: string, id: string, bytes: Uint8Array) { await disk.promote(w, id, bytes); if (failure === "final") throw new Error("promotion_failed"); },
     async remove(w: string, ref: { id: string; staging: boolean }) { if (blockRemoval) throw new Error("delete_failed"); await disk.remove(w, ref); },
   };
-  const f = await fixture(storage), other = await fixture(s3Store(options()));
+  const cleanup: (() => Promise<unknown> | unknown)[] = [];
+  let failed = false, cleanupFailed = false;
   try {
+    const f = await fixture(storage); cleanup.push(() => f.close());
+    const other = await fixture(s3Store(options())); cleanup.push(() => other.close());
     const bytes = Buffer.from("RustFS\0presigned transport\n"), keep = await uploaded(await f.put("keep", bytes));
     assert.equal(keep.sha256, blobHash(bytes));
     assert.deepEqual(Buffer.from(await (await f.get(keep.id)).arrayBuffer()), bytes);
@@ -210,7 +214,17 @@ async function transportScenario() {
     assert.equal(await (await other.get(foreign.id)).text(), "other Workspace");
     assert.deepEqual(await inventory(other.workspaceId), [`${other.workspaceId}/${foreign.id}`]);
     assert.equal((await f.del(keep.id)).status, 204); assert.deepEqual(await inventory(f.workspaceId), []);
-  } finally { blockRemoval = false; failure = ""; await f.close(); await other.close(); await proxy.stop(true); }
+  } catch (error) { failed = true; throw error; }
+  finally {
+    blockRemoval = false; failure = "";
+    const results = await Promise.allSettled(cleanup.map(close => Promise.resolve().then(close)));
+    results.push(...await Promise.allSettled([Promise.resolve().then(() => proxy.stop(true))]));
+    if (results.some(result => result.status === "rejected")) {
+      if (failed) console.error("RustFS transport cleanup also failed");
+      cleanupFailed = true;
+    }
+  }
+  if (cleanupFailed) throw new Error("RustFS transport cleanup failed");
 }
 
 type RecoveryState = { database: string; workspaceId: string; principalId: string; runId: string; cookie: string; key: string; keep: string; orphan: string };
@@ -238,8 +252,10 @@ async function commitScenario() {
 async function recoveryScenario() {
   const state: RecoveryState = await Bun.file(exchange).json();
   const pool = createPool(`postgres://bp_server:bp_server@restored-postgres:55432/${state.database}`), disk = s3Store(options());
+  const appCleanups: (() => Promise<void>)[] = [];
+  let cleanupFailed = false;
   try {
-    const app = await testApp(pool, { blobStore: disk });
+    const app = await testApp(pool, { blobStore: disk }, cleanup => appCleanups.push(cleanup));
     const [gate] = await pool`SELECT epoch,active FROM control.restore_gate WHERE singleton`; assert.equal(gate.active, true);
     const before = await inventory(state.workspaceId);
     assert.deepEqual(before, [`${state.workspaceId}/${state.keep}`, `${state.workspaceId}/${state.orphan}`].sort());
@@ -251,13 +267,18 @@ async function recoveryScenario() {
     const download = await app.handle(new Request(`${base}/blobs/${state.keep}`, { headers }));
     assert.equal(download.status, 200); assert.equal(await download.text(), "private bytes");
     const released = await app.handle(new Request(`${base}/restore/release`, { method: "POST",
-      headers: { cookie: state.cookie, "content-type": "application/json" }, body: JSON.stringify({ epoch: gate.epoch, sourceFenced: true }) }));
+      headers: { cookie: state.cookie, origin: "http://localhost", "content-type": "application/json" }, body: JSON.stringify({ epoch: gate.epoch, sourceFenced: true }) }));
     assert.equal(released.status, 200); assert.equal((await released.json()).done, true);
     const [after] = await pool`SELECT active FROM control.restore_gate WHERE singleton`; assert.equal(after.active, false);
     assert.equal(await cleanupBlobs(pool, state, disk), false);
     assert.deepEqual(await inventory(state.workspaceId), [`${state.workspaceId}/${state.keep}`]);
     assert.equal(blobHash(await disk.open(state.workspaceId, state.keep)), blobHash(Buffer.from("private bytes")));
-  } finally { await pool.close(); }
+  } finally {
+    const results = await Promise.allSettled([pool.close(), ...appCleanups.map(cleanup => cleanup())]);
+    cleanupFailed = results.some(result => result.status === "rejected");
+    if (cleanupFailed) console.error("recovery fixture cleanup failed");
+  }
+  if (cleanupFailed) throw new Error("recovery fixture cleanup failed");
 }
 
 async function orchestrate() {
@@ -291,7 +312,8 @@ async function orchestrate() {
         BP_ACCEPTANCE_DEBUG: Bun.env.BP_ACCEPTANCE_DEBUG ?? "",
         BP_BLOB_S3_ENDPOINT: "http://rustfs:9000", BP_BLOB_S3_REGION: "us-east-1" },
     },
-  }, volumes: { "acceptance-backup": {}, "restored-data": {}, ...Object.fromEntries(["postgres-data", "server-data", "rustfs-data"].map(name => [name, { external: false, name: `${project}_${name}` }])) } }));
+  }, networks: { platform: { external: false, name: `${project}-platform` } },
+    volumes: { "acceptance-backup": {}, "restored-data": {}, ...Object.fromEntries(["postgres-data", "server-data", "rustfs-data"].map(name => [name, { external: false, name: `${project}_${name}` }])) } }));
   const base = ["docker", "compose", "--project-name", project,
     "--project-directory", root, "-f", join(root, "compose.yaml"),
     "-f", join(root, "compose.blobs.yaml"), "-f", override, "--profile", "blobs"];

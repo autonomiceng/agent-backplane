@@ -10,10 +10,10 @@ export const streamReady = t.Object({ generation: t.String({ format: "uuid" }), 
 export const streamExpired = t.Object({ error: t.Literal("cursor_expired"), resync: t.Literal(true),
   generation: t.String({ format: "uuid" }), retentionFloor: t.String(), head: t.String() });
 export const streamErrorResponse = t.Object({ error: t.Union([
-  t.Literal("invalid_input"), t.Literal("unauthorized"), t.Literal("workspace_forbidden"),
+  t.Literal("invalid_input"), t.Literal("unauthorized"), t.Literal("workspace_forbidden"), t.Literal("invocation_scope_forbidden"),
   t.Literal("stream_limit_exceeded"), t.Literal("events_unavailable"), t.Literal("event_too_large"), t.Literal("slow_consumer"),
 ]) });
-export const streamFrames = { ready: streamReady, audit: auditEnvelope, error: t.Union([streamErrorResponse, streamExpired]) };
+export const streamFrames = { ready: streamReady, audit: auditEnvelope, heartbeat: t.Object({}), error: t.Union([streamErrorResponse, streamExpired]) };
 export type StreamError = typeof streamErrorResponse.static | typeof streamExpired.static;
 export type StreamCursor = { after: string; generation?: string; workspaceId?: string };
 export type CursorState = { generation: string; head: string; retentionFloor: string };
@@ -54,7 +54,8 @@ export function streamErrorStatus(error: StreamError): 401 | 403 | 409 | 422 | 4
   switch (error.error) {
     case "invalid_input": return 422;
     case "unauthorized": return 401;
-    case "workspace_forbidden": return 403;
+    case "workspace_forbidden":
+    case "invocation_scope_forbidden": return 403;
     case "cursor_expired": return 409;
     case "stream_limit_exceeded": return 429;
     default: return 503;

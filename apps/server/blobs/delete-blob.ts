@@ -7,7 +7,7 @@ import { recordRejection } from "../runs/record-rejection.ts";
 import { blobError, type BlobResult } from "./blob-result.ts";
 import { blobMetadata } from "./blob-metadata.ts";
 import type { BlobStore } from "./blob-store.ts";
-import { cleanupBlobs, sweepBlobs } from "./sweep-blobs.ts";
+import { cleanupBlobs } from "./sweep-blobs.ts";
 export async function deleteBlob(pool: Pool, context: RunContext, id: string, store?: BlobStore): Promise<BlobResult<null>> {
   if (!store) return { ok: false, error: "blob_unavailable" };
   let readyToCommit = false;
@@ -17,7 +17,6 @@ export async function deleteBlob(pool: Pool, context: RunContext, id: string, st
       const row = await blobMetadata(tx, context.workspaceId, id);
       if (!row) return { ok: false, error: "blob_not_found" };
       if ("principalId" in context && context.principalId !== row.principal_id) return { ok: false, error: "blob_forbidden" };
-      await sweepBlobs(tx, emit, context.workspaceId, store);
       await tx`DELETE FROM control.blobs WHERE workspace_id=${context.workspaceId} AND id=${id}`;
       await emit("blob.delete", [id], 1, {});
       readyToCommit = true;

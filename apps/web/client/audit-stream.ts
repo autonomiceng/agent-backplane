@@ -109,7 +109,11 @@ export function subscribeAudit(origin: string, workspaceId: string, runId: strin
     const signal = controller.signal;
     const epoch = state.epoch;
     const current = () => !stopped && !signal.aborted && epoch === state.epoch;
-    const timeout = setTimeout(() => fail(new Error("Handshake timed out"), epoch), 30000);
+    let timeout = setTimeout(() => fail(new Error("Handshake timed out"), epoch), 30000);
+    const keepAlive = () => {
+      clearTimeout(timeout);
+      timeout = setTimeout(() => fail(new Error("Stream stalled"), epoch), 30000);
+    };
     signal.addEventListener("abort", () => clearTimeout(timeout), { once: true });
     try {
       const bootstrap = state.generation === null || state.staged !== null;
@@ -140,7 +144,7 @@ export function subscribeAudit(origin: string, workspaceId: string, runId: strin
         try {
           const value: unknown = JSON.parse(frame.data);
           if (!isStreamReady(value)) throw new StreamFailure("protocol_error");
-          clearTimeout(timeout);
+          keepAlive();
           dispatch({ type: "ready", ready: value, id: frame.lastEventId, epoch });
           if (state.phase === "live") attempts = 0;
         } catch (error) { fail(error instanceof SyntaxError ? new StreamFailure("protocol_error") : error, epoch); }
@@ -150,10 +154,12 @@ export function subscribeAudit(origin: string, workspaceId: string, runId: strin
         try {
           const value: unknown = JSON.parse(frame.data);
           if (!isAuditEvent(value)) throw new StreamFailure("protocol_error");
+          keepAlive();
           dispatch({ type: "audit", event: value, id: frame.lastEventId, epoch });
           if (state.phase === "live") attempts = 0;
         } catch { fail(new StreamFailure("protocol_error"), epoch); }
       });
+      source.addEventListener("heartbeat", () => { if (current()) keepAlive(); });
       source.addEventListener("error", (frame) => {
         if (!current()) return;
         clearTimeout(timeout);

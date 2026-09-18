@@ -6,14 +6,14 @@ import { join } from "node:path";
 import { createEnrollment } from "../auth/enrollment.ts";
 import { capabilityPath } from "../auth/enrollment-file.ts";
 import { createApp, type App, type AppDeps } from "../app.ts";
-import { SQL } from "bun";
 import { createAuth } from "../auth/auth.ts";
-import type { Pool } from "../platform/pool.ts";
+import { createPool, type Pool } from "../platform/pool.ts";
 import type { RunContext } from "../runs/run-context.ts";
 import { withRunContext } from "../runs/with-run-context.ts";
 import { latestMigrationVersion, migratedDatabase } from "./postgres.ts";
 import type { ApplyInput, ApplyResponse } from "../schema/apply-migration-input.ts";
 
+type RegisterCleanup = (cleanup: () => Promise<void>) => void;
 const enrollmentDirs = new Map<App, string>();
 export async function signUp(app: App, email: string): Promise<string> {
   const dir = enrollmentDirs.get(app);
@@ -41,10 +41,10 @@ async function session(app: App, email: string, verb: string): Promise<string> {
 }
 
 // Shared app wiring explicitly permits identity-only outsiders after first-User enrollment.
-export async function testApp(pool: Pool, deps: Pick<AppDeps, "blobStore" | "compute" | "migrationProjection" | "operations"> = {}): Promise<App> {
+export async function testApp(pool: Pool, deps: Pick<AppDeps, "blobStore" | "compute" | "migrationProjection" | "operations"> = {}, registerCleanup: RegisterCleanup = afterAll): Promise<App> {
   const dataDir = await mkdtemp(join(tmpdir(), "bp-enrollment-fixture-"));
   // Register in the calling test file: imported module hooks only run for their first file.
-  afterAll(async () => {
+  registerCleanup(async () => {
     await rm(dataDir, { recursive: true, force: true });
     for (const [app, dir] of enrollmentDirs) if (dir === dataDir) enrollmentDirs.delete(app);
   });
@@ -58,8 +58,8 @@ export async function testApp(pool: Pool, deps: Pick<AppDeps, "blobStore" | "com
 }
 
 // Credential scenarios provision their Workspace and Principal through authenticated HTTP routes.
-export async function principalFixture(pool: Pool, deps: Pick<AppDeps, "blobStore"> = {}) {
-  const app = await testApp(pool, deps);
+export async function principalFixture(pool: Pool, deps: Pick<AppDeps, "blobStore"> = {}, registerCleanup?: RegisterCleanup) {
+  const app = await testApp(pool, deps, registerCleanup);
   const cookie = await signUp(app, "credentials@example.com");
   const workspaceResponse = await app.handle(new Request("http://localhost/api/v1/workspaces", {
     method: "POST", headers: { cookie, origin: "http://localhost", "content-type": "application/json" }, body: JSON.stringify({ name: "Research" }),
@@ -122,7 +122,7 @@ export async function queueFixture(pool: Pool, name = "handoff") {
 // SQL scenarios share a max-1 runtime pool so the next request necessarily reuses the same connection.
 export async function sqlFixture(ddl: string) {
   const url = await migratedDatabase();
-  const pool = new SQL({ url, max: 1 });
+  const pool = createPool(url, 1);
   try {
     const fixture = await principalFixture(pool);
     const { app, cookie, workspaceId, principalId } = fixture;
@@ -142,7 +142,7 @@ export async function sqlFixture(ddl: string) {
 // Migration scenarios use the public routes and may start with no Workspace schema at all.
 export async function migrationFixture(max = 1) {
   const url = await migratedDatabase();
-  const pool = new SQL({ url, max });
+  const pool = createPool(url, max);
   try {
     const fixture = await principalFixture(pool);
     const { app, cookie, workspaceId, principalId } = fixture;
@@ -230,7 +230,7 @@ export async function applyMigration(app: App, key: string, runId: string, works
 
 export async function transactionFixture(max = 1) {
   const url = await migratedDatabase();
-  const pool = new SQL({ url, max });
+  const pool = createPool(url, max);
   try {
     const fixture = await queueFixture(pool, "intake");
     const { app, key, workspaceId, runId, headers } = fixture;

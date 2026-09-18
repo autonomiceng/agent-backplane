@@ -36,7 +36,9 @@ export function reduceApprovals(state: ApprovalState, action: ApprovalAction): A
     case "list-result":
       if (state.listId !== action.requestId || !state.pendingPage) return state;
       if (typeof action.result === "string") return { ...state, listId: null, pendingPage: null, error: action.result };
-      if (action.result.items.some((item) => item.workspaceId !== state.workspaceId)) return state;
+      if (action.result.items.some((item) => item.workspaceId !== state.workspaceId)) {
+        return { ...state, listId: null, pendingPage: null, error: "approval_workspace_mismatch" };
+      }
       return { ...state, items: action.result.items, nextCursor: action.result.nextCursor, observedAt: action.result.observedAt,
         pagination: state.pendingPage, pendingPage: null, listId: null, error: null };
     case "reason":

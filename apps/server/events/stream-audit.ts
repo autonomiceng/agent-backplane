@@ -178,7 +178,7 @@ export function streamAudit(pool: Pool, queries: StreamQueries, request: Request
       frames = snapshot.frames; positions = snapshot.positions;
       flush();
       if (frames.length === 0 && now - lastHeartbeat >= 15_000) {
-        const heartbeat = encoder.encode(": heartbeat\n\n");
+        const heartbeat = encoder.encode("event: heartbeat\ndata: {}\n\n");
         if ((controller.desiredSize ?? 0) >= heartbeat.byteLength) {
           controller.enqueue(heartbeat); lastProgress = now; lastHeartbeat = now;
         }

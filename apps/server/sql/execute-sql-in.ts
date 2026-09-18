@@ -64,7 +64,9 @@ export async function executeSqlIn(tx: RunTransaction, emit: EmitAudit, context:
     FROM __bp_s CROSS JOIN __bp_t` : statement;
   // Row gates trust this shared server executor; the provenance trigger does not enforce Approvals.
   const approval = await checkRowApproval(tx, context, prepared);
-  if (approval) { await tx`SET LOCAL TimeZone = 'UTC'`; await tx`SET LOCAL DateStyle = 'ISO, YMD'`; await tx`SET LOCAL bytea_output = 'hex'`; }
+  await tx`SET LOCAL TimeZone = 'UTC'`;
+  await tx`SET LOCAL DateStyle = 'ISO, YMD'`;
+  await tx`SET LOCAL bytea_output = 'hex'`;
   await checkSqlRelations(tx, prepared);
   const [role] = await tx<{ name: string }[]>`SELECT control.prepare_sql_roles() AS name`;
   if (!role) throw new Error("sql_unavailable");

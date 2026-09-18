@@ -8,8 +8,8 @@ mkdir -p "$repository"
 temporary=$(mktemp "$repository/.archive.XXXXXXXX")
 trap 'rm -f "$temporary"' EXIT
 cp "$source_file" "$temporary"
-sync -f "$temporary"
+sync -d "$temporary"
 if ! ln "$temporary" "$repository/$segment" 2>/dev/null; then
   cmp -s "$temporary" "$repository/$segment" || exit 1
 fi
-sync -f "$repository"
+sync "$repository"

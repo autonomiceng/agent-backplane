@@ -16,6 +16,14 @@ import { type BlobStore } from "../blob-store.ts";
 export type Metadata = typeof blobResponse.static;
 export async function fixture(storage?: BlobStore, cleanupStorage = true) {
   const database = createPool(await migratedDatabase()), dataDir = await mkdtemp(join(tmpdir(), "bp-blobs-"));
+  const appCleanups: (() => Promise<void>)[] = [];
+  const release = async () => {
+    const results = await Promise.allSettled([
+      database.close(), rm(dataDir, { recursive: true, force: true }), ...appCleanups.map(cleanup => cleanup()),
+    ]);
+    const failed = results.find(result => result.status === "rejected");
+    if (failed?.status === "rejected") throw failed.reason;
+  };
   try {
     const disk = storage ?? filesystemStore(dataDir), staged = new Set<string>();
     let failStage = false, failPromotion = false, failRemove = false, uncertain = false, loseCommit = false, deleteCommit = "";
@@ -47,7 +55,7 @@ export async function fixture(storage?: BlobStore, cleanupStorage = true) {
       },
       async remove(w, ref) { if (failRemove) throw new Error("physical_delete_failed"); await disk.remove(w, ref); },
     };
-    const f = await principalFixture(pool, { blobStore: store });
+    const f = await principalFixture(pool, { blobStore: store }, cleanup => appCleanups.push(cleanup));
     const key = await issueKey(f.app, f.cookie, f.workspaceId, f.principalId), runId = await createRun(f.app, key, f.workspaceId);
     const base = `http://localhost/api/v1/workspaces/${f.workspaceId}`;
     const headers = { authorization: `Bearer ${key}`, "x-backplane-run": runId, "content-type": "application/octet-stream" };
@@ -68,8 +76,8 @@ export async function fixture(storage?: BlobStore, cleanupStorage = true) {
             for (const row of await pool`SELECT id FROM control.blobs WHERE workspace_id=${f.workspaceId}`) expect((await del(row.id)).status).toBe(204);
             for (const id of staged) expect(await cleanupBlobs(pool, { ...f, runId }, disk, [id])).toBe(false);
           }
-        } finally { try { await database.close(); } finally { await rm(dataDir, { recursive: true, force: true }); } } } };
-  } catch (error) { try { await database.close(); } finally { await rm(dataDir, { recursive: true, force: true }); } throw error; }
+        } finally { await release(); } } };
+  } catch (error) { await release().catch(() => {}); throw error; }
 }
 export async function uploaded(response: Response): Promise<Metadata> {
   expect(response.status).toBe(201); return await response.json();
