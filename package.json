@@ -1,0 +1,27 @@
+{
+  "name": "agent-backplane",
+  "private": true,
+  "workspaces": [
+    "apps/server"
+  ],
+  "scripts": {
+    "check": "bun run typecheck && bun run lint",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint apps db",
+    "test": "bun test --preload ./apps/server/testing/preload.ts",
+    "test:integration": "bun run test",
+    "migrate": "bun db/migrate-cli.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.2",
+    "embedded-postgres": "18.4.0-beta.17",
+    "oxlint": "1.82.0",
+    "typescript": "7.0.2"
+  },
+  "trustedDependencies": [
+    "@embedded-postgres/linux-x64"
+  ],
+  "dependencies": {
+    "drizzle-orm": "0.45.2"
+  }
+}

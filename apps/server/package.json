@@ -1,0 +1,6 @@
+{
+  "name": "@backplane/server",
+  "private": true,
+  "type": "module",
+  "dependencies": {}
+}
