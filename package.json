@@ -2,21 +2,30 @@
   "name": "agent-backplane",
   "private": true,
   "workspaces": [
-    "apps/*"
+    "apps/*",
+    "packages/*"
   ],
   "scripts": {
-    "check": "bun run typecheck && bun run lint && bun run build:web",
+    "mcp": "bun packages/cli/runtime/main.ts mcp",
+    "test:mcp": "bun run test packages/mcp/runtime",
+    "check": "bun run typecheck && bun run lint && bun run generated:check && bun run build:web",
+    "openapi:export": "bun tooling/openapi/export.ts",
+    "codegen": "bun tooling/codegen/generate.ts",
+    "generated:check": "bun tooling/openapi/export.ts --check && bun tooling/codegen/generate.ts --check",
     "typecheck": "tsc --noEmit",
-    "lint": "oxlint apps db packages tests infra/compose/validate-edge.ts",
+    "lint": "oxlint apps db packages tooling tests",
     "test": "bun test --preload ./apps/server/testing/preload.ts",
     "test:integration": "bun run test",
-    "migrate": "bun db/migrate-cli.ts",
     "dev": "bun --watch apps/server/main.ts",
     "dev:cluster": "bun apps/server/testing/dev-cluster.ts",
-    "build:web": "bun run --filter @backplane/web build"
+    "migrate": "bun db/migrate-cli.ts",
+    "build:web": "bun run --filter @backplane/web build",
+    "dev:web": "bun run --filter @backplane/web dev"
   },
   "devDependencies": {
     "@types/bun": "1.4.2",
+    "auth": "1.7.4",
+    "drizzle-kit": "0.31.10",
     "embedded-postgres": "18.4.0-beta.17",
     "oxlint": "1.82.0",
     "typescript": "7.0.2"

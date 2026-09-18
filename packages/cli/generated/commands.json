@@ -1,0 +1,2251 @@
+[
+  {
+    "aliases": [],
+    "auth": "none",
+    "binary": false,
+    "body": {
+      "contentType": "application/json",
+      "empty": false,
+      "required": true,
+      "schemaRef": "enrollFirstUser.request"
+    },
+    "command": [
+      "enrollment",
+      "enroll-first-user"
+    ],
+    "method": "POST",
+    "operationId": "enrollFirstUser",
+    "parameters": [],
+    "path": "/api/v1/enrollment",
+    "responsesRef": "enrollFirstUser.responses",
+    "run": "none",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "user",
+    "binary": false,
+    "body": {
+      "contentType": "application/json",
+      "empty": false,
+      "required": true,
+      "schemaRef": "createWorkspace.request"
+    },
+    "command": [
+      "auth",
+      "create-workspace"
+    ],
+    "method": "POST",
+    "operationId": "createWorkspace",
+    "parameters": [],
+    "path": "/api/v1/workspaces",
+    "responsesRef": "createWorkspace.responses",
+    "run": "none",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "either",
+    "binary": false,
+    "body": null,
+    "command": [
+      "approvals",
+      "list-approvals"
+    ],
+    "method": "GET",
+    "operationId": "listApprovals",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      {
+        "flag": "state",
+        "in": "query",
+        "name": "state",
+        "required": false,
+        "schema": {
+          "enum": [
+            "pending",
+            "decided"
+          ],
+          "type": "string"
+        }
+      },
+      {
+        "flag": "limit",
+        "in": "query",
+        "name": "limit",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "default": 0,
+              "format": "integer",
+              "type": "string"
+            },
+            {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          ],
+          "default": 50,
+          "maximum": 100,
+          "minimum": 1
+        }
+      },
+      {
+        "flag": "after",
+        "in": "query",
+        "name": "after",
+        "required": false,
+        "schema": {
+          "maxLength": 1024,
+          "minLength": 1,
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/approvals",
+    "responsesRef": "listApprovals.responses",
+    "run": "none",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "principal",
+    "binary": false,
+    "body": {
+      "contentType": "application/json",
+      "empty": false,
+      "required": true,
+      "schemaRef": "requestMessageApproval.request"
+    },
+    "command": [
+      "approvals",
+      "request-message-approval"
+    ],
+    "method": "POST",
+    "operationId": "requestMessageApproval",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/approvals",
+    "responsesRef": "requestMessageApproval.responses",
+    "run": "required",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "user",
+    "binary": false,
+    "body": {
+      "contentType": "application/json",
+      "empty": false,
+      "required": true,
+      "schemaRef": "setApprovalDelegation.request"
+    },
+    "command": [
+      "approvals",
+      "set-approval-delegation"
+    ],
+    "method": "PUT",
+    "operationId": "setApprovalDelegation",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      {
+        "flag": "principal-id",
+        "in": "path",
+        "name": "principalId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/approvals/delegations/{principalId}",
+    "responsesRef": "setApprovalDelegation.responses",
+    "run": "none",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "user",
+    "binary": false,
+    "body": {
+      "contentType": "application/json",
+      "empty": false,
+      "required": true,
+      "schemaRef": "setApprovalGate.request"
+    },
+    "command": [
+      "approvals",
+      "set-approval-gate"
+    ],
+    "method": "PUT",
+    "operationId": "setApprovalGate",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/approvals/gates",
+    "responsesRef": "setApprovalGate.responses",
+    "run": "none",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "user",
+    "binary": false,
+    "body": {
+      "contentType": "application/json",
+      "empty": false,
+      "required": true,
+      "schemaRef": "setApprovalSettings.request"
+    },
+    "command": [
+      "approvals",
+      "set-approval-settings"
+    ],
+    "method": "PUT",
+    "operationId": "setApprovalSettings",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/approvals/settings",
+    "responsesRef": "setApprovalSettings.responses",
+    "run": "none",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "either",
+    "binary": false,
+    "body": {
+      "contentType": "application/json",
+      "empty": false,
+      "required": true,
+      "schemaRef": "decideApproval.request"
+    },
+    "command": [
+      "approvals",
+      "decide-approval"
+    ],
+    "method": "POST",
+    "operationId": "decideApproval",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      {
+        "flag": "id",
+        "in": "path",
+        "name": "id",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/approvals/{id}/decision",
+    "responsesRef": "decideApproval.responses",
+    "run": "required",
+    "stream": false
+  },
+  {
+    "aliases": [
+      [
+        "events"
+      ]
+    ],
+    "auth": "either",
+    "binary": false,
+    "body": null,
+    "command": [
+      "events",
+      "read-audit"
+    ],
+    "method": "GET",
+    "operationId": "readAudit",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      {
+        "flag": "run-id",
+        "in": "query",
+        "name": "runId",
+        "required": false,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      {
+        "flag": "after",
+        "in": "query",
+        "name": "after",
+        "required": false,
+        "schema": {
+          "default": "0",
+          "pattern": "^[0-9]+$",
+          "type": "string"
+        }
+      },
+      {
+        "flag": "limit",
+        "in": "query",
+        "name": "limit",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "default": 0,
+              "format": "integer",
+              "type": "string"
+            },
+            {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "type": "integer"
+            }
+          ],
+          "default": 100,
+          "maximum": 500,
+          "minimum": 1
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/audit",
+    "responsesRef": "readAudit.responses",
+    "run": "none",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "either",
+    "binary": false,
+    "body": null,
+    "command": [
+      "retention",
+      "read-audit-payload"
+    ],
+    "method": "GET",
+    "operationId": "readAuditPayload",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      {
+        "flag": "position",
+        "in": "path",
+        "name": "position",
+        "required": true,
+        "schema": {
+          "maxLength": 19,
+          "pattern": "^[0-9]+$",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/audit/{position}/payload",
+    "responsesRef": "readAuditPayload.responses",
+    "run": "none",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "principal",
+    "binary": false,
+    "body": {
+      "contentType": "application/octet-stream",
+      "empty": false,
+      "required": true,
+      "schemaRef": "putBlob.request"
+    },
+    "command": [
+      "blobs",
+      "put-blob"
+    ],
+    "method": "POST",
+    "operationId": "putBlob",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      {
+        "flag": "key",
+        "in": "query",
+        "name": "key",
+        "required": true,
+        "schema": {
+          "maxLength": 256,
+          "pattern": "^[A-Za-z0-9_-][A-Za-z0-9._-]{0,63}(/[A-Za-z0-9_-][A-Za-z0-9._-]{0,63}){0,3}$",
+          "type": "string"
+        }
+      },
+      {
+        "flag": "x-backplane-sha256",
+        "in": "header",
+        "name": "x-backplane-sha256",
+        "required": false,
+        "schema": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/blobs",
+    "responsesRef": "putBlob.responses",
+    "run": "required",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "either",
+    "binary": false,
+    "body": null,
+    "command": [
+      "blobs",
+      "delete-blob"
+    ],
+    "method": "DELETE",
+    "operationId": "deleteBlob",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      {
+        "flag": "id",
+        "in": "path",
+        "name": "id",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/blobs/{id}",
+    "responsesRef": "deleteBlob.responses",
+    "run": "required",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "either",
+    "binary": true,
+    "body": null,
+    "command": [
+      "blobs",
+      "get-blob"
+    ],
+    "method": "GET",
+    "operationId": "getBlob",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      {
+        "flag": "id",
+        "in": "path",
+        "name": "id",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/blobs/{id}",
+    "responsesRef": "getBlob.responses",
+    "run": "none",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "principal",
+    "binary": false,
+    "body": {
+      "contentType": "application/json",
+      "empty": false,
+      "required": true,
+      "schemaRef": "ackDelivery.request"
+    },
+    "command": [
+      "queue",
+      "ack-delivery"
+    ],
+    "method": "POST",
+    "operationId": "ackDelivery",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      {
+        "flag": "delivery-id",
+        "in": "path",
+        "name": "deliveryId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/deliveries/{deliveryId}/ack",
+    "responsesRef": "ackDelivery.responses",
+    "run": "required",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "principal",
+    "binary": false,
+    "body": {
+      "contentType": "application/json",
+      "empty": false,
+      "required": true,
+      "schemaRef": "beginEffect.request"
+    },
+    "command": [
+      "queue",
+      "begin-effect"
+    ],
+    "method": "POST",
+    "operationId": "beginEffect",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      {
+        "flag": "delivery-id",
+        "in": "path",
+        "name": "deliveryId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/deliveries/{deliveryId}/begin-effect",
+    "responsesRef": "beginEffect.responses",
+    "run": "required",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "user",
+    "binary": false,
+    "body": {
+      "contentType": "application/json",
+      "empty": false,
+      "required": true,
+      "schemaRef": "cancelDelivery.request"
+    },
+    "command": [
+      "queue",
+      "cancel-delivery"
+    ],
+    "method": "POST",
+    "operationId": "cancelDelivery",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      {
+        "flag": "delivery-id",
+        "in": "path",
+        "name": "deliveryId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/deliveries/{deliveryId}/cancel",
+    "responsesRef": "cancelDelivery.responses",
+    "run": "none",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "principal",
+    "binary": false,
+    "body": {
+      "contentType": "application/json",
+      "empty": false,
+      "required": true,
+      "schemaRef": "holdDelivery.request"
+    },
+    "command": [
+      "queue",
+      "hold-delivery"
+    ],
+    "method": "POST",
+    "operationId": "holdDelivery",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      {
+        "flag": "delivery-id",
+        "in": "path",
+        "name": "deliveryId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/deliveries/{deliveryId}/hold",
+    "responsesRef": "holdDelivery.responses",
+    "run": "required",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "principal",
+    "binary": false,
+    "body": {
+      "contentType": "application/json",
+      "empty": false,
+      "required": true,
+      "schemaRef": "nackDelivery.request"
+    },
+    "command": [
+      "queue",
+      "nack-delivery"
+    ],
+    "method": "POST",
+    "operationId": "nackDelivery",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      {
+        "flag": "delivery-id",
+        "in": "path",
+        "name": "deliveryId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/deliveries/{deliveryId}/nack",
+    "responsesRef": "nackDelivery.responses",
+    "run": "required",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "user",
+    "binary": false,
+    "body": {
+      "contentType": "application/json",
+      "empty": true,
+      "required": true,
+      "schemaRef": "releaseDelivery.request"
+    },
+    "command": [
+      "queue",
+      "release-delivery"
+    ],
+    "method": "POST",
+    "operationId": "releaseDelivery",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      {
+        "flag": "delivery-id",
+        "in": "path",
+        "name": "deliveryId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/deliveries/{deliveryId}/release",
+    "responsesRef": "releaseDelivery.responses",
+    "run": "none",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "principal",
+    "binary": false,
+    "body": {
+      "contentType": "application/json",
+      "empty": false,
+      "required": true,
+      "schemaRef": "renewDelivery.request"
+    },
+    "command": [
+      "queue",
+      "renew-delivery"
+    ],
+    "method": "POST",
+    "operationId": "renewDelivery",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      {
+        "flag": "delivery-id",
+        "in": "path",
+        "name": "deliveryId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/deliveries/{deliveryId}/renew",
+    "responsesRef": "renewDelivery.responses",
+    "run": "required",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "user",
+    "binary": false,
+    "body": {
+      "contentType": "application/json",
+      "empty": true,
+      "required": true,
+      "schemaRef": "replayDelivery.request"
+    },
+    "command": [
+      "queue",
+      "replay-delivery"
+    ],
+    "method": "POST",
+    "operationId": "replayDelivery",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      {
+        "flag": "delivery-id",
+        "in": "path",
+        "name": "deliveryId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/deliveries/{deliveryId}/replay",
+    "responsesRef": "replayDelivery.responses",
+    "run": "none",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "either",
+    "binary": false,
+    "body": null,
+    "command": [
+      "events",
+      "stream-audit"
+    ],
+    "method": "GET",
+    "operationId": "streamAudit",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      {
+        "flag": "since",
+        "in": "query",
+        "name": "since",
+        "required": false,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "flag": "generation",
+        "in": "query",
+        "name": "generation",
+        "required": false,
+        "schema": {
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/events",
+    "responsesRef": "streamAudit.responses",
+    "run": "none",
+    "stream": true
+  },
+  {
+    "aliases": [],
+    "auth": "principal",
+    "binary": false,
+    "body": {
+      "contentType": "application/json",
+      "empty": false,
+      "required": true,
+      "schemaRef": "deployFunction.request"
+    },
+    "command": [
+      "functions",
+      "deploy-function"
+    ],
+    "method": "POST",
+    "operationId": "deployFunction",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      {
+        "flag": "name",
+        "in": "path",
+        "name": "name",
+        "required": true,
+        "schema": {
+          "pattern": "^[a-z][a-z0-9-]{0,62}$",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/functions/{name}/deployments",
+    "responsesRef": "deployFunction.responses",
+    "run": "required",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "either",
+    "binary": false,
+    "body": null,
+    "command": [
+      "functions",
+      "get-function-deployment"
+    ],
+    "method": "GET",
+    "operationId": "getFunctionDeployment",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      {
+        "flag": "name",
+        "in": "path",
+        "name": "name",
+        "required": true,
+        "schema": {
+          "pattern": "^[a-z][a-z0-9-]{0,62}$",
+          "type": "string"
+        }
+      },
+      {
+        "flag": "id",
+        "in": "path",
+        "name": "id",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/functions/{name}/deployments/{id}",
+    "responsesRef": "getFunctionDeployment.responses",
+    "run": "none",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "either",
+    "binary": false,
+    "body": {
+      "contentType": "application/json",
+      "empty": false,
+      "required": true,
+      "schemaRef": "activateFunction.request"
+    },
+    "command": [
+      "functions",
+      "activate-function"
+    ],
+    "method": "POST",
+    "operationId": "activateFunction",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      {
+        "flag": "name",
+        "in": "path",
+        "name": "name",
+        "required": true,
+        "schema": {
+          "pattern": "^[a-z][a-z0-9-]{0,62}$",
+          "type": "string"
+        }
+      },
+      {
+        "flag": "id",
+        "in": "path",
+        "name": "id",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/functions/{name}/deployments/{id}/activate",
+    "responsesRef": "activateFunction.responses",
+    "run": "required",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "principal",
+    "binary": false,
+    "body": {
+      "contentType": "application/json",
+      "empty": false,
+      "required": true,
+      "schemaRef": "invokeFunction.request"
+    },
+    "command": [
+      "functions",
+      "invoke-function"
+    ],
+    "method": "POST",
+    "operationId": "invokeFunction",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      {
+        "flag": "name",
+        "in": "path",
+        "name": "name",
+        "required": true,
+        "schema": {
+          "pattern": "^[a-z][a-z0-9-]{0,62}$",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/functions/{name}/invoke",
+    "responsesRef": "invokeFunction.responses",
+    "run": "required",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "either",
+    "binary": false,
+    "body": null,
+    "command": [
+      "schema",
+      "list-migrations"
+    ],
+    "method": "GET",
+    "operationId": "listMigrations",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      {
+        "flag": "after-revision",
+        "in": "query",
+        "name": "afterRevision",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "default": 0,
+              "format": "integer",
+              "type": "string"
+            },
+            {
+              "default": 0,
+              "maximum": 2147483647,
+              "minimum": 0,
+              "type": "integer"
+            }
+          ],
+          "default": 0,
+          "maximum": 2147483647,
+          "minimum": 0
+        }
+      },
+      {
+        "flag": "limit",
+        "in": "query",
+        "name": "limit",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "default": 0,
+              "format": "integer",
+              "type": "string"
+            },
+            {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          ],
+          "default": 50,
+          "maximum": 100,
+          "minimum": 1
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/migrations",
+    "responsesRef": "listMigrations.responses",
+    "run": "none",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "principal",
+    "binary": false,
+    "body": {
+      "contentType": "application/json",
+      "empty": false,
+      "required": true,
+      "schemaRef": "applyMigration.request"
+    },
+    "command": [
+      "schema",
+      "apply-migration"
+    ],
+    "method": "POST",
+    "operationId": "applyMigration",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/migrations",
+    "responsesRef": "applyMigration.responses",
+    "run": "required",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "principal",
+    "binary": false,
+    "body": {
+      "contentType": "application/json",
+      "empty": false,
+      "required": true,
+      "schemaRef": "previewMigration.request"
+    },
+    "command": [
+      "schema",
+      "preview-migration"
+    ],
+    "method": "POST",
+    "operationId": "previewMigration",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/migrations/preview",
+    "responsesRef": "previewMigration.responses",
+    "run": "required",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "user",
+    "binary": false,
+    "body": {
+      "contentType": "application/json",
+      "empty": true,
+      "required": true,
+      "schemaRef": "rebuildMigrationProjection.request"
+    },
+    "command": [
+      "schema",
+      "rebuild-migration-projection"
+    ],
+    "method": "POST",
+    "operationId": "rebuildMigrationProjection",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/migrations/projection",
+    "responsesRef": "rebuildMigrationProjection.responses",
+    "run": "forbidden",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "user",
+    "binary": false,
+    "body": null,
+    "command": [
+      "auth",
+      "list-principals"
+    ],
+    "method": "GET",
+    "operationId": "listPrincipals",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      {
+        "flag": "after",
+        "in": "query",
+        "name": "after",
+        "required": false,
+        "schema": {
+          "maxLength": 1024,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      {
+        "flag": "limit",
+        "in": "query",
+        "name": "limit",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "default": 0,
+              "format": "integer",
+              "type": "string"
+            },
+            {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          ],
+          "default": 50,
+          "maximum": 100,
+          "minimum": 1
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/principals",
+    "responsesRef": "listPrincipals.responses",
+    "run": "none",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "user",
+    "binary": false,
+    "body": {
+      "contentType": "application/json",
+      "empty": false,
+      "required": true,
+      "schemaRef": "createPrincipal.request"
+    },
+    "command": [
+      "auth",
+      "create-principal"
+    ],
+    "method": "POST",
+    "operationId": "createPrincipal",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/principals",
+    "responsesRef": "createPrincipal.responses",
+    "run": "none",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "user",
+    "binary": false,
+    "body": null,
+    "command": [
+      "auth",
+      "get-principal-key"
+    ],
+    "method": "GET",
+    "operationId": "getPrincipalKey",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      {
+        "flag": "principal-id",
+        "in": "path",
+        "name": "principalId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/principals/{principalId}/keys",
+    "responsesRef": "getPrincipalKey.responses",
+    "run": "none",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "user",
+    "binary": false,
+    "body": null,
+    "command": [
+      "auth",
+      "issue-principal-key"
+    ],
+    "method": "POST",
+    "operationId": "issuePrincipalKey",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      {
+        "flag": "principal-id",
+        "in": "path",
+        "name": "principalId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/principals/{principalId}/keys",
+    "responsesRef": "issuePrincipalKey.responses",
+    "run": "none",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "user",
+    "binary": false,
+    "body": null,
+    "command": [
+      "auth",
+      "revoke-principal"
+    ],
+    "method": "POST",
+    "operationId": "revokePrincipal",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      {
+        "flag": "principal-id",
+        "in": "path",
+        "name": "principalId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/principals/{principalId}/revoke",
+    "responsesRef": "revokePrincipal.responses",
+    "run": "none",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "principal",
+    "binary": false,
+    "body": {
+      "contentType": "application/json",
+      "empty": false,
+      "required": true,
+      "schemaRef": "createQueue.request"
+    },
+    "command": [
+      "queue",
+      "create-queue"
+    ],
+    "method": "POST",
+    "operationId": "createQueue",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/queues",
+    "responsesRef": "createQueue.responses",
+    "run": "required",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "principal",
+    "binary": false,
+    "body": {
+      "contentType": "application/json",
+      "empty": true,
+      "required": true,
+      "schemaRef": "claimMessage.request"
+    },
+    "command": [
+      "queue",
+      "claim-message"
+    ],
+    "method": "POST",
+    "operationId": "claimMessage",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      {
+        "flag": "queue",
+        "in": "path",
+        "name": "queue",
+        "required": true,
+        "schema": {
+          "maxLength": 63,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]{0,62}$",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/queues/{queue}/claim",
+    "responsesRef": "claimMessage.responses",
+    "run": "required",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "either",
+    "binary": false,
+    "body": null,
+    "command": [
+      "queue",
+      "list-deliveries"
+    ],
+    "method": "GET",
+    "operationId": "listDeliveries",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      {
+        "flag": "queue",
+        "in": "path",
+        "name": "queue",
+        "required": true,
+        "schema": {
+          "maxLength": 63,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]{0,62}$",
+          "type": "string"
+        }
+      },
+      {
+        "flag": "state",
+        "in": "query",
+        "name": "state",
+        "required": false,
+        "schema": {
+          "enum": [
+            "scheduled",
+            "ready",
+            "leased",
+            "begun",
+            "effect-paused",
+            "held",
+            "ambiguous",
+            "succeeded",
+            "dead-lettered",
+            "cancelled"
+          ],
+          "type": "string"
+        }
+      },
+      {
+        "flag": "after",
+        "in": "query",
+        "name": "after",
+        "required": false,
+        "schema": {
+          "maxLength": 1024,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      {
+        "flag": "limit",
+        "in": "query",
+        "name": "limit",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "default": 0,
+              "format": "integer",
+              "type": "string"
+            },
+            {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          ],
+          "default": 50,
+          "maximum": 100,
+          "minimum": 1
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/queues/{queue}/deliveries",
+    "responsesRef": "listDeliveries.responses",
+    "run": "none",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "principal",
+    "binary": false,
+    "body": {
+      "contentType": "application/json",
+      "empty": false,
+      "required": true,
+      "schemaRef": "sendMessage.request"
+    },
+    "command": [
+      "queue",
+      "send-message"
+    ],
+    "method": "POST",
+    "operationId": "sendMessage",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      {
+        "flag": "queue",
+        "in": "path",
+        "name": "queue",
+        "required": true,
+        "schema": {
+          "maxLength": 63,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]{0,62}$",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/queues/{queue}/messages",
+    "responsesRef": "sendMessage.responses",
+    "run": "required",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "principal",
+    "binary": false,
+    "body": null,
+    "command": [
+      "queue",
+      "get-message"
+    ],
+    "method": "GET",
+    "operationId": "getMessage",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      {
+        "flag": "queue",
+        "in": "path",
+        "name": "queue",
+        "required": true,
+        "schema": {
+          "maxLength": 63,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]{0,62}$",
+          "type": "string"
+        }
+      },
+      {
+        "flag": "message-id",
+        "in": "path",
+        "name": "messageId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/queues/{queue}/messages/{messageId}",
+    "responsesRef": "getMessage.responses",
+    "run": "none",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "principal",
+    "binary": false,
+    "body": {
+      "contentType": "application/json",
+      "empty": true,
+      "required": true,
+      "schemaRef": "recoverDeliveries.request"
+    },
+    "command": [
+      "queue",
+      "recover-deliveries"
+    ],
+    "method": "POST",
+    "operationId": "recoverDeliveries",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      {
+        "flag": "queue",
+        "in": "path",
+        "name": "queue",
+        "required": true,
+        "schema": {
+          "maxLength": 63,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]{0,62}$",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/queues/{queue}/recover",
+    "responsesRef": "recoverDeliveries.responses",
+    "run": "required",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "user",
+    "binary": false,
+    "body": {
+      "contentType": "application/json",
+      "empty": false,
+      "required": true,
+      "schemaRef": "setWorkspaceQuotas.request"
+    },
+    "command": [
+      "platform",
+      "set-workspace-quotas"
+    ],
+    "method": "PUT",
+    "operationId": "setWorkspaceQuotas",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/quotas",
+    "responsesRef": "setWorkspaceQuotas.responses",
+    "run": "none",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "either",
+    "binary": false,
+    "body": {
+      "contentType": "application/json",
+      "empty": false,
+      "required": true,
+      "schemaRef": "reconcileEffect.request"
+    },
+    "command": [
+      "queue",
+      "reconcile-effect"
+    ],
+    "method": "POST",
+    "operationId": "reconcileEffect",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/reconciliations",
+    "responsesRef": "reconcileEffect.responses",
+    "run": "required",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "user",
+    "binary": false,
+    "body": {
+      "contentType": "application/json",
+      "empty": false,
+      "required": true,
+      "schemaRef": "setReconciliationDelegation.request"
+    },
+    "command": [
+      "queue",
+      "set-reconciliation-delegation"
+    ],
+    "method": "PUT",
+    "operationId": "setReconciliationDelegation",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      {
+        "flag": "principal-id",
+        "in": "path",
+        "name": "principalId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/reconciliations/delegations/{principalId}",
+    "responsesRef": "setReconciliationDelegation.responses",
+    "run": "none",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "user",
+    "binary": false,
+    "body": null,
+    "command": [
+      "restore",
+      "restore-status"
+    ],
+    "method": "GET",
+    "operationId": "restoreStatus",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/restore",
+    "responsesRef": "restoreStatus.responses",
+    "run": "none",
+    "stream": false
+  },
+  {
+    "aliases": [
+      [
+        "restore",
+        "release"
+      ]
+    ],
+    "auth": "user",
+    "binary": false,
+    "body": {
+      "contentType": "application/json",
+      "empty": false,
+      "required": true,
+      "schemaRef": "releaseRestore.request"
+    },
+    "command": [
+      "restore",
+      "release-restore"
+    ],
+    "method": "POST",
+    "operationId": "releaseRestore",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/restore/release",
+    "responsesRef": "releaseRestore.responses",
+    "run": "none",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "user",
+    "binary": false,
+    "body": null,
+    "command": [
+      "retention",
+      "get-retention"
+    ],
+    "method": "GET",
+    "operationId": "getRetention",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/retention",
+    "responsesRef": "getRetention.responses",
+    "run": "none",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "user",
+    "binary": false,
+    "body": {
+      "contentType": "application/json",
+      "empty": false,
+      "required": true,
+      "schemaRef": "setRetention.request"
+    },
+    "command": [
+      "retention",
+      "set-retention"
+    ],
+    "method": "PUT",
+    "operationId": "setRetention",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/retention",
+    "responsesRef": "setRetention.responses",
+    "run": "none",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "user",
+    "binary": false,
+    "body": {
+      "contentType": "application/json",
+      "empty": true,
+      "required": true,
+      "schemaRef": "purgePayloads.request"
+    },
+    "command": [
+      "retention",
+      "purge-payloads"
+    ],
+    "method": "POST",
+    "operationId": "purgePayloads",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/retention/purge",
+    "responsesRef": "purgePayloads.responses",
+    "run": "none",
+    "stream": false
+  },
+  {
+    "aliases": [
+      [
+        "run",
+        "new"
+      ]
+    ],
+    "auth": "principal",
+    "binary": false,
+    "body": {
+      "contentType": "application/json",
+      "empty": true,
+      "required": true,
+      "schemaRef": "createRun.request"
+    },
+    "command": [
+      "runs",
+      "create-run"
+    ],
+    "method": "POST",
+    "operationId": "createRun",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/runs",
+    "responsesRef": "createRun.responses",
+    "run": "forbidden",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "principal",
+    "binary": false,
+    "body": {
+      "contentType": "application/json",
+      "empty": false,
+      "required": true,
+      "schemaRef": "executeSql.request"
+    },
+    "command": [
+      "sql",
+      "execute-sql"
+    ],
+    "method": "POST",
+    "operationId": "executeSql",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/sql",
+    "responsesRef": "executeSql.responses",
+    "run": "required",
+    "stream": false
+  },
+  {
+    "aliases": [
+      [
+        "transaction"
+      ]
+    ],
+    "auth": "principal",
+    "binary": false,
+    "body": {
+      "contentType": "application/json",
+      "empty": false,
+      "required": true,
+      "schemaRef": "executeTransaction.request"
+    },
+    "command": [
+      "tx",
+      "execute-transaction"
+    ],
+    "method": "POST",
+    "operationId": "executeTransaction",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/transactions",
+    "responsesRef": "executeTransaction.responses",
+    "run": "required",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "principal",
+    "binary": false,
+    "body": null,
+    "command": [
+      "auth",
+      "whoami"
+    ],
+    "method": "GET",
+    "operationId": "whoami",
+    "parameters": [
+      {
+        "flag": "workspace-id",
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces/{workspaceId}/whoami",
+    "responsesRef": "whoami.responses",
+    "run": "none",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "none",
+    "binary": false,
+    "body": null,
+    "command": [
+      "health",
+      "health-ready"
+    ],
+    "method": "GET",
+    "operationId": "healthReady",
+    "parameters": [],
+    "path": "/health/ready",
+    "responsesRef": "healthReady.responses",
+    "run": "none",
+    "stream": false
+  }
+]

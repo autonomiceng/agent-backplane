@@ -1,0 +1,7 @@
+{
+  "name": "@backplane/mcp",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "start": "bun runtime/main.ts" }
+}

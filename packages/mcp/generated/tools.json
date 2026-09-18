@@ -1,0 +1,3227 @@
+[
+  {
+    "command": {
+      "aliases": [],
+      "auth": "none",
+      "binary": false,
+      "body": {
+        "contentType": "application/json",
+        "empty": false,
+        "required": true,
+        "schemaRef": "enrollFirstUser.request"
+      },
+      "command": [
+        "enrollment",
+        "enroll-first-user"
+      ],
+      "method": "POST",
+      "operationId": "enrollFirstUser",
+      "parameters": [],
+      "path": "/api/v1/enrollment",
+      "responsesRef": "enrollFirstUser.responses",
+      "run": "none",
+      "stream": false
+    },
+    "description": "POST /api/v1/enrollment",
+    "inputSchema": {
+      "$defs": {},
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "additionalProperties": false,
+          "properties": {
+            "capability": {
+              "pattern": "^[a-f0-9]{64}$",
+              "type": "string"
+            },
+            "email": {
+              "format": "email",
+              "maxLength": 254,
+              "type": "string"
+            },
+            "password": {
+              "maxLength": 128,
+              "minLength": 8,
+              "type": "string"
+            }
+          },
+          "required": [
+            "capability",
+            "email",
+            "password"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "body"
+      ],
+      "type": "object"
+    },
+    "name": "enrollFirstUser"
+  },
+  {
+    "command": {
+      "aliases": [],
+      "auth": "either",
+      "binary": false,
+      "body": null,
+      "command": [
+        "approvals",
+        "list-approvals"
+      ],
+      "method": "GET",
+      "operationId": "listApprovals",
+      "parameters": [
+        {
+          "flag": "workspace-id",
+          "in": "path",
+          "name": "workspaceId",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        {
+          "flag": "state",
+          "in": "query",
+          "name": "state",
+          "required": false,
+          "schema": {
+            "enum": [
+              "pending",
+              "decided"
+            ],
+            "type": "string"
+          }
+        },
+        {
+          "flag": "limit",
+          "in": "query",
+          "name": "limit",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "default": 0,
+                "format": "integer",
+                "type": "string"
+              },
+              {
+                "default": 50,
+                "maximum": 100,
+                "minimum": 1,
+                "type": "integer"
+              }
+            ],
+            "default": 50,
+            "maximum": 100,
+            "minimum": 1
+          }
+        },
+        {
+          "flag": "after",
+          "in": "query",
+          "name": "after",
+          "required": false,
+          "schema": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "type": "string"
+          }
+        }
+      ],
+      "path": "/api/v1/workspaces/{workspaceId}/approvals",
+      "responsesRef": "listApprovals.responses",
+      "run": "none",
+      "stream": false
+    },
+    "description": "GET /api/v1/workspaces/{workspaceId}/approvals",
+    "inputSchema": {
+      "$defs": {},
+      "additionalProperties": false,
+      "properties": {
+        "after": {
+          "maxLength": 1024,
+          "minLength": 1,
+          "type": "string"
+        },
+        "limit": {
+          "anyOf": [
+            {
+              "default": 0,
+              "format": "integer",
+              "type": "string"
+            },
+            {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          ],
+          "default": 50,
+          "maximum": 100,
+          "minimum": 1
+        },
+        "state": {
+          "enum": [
+            "pending",
+            "decided"
+          ],
+          "type": "string"
+        },
+        "workspaceId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "name": "listApprovals"
+  },
+  {
+    "command": {
+      "aliases": [],
+      "auth": "principal",
+      "binary": false,
+      "body": {
+        "contentType": "application/json",
+        "empty": false,
+        "required": true,
+        "schemaRef": "requestMessageApproval.request"
+      },
+      "command": [
+        "approvals",
+        "request-message-approval"
+      ],
+      "method": "POST",
+      "operationId": "requestMessageApproval",
+      "parameters": [
+        {
+          "flag": "workspace-id",
+          "in": "path",
+          "name": "workspaceId",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "path": "/api/v1/workspaces/{workspaceId}/approvals",
+      "responsesRef": "requestMessageApproval.responses",
+      "run": "required",
+      "stream": false
+    },
+    "description": "POST /api/v1/workspaces/{workspaceId}/approvals",
+    "inputSchema": {
+      "$defs": {},
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "deliveryId": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "expiresInSeconds": {
+                  "anyOf": [
+                    {
+                      "default": 0,
+                      "format": "integer",
+                      "type": "string"
+                    },
+                    {
+                      "maximum": 86400,
+                      "minimum": 1,
+                      "type": "integer"
+                    }
+                  ],
+                  "maximum": 86400,
+                  "minimum": 1
+                },
+                "receipt": {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "deliveryId",
+                "receipt"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "expiresInSeconds": {
+                  "anyOf": [
+                    {
+                      "default": 0,
+                      "format": "integer",
+                      "type": "string"
+                    },
+                    {
+                      "maximum": 86400,
+                      "minimum": 1,
+                      "type": "integer"
+                    }
+                  ],
+                  "maximum": 86400,
+                  "minimum": 1
+                },
+                "primaryKey": {
+                  "anyOf": [
+                    {
+                      "patternProperties": {
+                        "^(.*)$": {}
+                      },
+                      "type": "object"
+                    },
+                    {
+                      "description": "Canonical typed primary key JSON text returned by a gate descriptor.",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "sql": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "expectRows": {
+                      "const": 1,
+                      "type": "number"
+                    },
+                    "params": {
+                      "items": {},
+                      "maxItems": 100,
+                      "type": "array"
+                    },
+                    "statement": {
+                      "maxLength": 65536,
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "statement",
+                    "params",
+                    "expectRows"
+                  ],
+                  "type": "object"
+                },
+                "table": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "targetKind": {
+                  "const": "row",
+                  "type": "string"
+                },
+                "targetVersion": {
+                  "pattern": "^[a-f0-9]{64}$",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "targetKind",
+                "table",
+                "primaryKey",
+                "targetVersion",
+                "sql"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "expectedRevision": {
+                  "anyOf": [
+                    {
+                      "default": 0,
+                      "format": "integer",
+                      "type": "string"
+                    },
+                    {
+                      "maximum": 2147483646,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  ],
+                  "maximum": 2147483646,
+                  "minimum": 0
+                },
+                "expiresInSeconds": {
+                  "anyOf": [
+                    {
+                      "default": 0,
+                      "format": "integer",
+                      "type": "string"
+                    },
+                    {
+                      "maximum": 86400,
+                      "minimum": 1,
+                      "type": "integer"
+                    }
+                  ],
+                  "maximum": 86400,
+                  "minimum": 1
+                },
+                "previewPosition": {
+                  "maxLength": 19,
+                  "pattern": "^[0-9]+$",
+                  "type": "string"
+                },
+                "sqlHash": {
+                  "pattern": "^[a-f0-9]{64}$",
+                  "type": "string"
+                },
+                "targetKind": {
+                  "const": "migration",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "targetKind",
+                "sqlHash",
+                "expectedRevision",
+                "previewPosition"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "workspaceId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "body"
+      ],
+      "type": "object"
+    },
+    "name": "requestMessageApproval"
+  },
+  {
+    "command": {
+      "aliases": [],
+      "auth": "either",
+      "binary": false,
+      "body": {
+        "contentType": "application/json",
+        "empty": false,
+        "required": true,
+        "schemaRef": "decideApproval.request"
+      },
+      "command": [
+        "approvals",
+        "decide-approval"
+      ],
+      "method": "POST",
+      "operationId": "decideApproval",
+      "parameters": [
+        {
+          "flag": "workspace-id",
+          "in": "path",
+          "name": "workspaceId",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        {
+          "flag": "id",
+          "in": "path",
+          "name": "id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "path": "/api/v1/workspaces/{workspaceId}/approvals/{id}/decision",
+      "responsesRef": "decideApproval.responses",
+      "run": "required",
+      "stream": false
+    },
+    "description": "POST /api/v1/workspaces/{workspaceId}/approvals/{id}/decision",
+    "inputSchema": {
+      "$defs": {},
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "additionalProperties": false,
+          "properties": {
+            "decision": {
+              "anyOf": [
+                {
+                  "const": "approve",
+                  "type": "string"
+                },
+                {
+                  "const": "reject",
+                  "type": "string"
+                }
+              ]
+            },
+            "reason": {
+              "maxLength": 64,
+              "pattern": "^[a-z][a-z0-9_]{0,63}$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "decision",
+            "reason"
+          ],
+          "type": "object"
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "workspaceId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "body"
+      ],
+      "type": "object"
+    },
+    "name": "decideApproval"
+  },
+  {
+    "command": {
+      "aliases": [
+        [
+          "events"
+        ]
+      ],
+      "auth": "either",
+      "binary": false,
+      "body": null,
+      "command": [
+        "events",
+        "read-audit"
+      ],
+      "method": "GET",
+      "operationId": "readAudit",
+      "parameters": [
+        {
+          "flag": "workspace-id",
+          "in": "path",
+          "name": "workspaceId",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        {
+          "flag": "run-id",
+          "in": "query",
+          "name": "runId",
+          "required": false,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        {
+          "flag": "after",
+          "in": "query",
+          "name": "after",
+          "required": false,
+          "schema": {
+            "default": "0",
+            "pattern": "^[0-9]+$",
+            "type": "string"
+          }
+        },
+        {
+          "flag": "limit",
+          "in": "query",
+          "name": "limit",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "default": 0,
+                "format": "integer",
+                "type": "string"
+              },
+              {
+                "default": 100,
+                "maximum": 500,
+                "minimum": 1,
+                "type": "integer"
+              }
+            ],
+            "default": 100,
+            "maximum": 500,
+            "minimum": 1
+          }
+        }
+      ],
+      "path": "/api/v1/workspaces/{workspaceId}/audit",
+      "responsesRef": "readAudit.responses",
+      "run": "none",
+      "stream": false
+    },
+    "description": "GET /api/v1/workspaces/{workspaceId}/audit",
+    "inputSchema": {
+      "$defs": {},
+      "additionalProperties": false,
+      "properties": {
+        "after": {
+          "default": "0",
+          "pattern": "^[0-9]+$",
+          "type": "string"
+        },
+        "limit": {
+          "anyOf": [
+            {
+              "default": 0,
+              "format": "integer",
+              "type": "string"
+            },
+            {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "type": "integer"
+            }
+          ],
+          "default": 100,
+          "maximum": 500,
+          "minimum": 1
+        },
+        "runId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "workspaceId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "name": "readAudit"
+  },
+  {
+    "command": {
+      "aliases": [],
+      "auth": "either",
+      "binary": false,
+      "body": null,
+      "command": [
+        "retention",
+        "read-audit-payload"
+      ],
+      "method": "GET",
+      "operationId": "readAuditPayload",
+      "parameters": [
+        {
+          "flag": "workspace-id",
+          "in": "path",
+          "name": "workspaceId",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        {
+          "flag": "position",
+          "in": "path",
+          "name": "position",
+          "required": true,
+          "schema": {
+            "maxLength": 19,
+            "pattern": "^[0-9]+$",
+            "type": "string"
+          }
+        }
+      ],
+      "path": "/api/v1/workspaces/{workspaceId}/audit/{position}/payload",
+      "responsesRef": "readAuditPayload.responses",
+      "run": "none",
+      "stream": false
+    },
+    "description": "GET /api/v1/workspaces/{workspaceId}/audit/{position}/payload",
+    "inputSchema": {
+      "$defs": {},
+      "additionalProperties": false,
+      "properties": {
+        "position": {
+          "maxLength": 19,
+          "pattern": "^[0-9]+$",
+          "type": "string"
+        },
+        "workspaceId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "position"
+      ],
+      "type": "object"
+    },
+    "name": "readAuditPayload"
+  },
+  {
+    "command": {
+      "aliases": [],
+      "auth": "principal",
+      "binary": false,
+      "body": {
+        "contentType": "application/octet-stream",
+        "empty": false,
+        "required": true,
+        "schemaRef": "putBlob.request"
+      },
+      "command": [
+        "blobs",
+        "put-blob"
+      ],
+      "method": "POST",
+      "operationId": "putBlob",
+      "parameters": [
+        {
+          "flag": "workspace-id",
+          "in": "path",
+          "name": "workspaceId",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        {
+          "flag": "key",
+          "in": "query",
+          "name": "key",
+          "required": true,
+          "schema": {
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9_-][A-Za-z0-9._-]{0,63}(/[A-Za-z0-9_-][A-Za-z0-9._-]{0,63}){0,3}$",
+            "type": "string"
+          }
+        },
+        {
+          "flag": "x-backplane-sha256",
+          "in": "header",
+          "name": "x-backplane-sha256",
+          "required": false,
+          "schema": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          }
+        }
+      ],
+      "path": "/api/v1/workspaces/{workspaceId}/blobs",
+      "responsesRef": "putBlob.responses",
+      "run": "required",
+      "stream": false
+    },
+    "description": "POST /api/v1/workspaces/{workspaceId}/blobs",
+    "inputSchema": {
+      "$defs": {},
+      "additionalProperties": false,
+      "properties": {
+        "file": {
+          "description": "Local-only path read by the MCP server process; stdin is unavailable.",
+          "type": "string"
+        },
+        "key": {
+          "maxLength": 256,
+          "pattern": "^[A-Za-z0-9_-][A-Za-z0-9._-]{0,63}(/[A-Za-z0-9_-][A-Za-z0-9._-]{0,63}){0,3}$",
+          "type": "string"
+        },
+        "workspaceId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "x-backplane-sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "file"
+      ],
+      "type": "object"
+    },
+    "name": "putBlob"
+  },
+  {
+    "command": {
+      "aliases": [],
+      "auth": "either",
+      "binary": false,
+      "body": null,
+      "command": [
+        "blobs",
+        "delete-blob"
+      ],
+      "method": "DELETE",
+      "operationId": "deleteBlob",
+      "parameters": [
+        {
+          "flag": "workspace-id",
+          "in": "path",
+          "name": "workspaceId",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        {
+          "flag": "id",
+          "in": "path",
+          "name": "id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "path": "/api/v1/workspaces/{workspaceId}/blobs/{id}",
+      "responsesRef": "deleteBlob.responses",
+      "run": "required",
+      "stream": false
+    },
+    "description": "DELETE /api/v1/workspaces/{workspaceId}/blobs/{id}",
+    "inputSchema": {
+      "$defs": {},
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "workspaceId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "name": "deleteBlob"
+  },
+  {
+    "command": {
+      "aliases": [],
+      "auth": "either",
+      "binary": true,
+      "body": null,
+      "command": [
+        "blobs",
+        "get-blob"
+      ],
+      "method": "GET",
+      "operationId": "getBlob",
+      "parameters": [
+        {
+          "flag": "workspace-id",
+          "in": "path",
+          "name": "workspaceId",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        {
+          "flag": "id",
+          "in": "path",
+          "name": "id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "path": "/api/v1/workspaces/{workspaceId}/blobs/{id}",
+      "responsesRef": "getBlob.responses",
+      "run": "none",
+      "stream": false
+    },
+    "description": "GET /api/v1/workspaces/{workspaceId}/blobs/{id}; returns base64 content, at most 4 MiB",
+    "inputSchema": {
+      "$defs": {},
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "workspaceId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "name": "getBlob"
+  },
+  {
+    "command": {
+      "aliases": [],
+      "auth": "principal",
+      "binary": false,
+      "body": {
+        "contentType": "application/json",
+        "empty": false,
+        "required": true,
+        "schemaRef": "ackDelivery.request"
+      },
+      "command": [
+        "queue",
+        "ack-delivery"
+      ],
+      "method": "POST",
+      "operationId": "ackDelivery",
+      "parameters": [
+        {
+          "flag": "workspace-id",
+          "in": "path",
+          "name": "workspaceId",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        {
+          "flag": "delivery-id",
+          "in": "path",
+          "name": "deliveryId",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "path": "/api/v1/workspaces/{workspaceId}/deliveries/{deliveryId}/ack",
+      "responsesRef": "ackDelivery.responses",
+      "run": "required",
+      "stream": false
+    },
+    "description": "POST /api/v1/workspaces/{workspaceId}/deliveries/{deliveryId}/ack",
+    "inputSchema": {
+      "$defs": {},
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "additionalProperties": false,
+          "properties": {
+            "receipt": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "receipt"
+          ],
+          "type": "object"
+        },
+        "deliveryId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "workspaceId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "deliveryId",
+        "body"
+      ],
+      "type": "object"
+    },
+    "name": "ackDelivery"
+  },
+  {
+    "command": {
+      "aliases": [],
+      "auth": "principal",
+      "binary": false,
+      "body": {
+        "contentType": "application/json",
+        "empty": false,
+        "required": true,
+        "schemaRef": "beginEffect.request"
+      },
+      "command": [
+        "queue",
+        "begin-effect"
+      ],
+      "method": "POST",
+      "operationId": "beginEffect",
+      "parameters": [
+        {
+          "flag": "workspace-id",
+          "in": "path",
+          "name": "workspaceId",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        {
+          "flag": "delivery-id",
+          "in": "path",
+          "name": "deliveryId",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "path": "/api/v1/workspaces/{workspaceId}/deliveries/{deliveryId}/begin-effect",
+      "responsesRef": "beginEffect.responses",
+      "run": "required",
+      "stream": false
+    },
+    "description": "POST /api/v1/workspaces/{workspaceId}/deliveries/{deliveryId}/begin-effect",
+    "inputSchema": {
+      "$defs": {},
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "pattern": "^[^\\u0000]+$",
+              "type": "string"
+            },
+            "destination": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "pattern": "^[^\\u0000]+$",
+              "type": "string"
+            },
+            "receipt": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "receipt",
+            "action",
+            "destination"
+          ],
+          "type": "object"
+        },
+        "deliveryId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "workspaceId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "deliveryId",
+        "body"
+      ],
+      "type": "object"
+    },
+    "name": "beginEffect"
+  },
+  {
+    "command": {
+      "aliases": [],
+      "auth": "principal",
+      "binary": false,
+      "body": {
+        "contentType": "application/json",
+        "empty": false,
+        "required": true,
+        "schemaRef": "holdDelivery.request"
+      },
+      "command": [
+        "queue",
+        "hold-delivery"
+      ],
+      "method": "POST",
+      "operationId": "holdDelivery",
+      "parameters": [
+        {
+          "flag": "workspace-id",
+          "in": "path",
+          "name": "workspaceId",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        {
+          "flag": "delivery-id",
+          "in": "path",
+          "name": "deliveryId",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "path": "/api/v1/workspaces/{workspaceId}/deliveries/{deliveryId}/hold",
+      "responsesRef": "holdDelivery.responses",
+      "run": "required",
+      "stream": false
+    },
+    "description": "POST /api/v1/workspaces/{workspaceId}/deliveries/{deliveryId}/hold",
+    "inputSchema": {
+      "$defs": {},
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "additionalProperties": false,
+          "properties": {
+            "receipt": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "receipt"
+          ],
+          "type": "object"
+        },
+        "deliveryId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "workspaceId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "deliveryId",
+        "body"
+      ],
+      "type": "object"
+    },
+    "name": "holdDelivery"
+  },
+  {
+    "command": {
+      "aliases": [],
+      "auth": "principal",
+      "binary": false,
+      "body": {
+        "contentType": "application/json",
+        "empty": false,
+        "required": true,
+        "schemaRef": "nackDelivery.request"
+      },
+      "command": [
+        "queue",
+        "nack-delivery"
+      ],
+      "method": "POST",
+      "operationId": "nackDelivery",
+      "parameters": [
+        {
+          "flag": "workspace-id",
+          "in": "path",
+          "name": "workspaceId",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        {
+          "flag": "delivery-id",
+          "in": "path",
+          "name": "deliveryId",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "path": "/api/v1/workspaces/{workspaceId}/deliveries/{deliveryId}/nack",
+      "responsesRef": "nackDelivery.responses",
+      "run": "required",
+      "stream": false
+    },
+    "description": "POST /api/v1/workspaces/{workspaceId}/deliveries/{deliveryId}/nack",
+    "inputSchema": {
+      "$defs": {},
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "additionalProperties": false,
+          "properties": {
+            "receipt": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "receipt"
+          ],
+          "type": "object"
+        },
+        "deliveryId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "workspaceId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "deliveryId",
+        "body"
+      ],
+      "type": "object"
+    },
+    "name": "nackDelivery"
+  },
+  {
+    "command": {
+      "aliases": [],
+      "auth": "principal",
+      "binary": false,
+      "body": {
+        "contentType": "application/json",
+        "empty": false,
+        "required": true,
+        "schemaRef": "renewDelivery.request"
+      },
+      "command": [
+        "queue",
+        "renew-delivery"
+      ],
+      "method": "POST",
+      "operationId": "renewDelivery",
+      "parameters": [
+        {
+          "flag": "workspace-id",
+          "in": "path",
+          "name": "workspaceId",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        {
+          "flag": "delivery-id",
+          "in": "path",
+          "name": "deliveryId",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "path": "/api/v1/workspaces/{workspaceId}/deliveries/{deliveryId}/renew",
+      "responsesRef": "renewDelivery.responses",
+      "run": "required",
+      "stream": false
+    },
+    "description": "POST /api/v1/workspaces/{workspaceId}/deliveries/{deliveryId}/renew",
+    "inputSchema": {
+      "$defs": {},
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "additionalProperties": false,
+          "properties": {
+            "receipt": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "receipt"
+          ],
+          "type": "object"
+        },
+        "deliveryId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "workspaceId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "deliveryId",
+        "body"
+      ],
+      "type": "object"
+    },
+    "name": "renewDelivery"
+  },
+  {
+    "command": {
+      "aliases": [],
+      "auth": "either",
+      "binary": false,
+      "body": null,
+      "command": [
+        "events",
+        "stream-audit"
+      ],
+      "method": "GET",
+      "operationId": "streamAudit",
+      "parameters": [
+        {
+          "flag": "workspace-id",
+          "in": "path",
+          "name": "workspaceId",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        {
+          "flag": "since",
+          "in": "query",
+          "name": "since",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "flag": "generation",
+          "in": "query",
+          "name": "generation",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "path": "/api/v1/workspaces/{workspaceId}/events",
+      "responsesRef": "streamAudit.responses",
+      "run": "none",
+      "stream": true
+    },
+    "description": "GET /api/v1/workspaces/{workspaceId}/events; collects at most one second or 100 frames, then aborts and returns an array",
+    "inputSchema": {
+      "$defs": {},
+      "additionalProperties": false,
+      "properties": {
+        "generation": {
+          "type": "string"
+        },
+        "since": {
+          "type": "string"
+        },
+        "workspaceId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "name": "streamAudit"
+  },
+  {
+    "command": {
+      "aliases": [],
+      "auth": "principal",
+      "binary": false,
+      "body": {
+        "contentType": "application/json",
+        "empty": false,
+        "required": true,
+        "schemaRef": "deployFunction.request"
+      },
+      "command": [
+        "functions",
+        "deploy-function"
+      ],
+      "method": "POST",
+      "operationId": "deployFunction",
+      "parameters": [
+        {
+          "flag": "workspace-id",
+          "in": "path",
+          "name": "workspaceId",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        {
+          "flag": "name",
+          "in": "path",
+          "name": "name",
+          "required": true,
+          "schema": {
+            "pattern": "^[a-z][a-z0-9-]{0,62}$",
+            "type": "string"
+          }
+        }
+      ],
+      "path": "/api/v1/workspaces/{workspaceId}/functions/{name}/deployments",
+      "responsesRef": "deployFunction.responses",
+      "run": "required",
+      "stream": false
+    },
+    "description": "POST /api/v1/workspaces/{workspaceId}/functions/{name}/deployments",
+    "inputSchema": {
+      "$defs": {},
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "additionalProperties": false,
+          "properties": {
+            "bundle": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "entryPoint": {
+              "const": "default",
+              "type": "string"
+            },
+            "id": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "outboundUrls": {
+              "items": {
+                "maxLength": 2048,
+                "type": "string"
+              },
+              "maxItems": 16,
+              "type": "array"
+            }
+          },
+          "required": [
+            "id",
+            "bundle",
+            "entryPoint",
+            "outboundUrls"
+          ],
+          "type": "object"
+        },
+        "name": {
+          "pattern": "^[a-z][a-z0-9-]{0,62}$",
+          "type": "string"
+        },
+        "workspaceId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "body"
+      ],
+      "type": "object"
+    },
+    "name": "deployFunction"
+  },
+  {
+    "command": {
+      "aliases": [],
+      "auth": "either",
+      "binary": false,
+      "body": null,
+      "command": [
+        "functions",
+        "get-function-deployment"
+      ],
+      "method": "GET",
+      "operationId": "getFunctionDeployment",
+      "parameters": [
+        {
+          "flag": "workspace-id",
+          "in": "path",
+          "name": "workspaceId",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        {
+          "flag": "name",
+          "in": "path",
+          "name": "name",
+          "required": true,
+          "schema": {
+            "pattern": "^[a-z][a-z0-9-]{0,62}$",
+            "type": "string"
+          }
+        },
+        {
+          "flag": "id",
+          "in": "path",
+          "name": "id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "path": "/api/v1/workspaces/{workspaceId}/functions/{name}/deployments/{id}",
+      "responsesRef": "getFunctionDeployment.responses",
+      "run": "none",
+      "stream": false
+    },
+    "description": "GET /api/v1/workspaces/{workspaceId}/functions/{name}/deployments/{id}",
+    "inputSchema": {
+      "$defs": {},
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "name": {
+          "pattern": "^[a-z][a-z0-9-]{0,62}$",
+          "type": "string"
+        },
+        "workspaceId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "id"
+      ],
+      "type": "object"
+    },
+    "name": "getFunctionDeployment"
+  },
+  {
+    "command": {
+      "aliases": [],
+      "auth": "either",
+      "binary": false,
+      "body": {
+        "contentType": "application/json",
+        "empty": false,
+        "required": true,
+        "schemaRef": "activateFunction.request"
+      },
+      "command": [
+        "functions",
+        "activate-function"
+      ],
+      "method": "POST",
+      "operationId": "activateFunction",
+      "parameters": [
+        {
+          "flag": "workspace-id",
+          "in": "path",
+          "name": "workspaceId",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        {
+          "flag": "name",
+          "in": "path",
+          "name": "name",
+          "required": true,
+          "schema": {
+            "pattern": "^[a-z][a-z0-9-]{0,62}$",
+            "type": "string"
+          }
+        },
+        {
+          "flag": "id",
+          "in": "path",
+          "name": "id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "path": "/api/v1/workspaces/{workspaceId}/functions/{name}/deployments/{id}/activate",
+      "responsesRef": "activateFunction.responses",
+      "run": "required",
+      "stream": false
+    },
+    "description": "POST /api/v1/workspaces/{workspaceId}/functions/{name}/deployments/{id}/activate",
+    "inputSchema": {
+      "$defs": {},
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "additionalProperties": false,
+          "properties": {
+            "expectedActiveId": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "nullable": true
+            }
+          },
+          "required": [
+            "expectedActiveId"
+          ],
+          "type": "object"
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "name": {
+          "pattern": "^[a-z][a-z0-9-]{0,62}$",
+          "type": "string"
+        },
+        "workspaceId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "id",
+        "body"
+      ],
+      "type": "object"
+    },
+    "name": "activateFunction"
+  },
+  {
+    "command": {
+      "aliases": [],
+      "auth": "principal",
+      "binary": false,
+      "body": {
+        "contentType": "application/json",
+        "empty": false,
+        "required": true,
+        "schemaRef": "invokeFunction.request"
+      },
+      "command": [
+        "functions",
+        "invoke-function"
+      ],
+      "method": "POST",
+      "operationId": "invokeFunction",
+      "parameters": [
+        {
+          "flag": "workspace-id",
+          "in": "path",
+          "name": "workspaceId",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        {
+          "flag": "name",
+          "in": "path",
+          "name": "name",
+          "required": true,
+          "schema": {
+            "pattern": "^[a-z][a-z0-9-]{0,62}$",
+            "type": "string"
+          }
+        }
+      ],
+      "path": "/api/v1/workspaces/{workspaceId}/functions/{name}/invoke",
+      "responsesRef": "invokeFunction.responses",
+      "run": "required",
+      "stream": false
+    },
+    "description": "POST /api/v1/workspaces/{workspaceId}/functions/{name}/invoke",
+    "inputSchema": {
+      "$defs": {},
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "additionalProperties": false,
+          "properties": {
+            "input": {},
+            "timeoutMs": {
+              "anyOf": [
+                {
+                  "default": 0,
+                  "format": "integer",
+                  "type": "string"
+                },
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              ],
+              "minimum": 1
+            }
+          },
+          "required": [
+            "input"
+          ],
+          "type": "object"
+        },
+        "name": {
+          "pattern": "^[a-z][a-z0-9-]{0,62}$",
+          "type": "string"
+        },
+        "workspaceId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "body"
+      ],
+      "type": "object"
+    },
+    "name": "invokeFunction"
+  },
+  {
+    "command": {
+      "aliases": [],
+      "auth": "either",
+      "binary": false,
+      "body": null,
+      "command": [
+        "schema",
+        "list-migrations"
+      ],
+      "method": "GET",
+      "operationId": "listMigrations",
+      "parameters": [
+        {
+          "flag": "workspace-id",
+          "in": "path",
+          "name": "workspaceId",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        {
+          "flag": "after-revision",
+          "in": "query",
+          "name": "afterRevision",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "default": 0,
+                "format": "integer",
+                "type": "string"
+              },
+              {
+                "default": 0,
+                "maximum": 2147483647,
+                "minimum": 0,
+                "type": "integer"
+              }
+            ],
+            "default": 0,
+            "maximum": 2147483647,
+            "minimum": 0
+          }
+        },
+        {
+          "flag": "limit",
+          "in": "query",
+          "name": "limit",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "default": 0,
+                "format": "integer",
+                "type": "string"
+              },
+              {
+                "default": 50,
+                "maximum": 100,
+                "minimum": 1,
+                "type": "integer"
+              }
+            ],
+            "default": 50,
+            "maximum": 100,
+            "minimum": 1
+          }
+        }
+      ],
+      "path": "/api/v1/workspaces/{workspaceId}/migrations",
+      "responsesRef": "listMigrations.responses",
+      "run": "none",
+      "stream": false
+    },
+    "description": "GET /api/v1/workspaces/{workspaceId}/migrations",
+    "inputSchema": {
+      "$defs": {},
+      "additionalProperties": false,
+      "properties": {
+        "afterRevision": {
+          "anyOf": [
+            {
+              "default": 0,
+              "format": "integer",
+              "type": "string"
+            },
+            {
+              "default": 0,
+              "maximum": 2147483647,
+              "minimum": 0,
+              "type": "integer"
+            }
+          ],
+          "default": 0,
+          "maximum": 2147483647,
+          "minimum": 0
+        },
+        "limit": {
+          "anyOf": [
+            {
+              "default": 0,
+              "format": "integer",
+              "type": "string"
+            },
+            {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          ],
+          "default": 50,
+          "maximum": 100,
+          "minimum": 1
+        },
+        "workspaceId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "name": "listMigrations"
+  },
+  {
+    "command": {
+      "aliases": [],
+      "auth": "principal",
+      "binary": false,
+      "body": {
+        "contentType": "application/json",
+        "empty": false,
+        "required": true,
+        "schemaRef": "applyMigration.request"
+      },
+      "command": [
+        "schema",
+        "apply-migration"
+      ],
+      "method": "POST",
+      "operationId": "applyMigration",
+      "parameters": [
+        {
+          "flag": "workspace-id",
+          "in": "path",
+          "name": "workspaceId",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "path": "/api/v1/workspaces/{workspaceId}/migrations",
+      "responsesRef": "applyMigration.responses",
+      "run": "required",
+      "stream": false
+    },
+    "description": "POST /api/v1/workspaces/{workspaceId}/migrations",
+    "inputSchema": {
+      "$defs": {},
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "additionalProperties": false,
+          "properties": {
+            "approvalId": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "destructive": {
+              "default": false,
+              "type": "boolean"
+            },
+            "expectedRevision": {
+              "anyOf": [
+                {
+                  "default": 0,
+                  "format": "integer",
+                  "type": "string"
+                },
+                {
+                  "maximum": 2147483646,
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              ],
+              "maximum": 2147483646,
+              "minimum": 0
+            },
+            "name": {
+              "maxLength": 120,
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            "previewPosition": {
+              "maxLength": 19,
+              "pattern": "^[0-9]+$",
+              "type": "string"
+            },
+            "sql": {
+              "maxLength": 65536,
+              "minLength": 1,
+              "type": "string"
+            },
+            "sqlHash": {
+              "pattern": "^[a-f0-9]{64}$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "name",
+            "sql",
+            "expectedRevision",
+            "destructive",
+            "sqlHash",
+            "previewPosition"
+          ],
+          "type": "object"
+        },
+        "workspaceId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "body"
+      ],
+      "type": "object"
+    },
+    "name": "applyMigration"
+  },
+  {
+    "command": {
+      "aliases": [],
+      "auth": "principal",
+      "binary": false,
+      "body": {
+        "contentType": "application/json",
+        "empty": false,
+        "required": true,
+        "schemaRef": "previewMigration.request"
+      },
+      "command": [
+        "schema",
+        "preview-migration"
+      ],
+      "method": "POST",
+      "operationId": "previewMigration",
+      "parameters": [
+        {
+          "flag": "workspace-id",
+          "in": "path",
+          "name": "workspaceId",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "path": "/api/v1/workspaces/{workspaceId}/migrations/preview",
+      "responsesRef": "previewMigration.responses",
+      "run": "required",
+      "stream": false
+    },
+    "description": "POST /api/v1/workspaces/{workspaceId}/migrations/preview",
+    "inputSchema": {
+      "$defs": {},
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "additionalProperties": false,
+          "properties": {
+            "destructive": {
+              "default": false,
+              "type": "boolean"
+            },
+            "expectedRevision": {
+              "anyOf": [
+                {
+                  "default": 0,
+                  "format": "integer",
+                  "type": "string"
+                },
+                {
+                  "maximum": 2147483646,
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              ],
+              "maximum": 2147483646,
+              "minimum": 0
+            },
+            "name": {
+              "maxLength": 120,
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            "sql": {
+              "maxLength": 65536,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "name",
+            "sql",
+            "expectedRevision",
+            "destructive"
+          ],
+          "type": "object"
+        },
+        "workspaceId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "body"
+      ],
+      "type": "object"
+    },
+    "name": "previewMigration"
+  },
+  {
+    "command": {
+      "aliases": [],
+      "auth": "principal",
+      "binary": false,
+      "body": {
+        "contentType": "application/json",
+        "empty": false,
+        "required": true,
+        "schemaRef": "createQueue.request"
+      },
+      "command": [
+        "queue",
+        "create-queue"
+      ],
+      "method": "POST",
+      "operationId": "createQueue",
+      "parameters": [
+        {
+          "flag": "workspace-id",
+          "in": "path",
+          "name": "workspaceId",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "path": "/api/v1/workspaces/{workspaceId}/queues",
+      "responsesRef": "createQueue.responses",
+      "run": "required",
+      "stream": false
+    },
+    "description": "POST /api/v1/workspaces/{workspaceId}/queues",
+    "inputSchema": {
+      "$defs": {},
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "maxLength": 63,
+              "minLength": 1,
+              "pattern": "^[a-z][a-z0-9_-]{0,62}$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "name"
+          ],
+          "type": "object"
+        },
+        "workspaceId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "body"
+      ],
+      "type": "object"
+    },
+    "name": "createQueue"
+  },
+  {
+    "command": {
+      "aliases": [],
+      "auth": "principal",
+      "binary": false,
+      "body": {
+        "contentType": "application/json",
+        "empty": true,
+        "required": true,
+        "schemaRef": "claimMessage.request"
+      },
+      "command": [
+        "queue",
+        "claim-message"
+      ],
+      "method": "POST",
+      "operationId": "claimMessage",
+      "parameters": [
+        {
+          "flag": "workspace-id",
+          "in": "path",
+          "name": "workspaceId",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        {
+          "flag": "queue",
+          "in": "path",
+          "name": "queue",
+          "required": true,
+          "schema": {
+            "maxLength": 63,
+            "minLength": 1,
+            "pattern": "^[a-z][a-z0-9_-]{0,62}$",
+            "type": "string"
+          }
+        }
+      ],
+      "path": "/api/v1/workspaces/{workspaceId}/queues/{queue}/claim",
+      "responsesRef": "claimMessage.responses",
+      "run": "required",
+      "stream": false
+    },
+    "description": "POST /api/v1/workspaces/{workspaceId}/queues/{queue}/claim",
+    "inputSchema": {
+      "$defs": {},
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "additionalProperties": false,
+          "properties": {},
+          "type": "object"
+        },
+        "queue": {
+          "maxLength": 63,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]{0,62}$",
+          "type": "string"
+        },
+        "workspaceId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "queue",
+        "body"
+      ],
+      "type": "object"
+    },
+    "name": "claimMessage"
+  },
+  {
+    "command": {
+      "aliases": [],
+      "auth": "either",
+      "binary": false,
+      "body": null,
+      "command": [
+        "queue",
+        "list-deliveries"
+      ],
+      "method": "GET",
+      "operationId": "listDeliveries",
+      "parameters": [
+        {
+          "flag": "workspace-id",
+          "in": "path",
+          "name": "workspaceId",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        {
+          "flag": "queue",
+          "in": "path",
+          "name": "queue",
+          "required": true,
+          "schema": {
+            "maxLength": 63,
+            "minLength": 1,
+            "pattern": "^[a-z][a-z0-9_-]{0,62}$",
+            "type": "string"
+          }
+        },
+        {
+          "flag": "state",
+          "in": "query",
+          "name": "state",
+          "required": false,
+          "schema": {
+            "enum": [
+              "scheduled",
+              "ready",
+              "leased",
+              "begun",
+              "effect-paused",
+              "held",
+              "ambiguous",
+              "succeeded",
+              "dead-lettered",
+              "cancelled"
+            ],
+            "type": "string"
+          }
+        },
+        {
+          "flag": "after",
+          "in": "query",
+          "name": "after",
+          "required": false,
+          "schema": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        {
+          "flag": "limit",
+          "in": "query",
+          "name": "limit",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "default": 0,
+                "format": "integer",
+                "type": "string"
+              },
+              {
+                "default": 50,
+                "maximum": 100,
+                "minimum": 1,
+                "type": "integer"
+              }
+            ],
+            "default": 50,
+            "maximum": 100,
+            "minimum": 1
+          }
+        }
+      ],
+      "path": "/api/v1/workspaces/{workspaceId}/queues/{queue}/deliveries",
+      "responsesRef": "listDeliveries.responses",
+      "run": "none",
+      "stream": false
+    },
+    "description": "GET /api/v1/workspaces/{workspaceId}/queues/{queue}/deliveries",
+    "inputSchema": {
+      "$defs": {},
+      "additionalProperties": false,
+      "properties": {
+        "after": {
+          "maxLength": 1024,
+          "minLength": 1,
+          "type": "string"
+        },
+        "limit": {
+          "anyOf": [
+            {
+              "default": 0,
+              "format": "integer",
+              "type": "string"
+            },
+            {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          ],
+          "default": 50,
+          "maximum": 100,
+          "minimum": 1
+        },
+        "queue": {
+          "maxLength": 63,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]{0,62}$",
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "scheduled",
+            "ready",
+            "leased",
+            "begun",
+            "effect-paused",
+            "held",
+            "ambiguous",
+            "succeeded",
+            "dead-lettered",
+            "cancelled"
+          ],
+          "type": "string"
+        },
+        "workspaceId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "queue"
+      ],
+      "type": "object"
+    },
+    "name": "listDeliveries"
+  },
+  {
+    "command": {
+      "aliases": [],
+      "auth": "principal",
+      "binary": false,
+      "body": {
+        "contentType": "application/json",
+        "empty": false,
+        "required": true,
+        "schemaRef": "sendMessage.request"
+      },
+      "command": [
+        "queue",
+        "send-message"
+      ],
+      "method": "POST",
+      "operationId": "sendMessage",
+      "parameters": [
+        {
+          "flag": "workspace-id",
+          "in": "path",
+          "name": "workspaceId",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        {
+          "flag": "queue",
+          "in": "path",
+          "name": "queue",
+          "required": true,
+          "schema": {
+            "maxLength": 63,
+            "minLength": 1,
+            "pattern": "^[a-z][a-z0-9_-]{0,62}$",
+            "type": "string"
+          }
+        }
+      ],
+      "path": "/api/v1/workspaces/{workspaceId}/queues/{queue}/messages",
+      "responsesRef": "sendMessage.responses",
+      "run": "required",
+      "stream": false
+    },
+    "description": "POST /api/v1/workspaces/{workspaceId}/queues/{queue}/messages",
+    "inputSchema": {
+      "$defs": {},
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "additionalProperties": false,
+          "properties": {
+            "idempotencyKey": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            "payload": {}
+          },
+          "required": [
+            "idempotencyKey",
+            "payload"
+          ],
+          "type": "object"
+        },
+        "queue": {
+          "maxLength": 63,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]{0,62}$",
+          "type": "string"
+        },
+        "workspaceId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "queue",
+        "body"
+      ],
+      "type": "object"
+    },
+    "name": "sendMessage"
+  },
+  {
+    "command": {
+      "aliases": [],
+      "auth": "principal",
+      "binary": false,
+      "body": null,
+      "command": [
+        "queue",
+        "get-message"
+      ],
+      "method": "GET",
+      "operationId": "getMessage",
+      "parameters": [
+        {
+          "flag": "workspace-id",
+          "in": "path",
+          "name": "workspaceId",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        {
+          "flag": "queue",
+          "in": "path",
+          "name": "queue",
+          "required": true,
+          "schema": {
+            "maxLength": 63,
+            "minLength": 1,
+            "pattern": "^[a-z][a-z0-9_-]{0,62}$",
+            "type": "string"
+          }
+        },
+        {
+          "flag": "message-id",
+          "in": "path",
+          "name": "messageId",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "path": "/api/v1/workspaces/{workspaceId}/queues/{queue}/messages/{messageId}",
+      "responsesRef": "getMessage.responses",
+      "run": "none",
+      "stream": false
+    },
+    "description": "GET /api/v1/workspaces/{workspaceId}/queues/{queue}/messages/{messageId}",
+    "inputSchema": {
+      "$defs": {},
+      "additionalProperties": false,
+      "properties": {
+        "messageId": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "queue": {
+          "maxLength": 63,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]{0,62}$",
+          "type": "string"
+        },
+        "workspaceId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "queue",
+        "messageId"
+      ],
+      "type": "object"
+    },
+    "name": "getMessage"
+  },
+  {
+    "command": {
+      "aliases": [],
+      "auth": "principal",
+      "binary": false,
+      "body": {
+        "contentType": "application/json",
+        "empty": true,
+        "required": true,
+        "schemaRef": "recoverDeliveries.request"
+      },
+      "command": [
+        "queue",
+        "recover-deliveries"
+      ],
+      "method": "POST",
+      "operationId": "recoverDeliveries",
+      "parameters": [
+        {
+          "flag": "workspace-id",
+          "in": "path",
+          "name": "workspaceId",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        {
+          "flag": "queue",
+          "in": "path",
+          "name": "queue",
+          "required": true,
+          "schema": {
+            "maxLength": 63,
+            "minLength": 1,
+            "pattern": "^[a-z][a-z0-9_-]{0,62}$",
+            "type": "string"
+          }
+        }
+      ],
+      "path": "/api/v1/workspaces/{workspaceId}/queues/{queue}/recover",
+      "responsesRef": "recoverDeliveries.responses",
+      "run": "required",
+      "stream": false
+    },
+    "description": "POST /api/v1/workspaces/{workspaceId}/queues/{queue}/recover",
+    "inputSchema": {
+      "$defs": {},
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "additionalProperties": false,
+          "properties": {},
+          "type": "object"
+        },
+        "queue": {
+          "maxLength": 63,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]{0,62}$",
+          "type": "string"
+        },
+        "workspaceId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "queue",
+        "body"
+      ],
+      "type": "object"
+    },
+    "name": "recoverDeliveries"
+  },
+  {
+    "command": {
+      "aliases": [],
+      "auth": "either",
+      "binary": false,
+      "body": {
+        "contentType": "application/json",
+        "empty": false,
+        "required": true,
+        "schemaRef": "reconcileEffect.request"
+      },
+      "command": [
+        "queue",
+        "reconcile-effect"
+      ],
+      "method": "POST",
+      "operationId": "reconcileEffect",
+      "parameters": [
+        {
+          "flag": "workspace-id",
+          "in": "path",
+          "name": "workspaceId",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "path": "/api/v1/workspaces/{workspaceId}/reconciliations",
+      "responsesRef": "reconcileEffect.responses",
+      "run": "required",
+      "stream": false
+    },
+    "description": "POST /api/v1/workspaces/{workspaceId}/reconciliations",
+    "inputSchema": {
+      "$defs": {},
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "additionalProperties": false,
+          "properties": {
+            "deliveryId": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "evidence": {
+              "maxLength": 4096,
+              "minLength": 1,
+              "pattern": "^[^\\u0000]+$",
+              "type": "string"
+            },
+            "outcome": {
+              "anyOf": [
+                {
+                  "const": "applied",
+                  "type": "string"
+                },
+                {
+                  "const": "not_applied",
+                  "type": "string"
+                },
+                {
+                  "const": "unknown",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "required": [
+            "deliveryId",
+            "outcome",
+            "evidence"
+          ],
+          "type": "object"
+        },
+        "workspaceId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "body"
+      ],
+      "type": "object"
+    },
+    "name": "reconcileEffect"
+  },
+  {
+    "command": {
+      "aliases": [
+        [
+          "run",
+          "new"
+        ]
+      ],
+      "auth": "principal",
+      "binary": false,
+      "body": {
+        "contentType": "application/json",
+        "empty": true,
+        "required": true,
+        "schemaRef": "createRun.request"
+      },
+      "command": [
+        "runs",
+        "create-run"
+      ],
+      "method": "POST",
+      "operationId": "createRun",
+      "parameters": [
+        {
+          "flag": "workspace-id",
+          "in": "path",
+          "name": "workspaceId",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "path": "/api/v1/workspaces/{workspaceId}/runs",
+      "responsesRef": "createRun.responses",
+      "run": "forbidden",
+      "stream": false
+    },
+    "description": "POST /api/v1/workspaces/{workspaceId}/runs",
+    "inputSchema": {
+      "$defs": {},
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "additionalProperties": false,
+          "properties": {
+            "harness": {
+              "maxLength": 256,
+              "type": "string"
+            },
+            "label": {
+              "maxLength": 256,
+              "type": "string"
+            },
+            "metadata": {
+              "patternProperties": {
+                "^(.*)$": {}
+              },
+              "type": "object"
+            },
+            "model": {
+              "maxLength": 256,
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "workspaceId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "body"
+      ],
+      "type": "object"
+    },
+    "name": "createRun"
+  },
+  {
+    "command": {
+      "aliases": [],
+      "auth": "principal",
+      "binary": false,
+      "body": {
+        "contentType": "application/json",
+        "empty": false,
+        "required": true,
+        "schemaRef": "executeSql.request"
+      },
+      "command": [
+        "sql",
+        "execute-sql"
+      ],
+      "method": "POST",
+      "operationId": "executeSql",
+      "parameters": [
+        {
+          "flag": "workspace-id",
+          "in": "path",
+          "name": "workspaceId",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "path": "/api/v1/workspaces/{workspaceId}/sql",
+      "responsesRef": "executeSql.responses",
+      "run": "required",
+      "stream": false
+    },
+    "description": "POST /api/v1/workspaces/{workspaceId}/sql",
+    "inputSchema": {
+      "$defs": {},
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "additionalProperties": false,
+          "properties": {
+            "params": {
+              "items": {},
+              "maxItems": 100,
+              "type": "array"
+            },
+            "statement": {
+              "maxLength": 65536,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "statement",
+            "params"
+          ],
+          "type": "object"
+        },
+        "workspaceId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "body"
+      ],
+      "type": "object"
+    },
+    "name": "executeSql"
+  },
+  {
+    "command": {
+      "aliases": [
+        [
+          "transaction"
+        ]
+      ],
+      "auth": "principal",
+      "binary": false,
+      "body": {
+        "contentType": "application/json",
+        "empty": false,
+        "required": true,
+        "schemaRef": "executeTransaction.request"
+      },
+      "command": [
+        "tx",
+        "execute-transaction"
+      ],
+      "method": "POST",
+      "operationId": "executeTransaction",
+      "parameters": [
+        {
+          "flag": "workspace-id",
+          "in": "path",
+          "name": "workspaceId",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "path": "/api/v1/workspaces/{workspaceId}/transactions",
+      "responsesRef": "executeTransaction.responses",
+      "run": "required",
+      "stream": false
+    },
+    "description": "POST /api/v1/workspaces/{workspaceId}/transactions",
+    "inputSchema": {
+      "$defs": {
+        "T0": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "$ref": "#/$defs/T0"
+              },
+              "type": "array"
+            },
+            {
+              "patternProperties": {
+                "^(.*)$": {
+                  "$ref": "#/$defs/T0"
+                }
+              },
+              "type": "object"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "additionalProperties": false,
+          "properties": {
+            "idempotencyKey": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            "operations": {
+              "items": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "sql": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "approvalId": {
+                            "format": "uuid",
+                            "type": "string"
+                          },
+                          "expectRows": {
+                            "anyOf": [
+                              {
+                                "default": 0,
+                                "format": "integer",
+                                "type": "string"
+                              },
+                              {
+                                "maximum": 9007199254740991,
+                                "minimum": 0,
+                                "type": "integer"
+                              }
+                            ],
+                            "maximum": 9007199254740991,
+                            "minimum": 0
+                          },
+                          "params": {
+                            "items": {
+                              "anyOf": [
+                                {
+                                  "type": "null"
+                                },
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "items": {
+                                    "$ref": "#/$defs/T0"
+                                  },
+                                  "type": "array"
+                                },
+                                {
+                                  "patternProperties": {
+                                    "^(.*)$": {
+                                      "$ref": "#/$defs/T0"
+                                    }
+                                  },
+                                  "type": "object"
+                                }
+                              ]
+                            },
+                            "maxItems": 100,
+                            "type": "array"
+                          },
+                          "statement": {
+                            "maxLength": 65536,
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "statement",
+                          "params"
+                        ],
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "sql"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "send": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "idempotencyKey": {
+                            "maxLength": 256,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "payload": {
+                            "anyOf": [
+                              {
+                                "type": "null"
+                              },
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "items": {
+                                  "$ref": "#/$defs/T0"
+                                },
+                                "type": "array"
+                              },
+                              {
+                                "patternProperties": {
+                                  "^(.*)$": {
+                                    "$ref": "#/$defs/T0"
+                                  }
+                                },
+                                "type": "object"
+                              }
+                            ]
+                          },
+                          "queue": {
+                            "maxLength": 63,
+                            "minLength": 1,
+                            "pattern": "^[a-z][a-z0-9_-]{0,62}$",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "queue",
+                          "idempotencyKey",
+                          "payload"
+                        ],
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "send"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "ack": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "deliveryId": {
+                            "format": "uuid",
+                            "type": "string"
+                          },
+                          "receipt": {
+                            "maxLength": 256,
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "deliveryId",
+                          "receipt"
+                        ],
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "ack"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "hold": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "deliveryId": {
+                            "format": "uuid",
+                            "type": "string"
+                          },
+                          "receipt": {
+                            "maxLength": 256,
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "deliveryId",
+                          "receipt"
+                        ],
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "hold"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              },
+              "maxItems": 16,
+              "minItems": 1,
+              "type": "array"
+            }
+          },
+          "required": [
+            "idempotencyKey",
+            "operations"
+          ],
+          "type": "object"
+        },
+        "workspaceId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "body"
+      ],
+      "type": "object"
+    },
+    "name": "executeTransaction"
+  },
+  {
+    "command": {
+      "aliases": [],
+      "auth": "principal",
+      "binary": false,
+      "body": null,
+      "command": [
+        "auth",
+        "whoami"
+      ],
+      "method": "GET",
+      "operationId": "whoami",
+      "parameters": [
+        {
+          "flag": "workspace-id",
+          "in": "path",
+          "name": "workspaceId",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "path": "/api/v1/workspaces/{workspaceId}/whoami",
+      "responsesRef": "whoami.responses",
+      "run": "none",
+      "stream": false
+    },
+    "description": "GET /api/v1/workspaces/{workspaceId}/whoami",
+    "inputSchema": {
+      "$defs": {},
+      "additionalProperties": false,
+      "properties": {
+        "workspaceId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "name": "whoami"
+  },
+  {
+    "command": {
+      "aliases": [],
+      "auth": "none",
+      "binary": false,
+      "body": null,
+      "command": [
+        "health",
+        "health-ready"
+      ],
+      "method": "GET",
+      "operationId": "healthReady",
+      "parameters": [],
+      "path": "/health/ready",
+      "responsesRef": "healthReady.responses",
+      "run": "none",
+      "stream": false
+    },
+    "description": "GET /health/ready",
+    "inputSchema": {
+      "$defs": {},
+      "additionalProperties": false,
+      "properties": {},
+      "required": [],
+      "type": "object"
+    },
+    "name": "healthReady"
+  }
+]

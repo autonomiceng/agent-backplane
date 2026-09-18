@@ -1,8 +1,10 @@
 import { expect, test } from "bun:test";
-import { lstat, symlink } from "node:fs/promises";
+import { lstat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { issueKey, createRun } from "../testing/session.ts";
-import { fixture, uploaded } from "./testing/blob-fixture.ts";
+import { execute } from "../../../packages/cli/runtime/execute.ts";
+import { callTool, catalog } from "../../../packages/mcp/runtime/tools.ts";
+import { fixture, uploaded, type Metadata } from "./testing/blob-fixture.ts";
 
 test("scope escape exposes foreign bytes or lets a non-owner delete a nested key", async () => {
   const f = await fixture();
@@ -26,5 +28,29 @@ test("scope escape exposes foreign bytes or lets a non-owner delete a nested key
     expect((await f.app.handle(new Request(`http://localhost/api/v1/workspaces/${foreign.id}/blobs/${blob.id}`, { headers: f.headers }))).status).toBe(403);
     const linkId = crypto.randomUUID(); await symlink(join(f.dataDir, "blobs", f.workspaceId, blob.id), join(f.dataDir, "blobs", f.workspaceId, linkId));
     await expect(f.disk.open(f.workspaceId, linkId)).rejects.toThrow();
+    const output = join(f.dataDir, "download"), env = { BP_URL: "http://localhost", BP_KEY: f.key, BP_WORKSPACE_ID: f.workspaceId, BP_RUN_ID: f.runId, XDG_STATE_HOME: f.dataDir };
+    const transport = ((url, init) => f.app.handle(new Request(url, init))) as typeof fetch;
+    let stderr = "";
+    const io = { env, transport, stdin: async () => "", stdout: () => {}, stderr: (text: string) => { stderr += text; } };
+    expect(await execute(["blobs", "get-blob", "--id", blob.id, "--out", output], io)).toBe(0); expect(stderr).toBe("");
+    expect(await Bun.file(output).bytes()).toEqual(bytes);
+    await writeFile(output, "keep");
+    expect(await execute(["blobs", "get-blob", "--id", blob.id, "--out", output], io)).toBe(2);
+    expect(await Bun.file(output).text()).toBe("keep");
+    expect(await execute(["blobs", "get-blob", "--id", blob.id, "--out", output, "--force"], io)).toBe(0);
+    expect(await Bun.file(output).bytes()).toEqual(bytes);
+    const destinationLink = join(f.dataDir, "download-link"); await symlink(output, destinationLink);
+    expect(await execute(["blobs", "get-blob", "--id", blob.id, "--out", destinationLink, "--force"], io)).toBe(2);
+    expect(await Bun.file(output).bytes()).toEqual(bytes); expect((await lstat(destinationLink)).isSymbolicLink()).toBe(true);
+    expect(await execute(["blobs", "put-blob", "--key", "cli/file.bin", "--file", output], io)).toBe(0);
+    expect(await execute(["blobs", "put-blob", "--key", "cli/stdin.bin", "--file", "-"], { ...io, stdinBytes: async () => bytes })).toBe(0);
+    const uploadTool = catalog.find((tool) => tool.name === "putBlob")!;
+    const uploadResult = await callTool(uploadTool.command, { key: "mcp/file.bin", file: output }, { env, transport });
+    expect(uploadResult.isError).toBe(false);
+    const toolBlob = JSON.parse(uploadResult.content[0]!.text) as Metadata;
+    expect(Buffer.from(await (await f.get(toolBlob.id)).arrayBuffer())).toEqual(bytes);
+    const tool = catalog.find((tool) => tool.name === "getBlob")!;
+    const result = await callTool(tool.command, { id: blob.id }, { env, transport });
+    expect(result.isError).toBe(false); expect(JSON.parse(result.content[0]!.text)).toEqual({ encoding: "base64", content: bytes.toString("base64"), size: 4 });
   } finally { await f.close(); }
 });

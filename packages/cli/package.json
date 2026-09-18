@@ -1,0 +1,9 @@
+{
+  "name": "@backplane/cli",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "bp": "./runtime/main.ts",
+    "backplane": "./runtime/main.ts"
+  }
+}
