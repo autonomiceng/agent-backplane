@@ -106,7 +106,6 @@ services:
     volumes:
       - server-data:/data
       - ${BP_BACKUP_DIR:?set BP_BACKUP_DIR to an encrypted off-host repository mount}/backups:/backups:ro
-      - ${BP_ARCHIVE_DIR:-./.archive}:/archive:ro
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:3000/health/ready || exit 1"]
       interval: 5s

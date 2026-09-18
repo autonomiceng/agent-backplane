@@ -160,15 +160,20 @@ When a migration takes exclusive locks, including 000028, 000030 and 000031, run
 project, env file and overlays. The one-shot migration must finish before traffic
 resumes. Rolling upgrades are unsupported.
 
+Migration 000031 interprets existing timestamps without time zone as UTC; operators
+of independently managed clusters must verify that historical values, including
+those written by `DEFAULT now()`, used UTC before upgrading.
+
 Existing project-managed volumes need an explicit cutover: set `BP_VOLUME_PREFIX`
 to their existing Compose prefix before preparing or upgrading. Confirm the rendered
 volume names with `docker compose --env-file .env config -q`; never substitute fresh
 volumes for an existing installation. Keep pre-image Checkpoints and their original
 server image separately; the new automatic image recovery requires a new Checkpoint.
 
-The legacy wrappers require `BP_BACKUP_ADMIN_URL_FILE`, the path to an operator-owned
-regular file with no group or other permissions containing the administrator URL.
-They accept `DATA_DIR BACKUP_DIR ARCHIVE_DIR PG_BIN_DIR` as positional arguments.
+The legacy wrappers and `bp restore-drill` require `BP_BACKUP_ADMIN_URL_FILE`, the
+path to an operator-owned regular file with no group or other permissions containing
+the administrator URL. The wrappers accept `DATA_DIR BACKUP_DIR ARCHIVE_DIR PG_BIN_DIR`
+as positional arguments; `bp restore-drill` uses the corresponding named path flags.
 Provision the file through the operator's secret manager, use mode `0600`, and
 remove it after the command finishes. Keep the URL out of argv, environment and
 shell history. Only the file path is inherited by Bun; recovery helpers receive

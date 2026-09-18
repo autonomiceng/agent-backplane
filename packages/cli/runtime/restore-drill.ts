@@ -4,9 +4,9 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { parseArgs } from "node:util";
-import { backup, restore } from "../../../apps/server/restore/backup-restore.ts";
+import { backup, helperEnv, loadBackupAdminUrl, recoveryErrorCode, restore } from "../../../apps/server/restore/backup-restore.ts";
 import { CliError, type Environment } from "./credentials.ts";
-export const restoreDrillHelp = "bp restore-drill --data-dir PATH --backup-dir NEW --archive-dir PATH --bin-dir PATH (BP_ADMIN_DATABASE_URL required)";
+export const restoreDrillHelp = "bp restore-drill --data-dir PATH --backup-dir NEW --archive-dir PATH --bin-dir PATH (BP_BACKUP_ADMIN_URL_FILE required: operator-owned private file containing the administrator URL)";
 type Head = { workspaceId: string; head: string };
 type Verification = { heads: Head[]; gateArmed: boolean };
 export type RestoreDrillReport = { success: boolean; headsMatch: boolean; gateArmed: boolean; epoch: string;
@@ -17,7 +17,7 @@ async function verifyRecovery(dataDir: string, socket: string, binDir: string, a
   await mkdir(socket, { mode: 0o700 });
   const connection = new URL(adminUrl);
   const ctl = async (...args: string[]) => {
-    const child = Bun.spawn([join(binDir, "pg_ctl"), "-D", dataDir, "-w", "-t", "20", ...args], { stdout: "pipe", stderr: "pipe" });
+    const child = Bun.spawn([join(binDir, "pg_ctl"), "-D", dataDir, "-w", "-t", "20", ...args], { stdout: "pipe", stderr: "pipe", env: helperEnv });
     const [code] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
     if (code) throw new Error("drill_postgres_failed");
   };
@@ -40,8 +40,9 @@ export async function restoreDrill(argv: string[], env: Environment, afterBackup
   catch { throw new CliError("invalid_arguments"); }
   const dataDir = values["data-dir"], backupDir = values["backup-dir"], archiveDir = values["archive-dir"], binDir = values["bin-dir"];
   if (typeof dataDir !== "string" || typeof backupDir !== "string" || typeof archiveDir !== "string" || typeof binDir !== "string") throw new CliError("restore_drill_paths_required");
-  const adminUrl = env.BP_ADMIN_DATABASE_URL;
-  if (!adminUrl) throw new CliError("BP_ADMIN_DATABASE_URL_required");
+  let adminUrl: string;
+  try { adminUrl = await loadBackupAdminUrl(env.BP_BACKUP_ADMIN_URL_FILE); }
+  catch (error) { throw new CliError(recoveryErrorCode(error), 2); }
   const scratch = await mkdtemp(join(tmpdir(), "bp-cli-drill-")), started = performance.now();
   try {
     const options = { adminUrl, dataDir, backupDir, archiveDir, binDir };
@@ -56,6 +57,6 @@ export async function restoreDrill(argv: string[], env: Environment, afterBackup
     const success = headsMatch && verified.gateArmed;
     return { success, headsMatch, gateArmed: verified.gateArmed, epoch: recovered.epoch, heads: verified.heads,
       expectedHeads: manifest.after.heads, elapsedMs: Math.round(performance.now() - started) };
-  } catch { return { success: false, error: "restore_drill_failed", elapsedMs: Math.round(performance.now() - started) }; }
+  } catch (error) { return { success: false, error: recoveryErrorCode(error, "restore_drill_failed"), elapsedMs: Math.round(performance.now() - started) }; }
   finally { await rm(scratch, { recursive: true, force: true }); }
 }

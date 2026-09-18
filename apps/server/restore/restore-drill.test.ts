@@ -1,7 +1,7 @@
 // Two serial physical drills own a dedicated source cluster and fresh recovery directories.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { SQL } from "bun";
-import { cp, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, symlink } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createPool } from "../platform/pool.ts";
@@ -9,7 +9,7 @@ import { adminUrl, migratedDatabase, startCluster, type TestCluster } from "../t
 import { advanceDeliveryClock, applyMigration, recoveryFixture, testApp } from "../testing/session.ts";
 import type { App } from "../app.ts";
 import type { Claim } from "../queue/claim-input.ts";
-import { backup, restore } from "./backup-restore.ts";
+import { backup, helperEnv, restore } from "./backup-restore.ts";
 
 let source: TestCluster;
 let root: string;
@@ -53,6 +53,44 @@ async function startRestored(dataDir: string, url: string) {
 }
 
 describe.serial("physical restore", () => {
+  test("backup accepts configuration outside the copied data directory", async () => {
+    for (const name of ["postgresql.conf", "pg_hba.conf", "pg_ident.conf"]) {
+      const original = join(source.dataDir, name), external = join(root, name);
+      const backupDir = join(root, `external-${name}`);
+      await rename(original, external);
+      try {
+        await symlink(external, original);
+        await expect(backup({ adminUrl: source.url, dataDir: source.dataDir, backupDir, archiveDir, binDir: source.binDir }))
+          .rejects.toThrow("unsupported_backup_source");
+        expect(await stat(backupDir).then(() => true, () => false)).toBe(false);
+      } finally {
+        await rm(original, { force: true });
+        await rename(external, original);
+      }
+    }
+  });
+
+  test("failed backup publication leaves a complete manifest", async () => {
+    const url = await migratedDatabase(source.url);
+    const options = { adminUrl: adminUrl(url), dataDir: source.dataDir, backupDir: join(root, "sync-failure"), archiveDir, binDir: source.binDir };
+    const path = helperEnv.PATH, binDir = join(root, "sync-bin");
+    await mkdir(binDir);
+    await writeFile(join(binDir, "sync"), "#!/bin/sh\nexit 1\n", { mode: 0o700 });
+    try {
+      helperEnv.PATH = binDir;
+      await expect(backup(options)).rejects.toThrow("backup_sync_failed");
+      expect(await Bun.file(join(options.backupDir, "manifest.json")).exists()).toBe(false);
+    } finally { helperEnv.PATH = path; }
+    const blocked = { ...options, backupDir: join(root, "manifest-failure") };
+    await expect(backup(blocked, undefined, () => mkdir(join(blocked.backupDir, ".manifest.json.tmp"))))
+      .rejects.toThrow();
+    expect(await Bun.file(join(blocked.backupDir, "manifest.json")).exists()).toBe(false);
+    const complete = { ...options, backupDir: join(root, "manifest-complete") };
+    const manifest = await backup(complete);
+    expect(await Bun.file(join(complete.backupDir, "manifest.json")).json()).toEqual(manifest);
+    expect(await readdir(complete.backupDir)).not.toContain(".manifest.json.tmp");
+  }, 60_000);
+
   test("WAL restore loses committed state", async () => {
     const started = performance.now();
     const url = await migratedDatabase(source.url);
@@ -111,11 +149,15 @@ describe.serial("physical restore", () => {
       await rename(join(incomplete, manifest.segment), join(root, "withheld-wal"));
       const failedDir = join(root, "failed-restored");
       const wrapper = new URL("../../../infra/backup/restore.sh", import.meta.url).pathname;
+      const credential = join(root, "admin-url");
+      await writeFile(credential, options.adminUrl, { mode: 0o600 });
       const child = Bun.spawn([wrapper, failedDir, options.backupDir, incomplete, source.binDir], {
-        env: { ...Bun.env, BP_BACKUP_ADMIN_URL: options.adminUrl }, stdout: "pipe", stderr: "pipe",
+        env: { ...helperEnv, BP_BACKUP_ADMIN_URL_FILE: credential }, stdout: "pipe", stderr: "pipe",
       });
-      const [exit] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+      const [exit, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
       expect(exit).not.toBe(0);
+      expect(stdout).toBe("");
+      expect(stderr.trim()).toBe("pg_ctl_failed");
       expect(await Bun.file(join(failedDir, "postmaster.pid")).exists()).toBe(false);
       expect(await readFile(join(failedDir, "postgresql.auto.conf"), "utf8")).toContain("listen_addresses=''");
       expect(await readFile(join(failedDir, "restore-hba.conf"), "utf8")).toContain("local all all reject");

@@ -26,12 +26,13 @@ export async function fixture(storage?: BlobStore, cleanupStorage = true) {
   };
   try {
     const disk = storage ?? filesystemStore(dataDir), staged = new Set<string>();
-    let failStage = false, failPromotion = false, failRemove = false, uncertain = false, loseCommit = false, deleteCommit = "";
+    let failStage = false, failPromotion = false, failRemove = false, uncertain = false, loseCommit = false, unknownCommit = false, failRecheck = false, deleteCommit = "";
     const begin = database.begin.bind(database);
     // Inject commit-boundary failures around real PostgreSQL transactions; no query results are fabricated.
     const pool = new Proxy(database, { get(target, property, receiver) {
       if (property !== "begin") return Reflect.get(target, property, receiver);
       return async (fn: (tx: RunTransaction) => Promise<unknown>) => {
+        if (failRecheck) { failRecheck = false; throw new Error("recheck_database_unavailable"); }
         let fault = "";
         const result = await begin(async (tx) => {
           const value = await fn(tx);
@@ -41,7 +42,7 @@ export async function fixture(storage?: BlobStore, cleanupStorage = true) {
           }
           return value;
         });
-        if (loseCommit || fault === "committed") { loseCommit = false; throw new Error("commit_connection_lost"); }
+        if (loseCommit || fault === "committed") { loseCommit = false; failRecheck = unknownCommit; unknownCommit = false; throw new Error("commit_connection_lost"); }
         return result;
       };
     } });
@@ -68,7 +69,7 @@ export async function fixture(storage?: BlobStore, cleanupStorage = true) {
     return { ...f, pool, store, disk, dataDir, base, key, runId, headers, userHeaders, put, get, del, audit, json,
       objects: async () => (await disk.scanPage(f.workspaceId)).map((ref) => `${ref.id}${ref.staging ? ".stage" : ""}`),
       deleteFault: (fault: "rollback" | "committed") => { deleteCommit = fault; },
-      faults: (fault: string) => { failStage = fault === "stage"; failPromotion = fault === "promotion"; failRemove = fault === "remove"; uncertain = fault === "commit"; },
+      faults: (fault: string) => { failStage = fault === "stage"; failPromotion = fault === "promotion"; failRemove = fault === "remove"; uncertain = fault === "commit" || fault === "commit-unavailable"; unknownCommit = fault === "commit-unavailable"; },
       close: async () => {
         try {
           if (cleanupStorage) {

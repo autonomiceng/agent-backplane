@@ -37,7 +37,9 @@ export async function putBlob(pool: Pool, context: RunContext, store: BlobStore 
       const row = await blobMetadata(tx, workspace, id);
       if (!row) await sweepBlobs(tx, emit, workspace, store, [id]);
       return row;
-    }, { timeouts: { statementMs: 5000, lockMs: 2000, transactionMs: 10000 } }).catch(() => undefined);
+    }, { timeouts: { statementMs: 5000, lockMs: 2000, transactionMs: 10000 } }).catch(() => null);
+    // An unavailable recheck does not prove rejection; preserve bytes and avoid a false audit claim.
+    if (committed === null) return { ok: false, error: "blob_unavailable" };
     if (committed) { const { expired: _expired, ...value } = committed; return { ok: true, value }; }
     await recordRejection(pool, { context, kind: "blob.put", objects: [id], reason: blobError(error).error, sqlstate: null });
     return blobError(error);
