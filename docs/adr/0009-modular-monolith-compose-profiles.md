@@ -8,7 +8,7 @@ The backplane is a modular monolith: one Bun and Elysia process that serves the 
 
 Why: for a single-operator box, a five-service compose file is the embarrassing choice. The system is event-driven where it matters because the audit log is the event backbone and Postgres is the broker.
 
-Consequence: v1 supports one active application node. Durable state lives only in Postgres, background workers are fenced with database leases, and rolling upgrades and active-active are explicitly deferred.
+Consequence: v1 supports one active application node. Control-plane state lives in Postgres; durable blob bytes live in the selected filesystem or S3 backend. Backups coordinate Postgres and blob storage. Background workers are fenced with database leases, and rolling upgrades and active-active are explicitly deferred.
 
 Amended 2026-09-14: Blob bytes are durable state outside Postgres. Filesystem blobs ship with core; S3 is an explicitly selected backend. Backups must cover both Postgres and blob storage. Backend switches are explicit migrations, never automatic fallback.
 

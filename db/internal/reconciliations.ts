@@ -7,11 +7,13 @@ import { deliveries } from "./deliveries.ts";
 export const reconciliations = pgSchema("control").table("reconciliations", {
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   id: uuid("id").primaryKey().defaultRandom(), workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id),
-  deliveryId: uuid("delivery_id").notNull().references(() => deliveries.id), outcome: text("outcome").notNull(),
+  deliveryId: uuid("delivery_id").notNull(), outcome: text("outcome").notNull(),
   evidence: text("evidence"), principalId: uuid("principal_id"), runId: uuid("run_id").references(() => runs.id), userId: text("user_id"),
-  successorDeliveryId: uuid("successor_delivery_id").references(() => deliveries.id), decisionPosition: bigint("decision_position", { mode: "bigint" }),
+  successorDeliveryId: uuid("successor_delivery_id"), decisionPosition: bigint("decision_position", { mode: "bigint" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(sql`clock_timestamp()`),
 }, (table) => [
+  foreignKey({ name: "reconciliations_workspace_delivery_fk", columns: [table.workspaceId, table.deliveryId], foreignColumns: [deliveries.workspaceId, deliveries.id] }),
+  foreignKey({ name: "reconciliations_workspace_successor_fk", columns: [table.workspaceId, table.successorDeliveryId], foreignColumns: [deliveries.workspaceId, deliveries.id] }),
   foreignKey({ columns: [table.workspaceId, table.principalId], foreignColumns: [principals.workspaceId, principals.id] }),
   unique().on(table.workspaceId, table.id), unique().on(table.workspaceId, table.deliveryId, table.outcome),
   uniqueIndex("reconciliation_definitive").on(table.workspaceId, table.deliveryId).where(sql`${table.outcome} <> 'unknown'`),

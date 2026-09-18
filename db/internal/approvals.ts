@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import { bigint, check, foreignKey, pgSchema, text, timestamp, uniqueIndex, index, customType, jsonb, uuid } from "drizzle-orm/pg-core";
 import { principals, workspaces } from "./tenancy.ts";
 import { runs } from "./runs.ts";
+import { deliveries } from "./deliveries.ts";
 const bytea = customType<{ data: Buffer }>({ dataType: () => "bytea" });
 export const approvals = pgSchema("control").table("approvals", {
   id: uuid("id").primaryKey().defaultRandom(), workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id),
@@ -15,6 +16,7 @@ export const approvals = pgSchema("control").table("approvals", {
   consumedPosition: bigint("consumed_position", { mode: "bigint" }),
   decisionPosition: bigint("decision_position", { mode: "bigint" }), releasedDeliveryId: uuid("released_delivery_id"),
 }, (table) => [
+  foreignKey({ name: "approvals_workspace_released_delivery_fk", columns: [table.workspaceId, table.releasedDeliveryId], foreignColumns: [deliveries.workspaceId, deliveries.id] }),
   foreignKey({ columns: [table.workspaceId, table.requestedBy], foreignColumns: [principals.workspaceId, principals.id] }),
   uniqueIndex("approvals_target_unique").on(table.workspaceId, table.targetKind, table.targetId, table.targetVersion).where(sql`${table.targetKind} = 'message'`),
   index("approvals_inbox").on(table.workspaceId, sql`(${table.decision} IS NOT NULL)`, table.createdAt, table.id),

@@ -115,6 +115,9 @@ export async function migratedDatabase(sourceUrl = clusterUrl(), throughVersion 
     if (!login) {
       login = withSql(cluster, async (admin) => {
         await admin`ALTER ROLE bp_server LOGIN PASSWORD 'bp_server'`;
+      }).catch((error) => {
+        runtimeLogins.delete(cluster);
+        throw error;
       });
       runtimeLogins.set(cluster, login);
     }

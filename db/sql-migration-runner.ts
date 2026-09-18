@@ -10,6 +10,7 @@ export function sqlMigrationRunner(sql: SQL): MigrationRunner {
   return {
     locked: (fn) =>
       sql.begin(async (tx) => {
+        await tx`SET LOCAL TIME ZONE 'UTC'`;
         await tx`SELECT pg_advisory_xact_lock(${LOCK_KEY})`;
         return fn({
           async applied(): Promise<AppliedMigration[]> {

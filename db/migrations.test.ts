@@ -44,3 +44,28 @@ describe("loadMigrations", () => {
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
 });
+
+// Discovery and ledger validation must fail before any migration writes.
+test("malformed SQL filenames cannot silently disappear", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "bp-mig-invalid-"));
+  try {
+    await writeFile(join(dir, "README.md"), "ordinary documentation");
+    expect(await loadMigrations(dir)).toEqual([]);
+    for (const name of ["00031_thing.sql", "000031_Thing.sql", "000031-thing.sql", "000031_thing.SQL"]) {
+      await writeFile(join(dir, name), "SELECT 1;");
+      await expect(loadMigrations(dir)).rejects.toBeInstanceOf(MigrationError);
+      await rm(join(dir, name));
+    }
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test("retroactive, missing and reordered migrations fail before writes", async () => {
+  for (const [recorded, pending] of [
+    [[m(3)], [m(1), m(2), m(3)]], [[m(4)], [m(1), m(2)]],
+    [[m(2, "different")], [m(1), m(2)]], [[], [m(2), m(1)]], [[], [m(1), m(1)]],
+  ] satisfies [Migration[], Migration[]][]) {
+    const runner = fakeRunner(recorded);
+    await expect(migrate(runner, pending)).rejects.toBeInstanceOf(MigrationError);
+    expect(runner.applied).toEqual([]);
+  }
+});

@@ -35,6 +35,7 @@ export const deliveries = pgSchema("queue").table("deliveries", {
   foreignKey({ columns: [table.workspaceId, table.queue, table.messageId], foreignColumns: [messages.workspaceId, messages.queue, messages.id] }),
   foreignKey({ columns: [table.workspaceId, table.consumerPrincipalId], foreignColumns: [principals.workspaceId, principals.id] }),
   foreignKey({ columns: [table.workspaceId, table.heldBy], foreignColumns: [principals.workspaceId, principals.id] }),
+  unique("deliveries_workspace_id_id_key").on(table.workspaceId, table.id),
   unique().on(table.workspaceId, table.queue, table.messageId, table.id),
   foreignKey({ columns: [table.workspaceId, table.queue, table.messageId, table.parentId], foreignColumns: [table.workspaceId, table.queue, table.messageId, table.id] }),
   unique().on(table.messageId, table.chainId, table.attempt),
