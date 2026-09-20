@@ -139,6 +139,10 @@ test("schema upgrade backfills unfinished invocations and preserves closed-defin
       await tx`SET LOCAL ROLE bp_executor`;
       await expect(Promise.resolve(tx`SELECT control.create_invocation(${f.deploymentId},${randomBytes(32)},1)`)).rejects.toThrow("permission denied");
     }).catch(error => { if (!String(error).includes("current transaction is aborted")) throw error; });
+    await admin.begin(async tx => {
+      await tx`SET LOCAL ROLE bp_executor`;
+      await expect(Promise.resolve(tx`SELECT control.finish_invocation(${f.runIds[1]!},'function.fail',1,NULL)`)).rejects.toThrow("permission denied");
+    }).catch(error => { if (!String(error).includes("current transaction is aborted")) throw error; });
     expect(await reconcileInvocations(pool)).toBe(0);
     await agePending(database);
     expect(await reconcileInvocations(pool)).toBe(1);

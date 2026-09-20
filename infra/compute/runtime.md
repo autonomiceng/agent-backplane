@@ -91,12 +91,17 @@ A separate startup, five-second periodic and opportunistic server pass selects a
 16 unfinished invocations under a session advisory lease. Migration 34 records pending
 terminal work separately from immutable Runs and temporary authority, and backfills
 unfinished historical invocations. Apply it with the server fenced under the existing
-offline migration procedure. Its table locks also serialize the backfill with writers.
+offline migration procedure. Its table locks serialize the backfill with writers;
+lock acquisition fails within five seconds if live writers prevent the fence.
 The closed invocation definers insert pending work with authority and remove it only
 when a terminal audit event exists. Expired-token sweeping cannot lose recovery work.
 
 An expiry index keeps selection independent of completed invocation history. Recovery
-waits ten seconds past expiry for the original gateway to finish recording its outcome.
+becomes eligible ten seconds after the invocation's configured timeout elapses,
+allowing the original gateway to record its outcome. With the default 30-second
+timeout, eligibility begins about 40 seconds after invocation start. Scheduling and
+contention can add delay. This affects terminal audit recording; authority still
+expires at the configured timeout.
 A keyset cursor advances past each attempted row so a contended Workspace cannot starve
 later Workspaces; it wraps to retry unfinished rows. Selection has a two-second statement
 timeout. The whole pass, including reservation and connection release, has a five-second
