@@ -61,7 +61,7 @@ test("forward hardening preserves UTC instants and validates workspace reference
     await migrate(sqlMigrationRunner(sql), migrations.filter(m => m.version <= 30));
     await sql`INSERT INTO control."user" (id,name,email,"createdAt","updatedAt")
       VALUES ('upgrade-proof','Upgrade proof','upgrade@example.invalid','2026-01-02 03:04:05','2026-01-02 03:04:05')`;
-    expect(await migrate(sqlMigrationRunner(sql), migrations)).toEqual([31]);
+    expect(await migrate(sqlMigrationRunner(sql), migrations)).toEqual(migrations.filter(m => m.version > 30).map(m => m.version));
     expect(await migrate(sqlMigrationRunner(sql), migrations)).toEqual([]);
     const [before] = await sql`SELECT extract(epoch FROM "createdAt")::float8 AS instant FROM control."user" WHERE id='upgrade-proof'`;
     expect(before.instant).toBe(Date.UTC(2026, 0, 2, 3, 4, 5) / 1000);
