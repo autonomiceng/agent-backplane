@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 """Qualify the optional native console and exact proxy trust with disposable containers."""
+from datetime import datetime, timezone
+import hashlib
+import hmac
 import json
 import os
 from pathlib import Path
@@ -9,6 +12,7 @@ import sys
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 
@@ -36,19 +40,78 @@ def create(*args):
     return identifier
 
 
-def request(origin, path='/rustfs/console/', headers=None):
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def request(origin, path='/rustfs/console/', headers=None, redirects=True):
+    opener = urllib.request.build_opener() if redirects else urllib.request.build_opener(NoRedirect())
     try:
-        response = urllib.request.urlopen(urllib.request.Request(origin + path, headers=headers or {}), timeout=5)
+        response = opener.open(urllib.request.Request(origin + path, headers=headers or {}), timeout=5)
     except urllib.error.HTTPError as error:
         response = error
     with response:
         return response.status, response.read(1024 * 1024)
 
 
+def signed_get(origin, path):
+    # Fixed fixture paths/queries are already canonical; sign the external Host including port.
+    url = urllib.parse.urlsplit(origin + path)
+    date = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+    day = date[:8]
+    scope = day + '/us-east-1/s3/aws4_request'
+    payload_hash = hashlib.sha256(b'').hexdigest()
+    headers = {'host': url.netloc, 'x-amz-content-sha256': payload_hash, 'x-amz-date': date}
+    signed = 'host;x-amz-content-sha256;x-amz-date'
+    canonical = '\n'.join(['GET', url.path, url.query,
+                           ''.join(key + ':' + value + '\n' for key, value in headers.items()),
+                           signed, payload_hash])
+    key = ('AWS4' + child_env['RUSTFS_SECRET_KEY']).encode()
+    for part in [day, 'us-east-1', 's3', 'aws4_request']:
+        key = hmac.new(key, part.encode(), hashlib.sha256).digest()
+    to_sign = '\n'.join(['AWS4-HMAC-SHA256', date, scope, hashlib.sha256(canonical.encode()).hexdigest()])
+    signature = hmac.new(key, to_sign.encode(), hashlib.sha256).hexdigest()
+    headers['authorization'] = ('AWS4-HMAC-SHA256 Credential=' + child_env['RUSTFS_ACCESS_KEY'] + '/' + scope
+                                + ', SignedHeaders=' + signed + ', Signature=' + signature)
+    return request(origin, path, headers, redirects=False)
+
+
 with tempfile.TemporaryDirectory(prefix='bp-console-proof-') as temporary:
     root = Path(temporary)
     try:
         network = docker('network', 'create', '--label', label + '=' + owner, 'bp-console-' + owner)
+        # Adapt and provision every conditional site without running listeners or issuing certificates.
+        configurations = []
+        for mode in ('local', 'public', 'proxy'):
+            for enabled in ('true', 'false'):
+                proxy = mode == 'proxy'
+                settings = {
+                    'BP_ACCESS_MODE': mode, 'BP_RUSTFS_CONSOLE': enabled,
+                    'BP_EDGE_HOST': 'backplane.example.test',
+                    'BP_PUBLIC_URL': 'https://shared.example.test:8449' if proxy else 'https://backplane.example.test:8443',
+                    'BP_RUSTFS_HOST': 'rustfs.example.test',
+                    'BP_RUSTFS_URL': 'https://shared.example.test:8450' if proxy else 'https://rustfs.example.test:8443',
+                    'BP_RUSTFS_URL_HOST': 'shared.example.test' if proxy else 'rustfs.example.test',
+                    'BP_RUSTFS_AUTHORITY': 'shared.example.test:8450' if proxy else 'rustfs.example.test:8443',
+                    'BP_TRUSTED_PROXIES': '192.0.2.2/32' if proxy else '',
+                    'BP_RUSTFS_CONSOLE_ALLOW': '100.64.0.7/32',
+                }
+                configurations.append(settings)
+        configurations.append({
+            'BP_ACCESS_MODE': 'proxy', 'BP_RUSTFS_CONSOLE': 'false',
+            'BP_EDGE_HOST': 'backplane.localhost', 'BP_PUBLIC_URL': 'https://backplane.example.test',
+            'BP_RUSTFS_HOST': 'rustfs.localhost', 'BP_RUSTFS_URL': 'https://rustfs.localhost:443',
+            'BP_RUSTFS_URL_HOST': 'unused.invalid', 'BP_RUSTFS_AUTHORITY': '',
+            'BP_TRUSTED_PROXIES': '', 'BP_RUSTFS_CONSOLE_ALLOW': '127.0.0.1/8 ::1',
+        })
+        for settings in configurations:
+            validation = create('--tmpfs', '/data', '--tmpfs', '/config',
+                                '--mount', f'type=bind,src={ROOT}/infra/compose/Caddyfile,dst=/etc/caddy/Caddyfile,readonly',
+                                *[arg for key, value in settings.items() for arg in ('--env', key + '=' + value)],
+                                CADDY, 'caddy', 'adapt', '--config', '/etc/caddy/Caddyfile', '--adapter', 'caddyfile', '--validate')
+            docker('start', '--attach', validation)
+            assert docker('inspect', '--format', '{{.State.ExitCode}}', validation) == '0', 'Caddy configuration validation failed'
         rustfs = create('--network-alias', 'rustfs', '--memory', '1g', '--cpus', '1', '--pids-limit', '128',
                         '--tmpfs', '/data:rw,size=256m,mode=0777', '--env', 'RUSTFS_ACCESS_KEY', '--env', 'RUSTFS_SECRET_KEY',
                         '--env', 'RUSTFS_CONSOLE_ENABLE=true', '--env', 'RUSTFS_CONSOLE_ADDRESS=:9001',
@@ -105,6 +168,8 @@ with tempfile.TemporaryDirectory(prefix='bp-console-proof-') as temporary:
         assert request(origin, headers={'X-Proof-Deny': 'true'})[0] == 404
         assert request(direct, headers={'Host': authority, 'X-Forwarded-For': '100.64.0.7'})[0] == 404
         assert request(origin, '/rustfs/admin/v3/accountinfo')[0] == 403
+        assert signed_get(origin, '/rustfs/admin/v3/accountinfo')[0] == 200, 'signed admin account info failed'
+        assert signed_get(origin, '/?list-type=2')[0] == 200, 'signed S3 root list failed'
         assert request(origin, '/', {'Accept': 'text/html'})[0] == 200
         disabled = create(*common, '--env', 'BP_RUSTFS_CONSOLE=false', CADDY)
         docker('start', disabled)
@@ -125,8 +190,9 @@ with tempfile.TemporaryDirectory(prefix='bp-console-proof-') as temporary:
                                     capture_output=True, text=True, timeout=60)
             if result.returncode:
                 raise RuntimeError('owned native console browser login failed')
-            print(result.stdout.strip())
+            print(json.dumps({'browserLogin': 'pass'}))
         print(json.dumps({'gate': 'rustfs-console', 'nativeHtml': 'pass', 'nativeAuthRequired': 'pass',
+                          'signedAdminAccountInfo': 200, 'signedS3RootList': 200, 'caddyConfigurationsValidated': len(configurations),
                           'trustedClientAllowDeny': 'pass', 'untrustedForwardedSpoofDenied': 'pass', 'disabled': '404'}))
     finally:
         primary_error = sys.exc_info()[1]

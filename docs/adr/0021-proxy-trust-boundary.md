@@ -18,3 +18,8 @@ only from configured exact proxy peer addresses. This policy applies to the priv
 console origin; the Backplane server continues to strip forwarded claims and uses
 its configured authentication origin. Native RustFS authentication remains required,
 and its datastore stays off the Platform Network.
+
+`BP_TRUSTED_PROXIES` configures Caddy client-address handling globally, with an
+empty default trusting no peer. Its validated address feeds the console allowlist
+and Caddy logs. The Backplane upstream still removes all forwarded headers, so
+the server and Better Auth retain their configured-origin policy.

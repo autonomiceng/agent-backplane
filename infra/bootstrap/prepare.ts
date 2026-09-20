@@ -44,7 +44,7 @@ export function resolveRustfsConsole(env: Environment, profiles: string[], acces
     if ((!value.trim() && !exact) || /[^a-fA-F0-9:./ ]/.test(value)) throw new CliError(exact ? "trusted_proxies_invalid" : "operator_allow_invalid", 1);
     for (const literal of value.split(" ").filter(Boolean)) {
       const [ip = "", mask, extra] = literal.split("/"), family = isIP(ip), bits = family === 4 ? 32 : 128;
-      if (!family || extra !== undefined || (mask !== undefined && (!/^(0|[1-9][0-9]*)$/.test(mask) || Number(mask) > bits || (exact && Number(mask) !== bits))))
+      if (!family || extra !== undefined || (mask !== undefined && (!/^(0|[1-9][0-9]*)$/.test(mask) || Number(mask) > bits || (!exact && Number(mask) === 0) || (exact && Number(mask) !== bits))))
         throw new CliError(exact ? "trusted_proxies_invalid" : "operator_allow_invalid", 1);
     }
   }

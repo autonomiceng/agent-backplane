@@ -127,7 +127,14 @@ Edge peer address observed by Caddy. `BP_RUSTFS_CONSOLE_ALLOW` accepts space-sep
 IP literals or CIDRs. `BP_TRUSTED_PROXIES` accepts only exact IPs or host routes
 (`/32` or `/128`); Docker and Tailnet ranges are never trusted proxy peers.
 Forwarded client IPs affect the console allowlist only when the direct peer is
-trusted. Untrusted callers cannot gain access by supplying forwarded headers.
+trusted. That peer must replace untrusted `X-Forwarded-For` with a single verified
+client address. Platform Edge's console route normalizes it this way, so Backplane
+trusts only the exact Edge peer IP. A custom ingress that preserves a chain must
+append the address it actually observes and configure every actual trusted proxy
+hop in `BP_TRUSTED_PROXIES`; it must never pass a client-supplied chain through
+unchanged. Caddy evaluates that chain from the nearest hop toward the client.
+Untrusted callers cannot gain access by supplying forwarded headers when this
+upstream contract is enforced.
 Native RustFS root authentication is still required after the allowlist check.
 The Backplane server's forwarded-header stripping and configured authentication
 origin remain unchanged. Functions retain their trusted operator boundary.
@@ -154,3 +161,21 @@ native storage administration bypasses those application records.
 Pure preparation tests do not establish installed login or ingress qualification.
 Release checks must cover actual root-key browser login, signed account info,
 trusted-peer allow/deny, standalone/proxy routing, and disabled 404 behavior.
+
+
+The disposable console gate, `python3 tests/acceptance/rustfs-console.py`, uses the
+pinned Caddy image to adapt and validate all six local/public/proxy and enabled/
+disabled configurations, plus the unprepared gateway defaults. In the same fixture,
+signed admin account-info and S3 root-list GETs must return 200 through the trusted
+peer with the original Host and port. Signed requests cannot follow redirects.
+The existing HTML, native-auth requirement, client allow/deny, spoof rejection and
+disabled-console checks remain required. Browser login is a separate optional
+host gate selected with `BP_CONSOLE_PROOF_BROWSER`.
+
+When the storage-migration parent lands, CI integration must retain a gates job
+budget of at least 60 minutes (`timeout-minutes: 60` or higher) and all actual gates
+from both branches, including the console acceptance above, storage migration,
+storage startup/identity, workerd lifecycle/runtime, and both offline and S3 backup
+drills. Preserve the check and test steps too. Resolve the workflow conflict by
+keeping both branches' gate additions; config validation alone does not qualify
+signed requests, browser login, or storage migration.
