@@ -19,10 +19,10 @@ export function readArtifactEvidence(value: string | null): ArtifactEvidence | n
     return { source: artifact.source, reference: artifact.reference, hostObservedImageId: artifact.hostObservedImageId };
   } catch { return null; }
 }
-// Matches: (cd /compute && sha256sum loader.js config.capnp start.sh) | sha256sum
+// Matches: (cd /compute && sha256sum loader.js config.capnp start.sh supervisor.ts child-process.ts) | sha256sum
 // Called explicitly during verification, never on import. Checkout updates require a runtime restart.
 export async function readControlSurfaceHash(directory = new URL("./workerd/", import.meta.url)) {
-  const lines = await Promise.all(["loader.js", "config.capnp", "start.sh"].map(async name => {
+  const lines = await Promise.all(["loader.js", "config.capnp", "start.sh", "supervisor.ts", "child-process.ts"].map(async name => {
     const bytes = await Bun.file(new URL(name, directory)).arrayBuffer();
     return `${createHash("sha256").update(new Uint8Array(bytes)).digest("hex")}  ${name}\n`;
   }));

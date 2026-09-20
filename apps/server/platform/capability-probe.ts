@@ -6,21 +6,21 @@ import type { Pool } from "./pool.ts";
 import { probeTransaction } from "./probe-transaction.ts";
 
 const deadlineMs = 2000, cacheMs = 5000;
-function boundedObservation(read: (signal: AbortSignal) => Promise<CapabilityObservation["backend"]>) {
-  let cache: { started: number; value: CapabilityObservation } | undefined;
-  let flight: Promise<CapabilityObservation> | undefined;
+function boundedObservation<B extends NonNullable<CapabilityObservation["backend"]>>(read: (signal: AbortSignal) => Promise<B | null>) {
+  let cache: { started: number; value: CapabilityObservation<B> } | undefined;
+  let flight: Promise<CapabilityObservation<B>> | undefined;
   return () => {
     if (flight) return flight;
     if (cache && performance.now() - cache.started < cacheMs) return Promise.resolve(cache.value);
     const started = performance.now(), observedAt = new Date().toISOString(), controller = new AbortController();
-    const unavailable: CapabilityObservation = { state: "unavailable", observedAt, backend: null };
+    const unavailable: CapabilityObservation<B> = { state: "unavailable", observedAt, backend: null };
     let timer: ReturnType<typeof setTimeout>;
-    const deadline = new Promise<CapabilityObservation>(resolve => {
+    const deadline = new Promise<CapabilityObservation<B>>(resolve => {
       timer = setTimeout(() => { controller.abort(); resolve(unavailable); }, deadlineMs);
     });
     const work = Promise.resolve().then(() => read(controller.signal)).then(backend => ({
       state: backend === null ? "unavailable" : "healthy", observedAt, backend,
-    }) satisfies CapabilityObservation).catch(() => unavailable);
+    }) satisfies CapabilityObservation<B>).catch(() => unavailable);
     const response = Promise.race([work, deadline]).then(value => { cache = { started, value }; return value; });
     flight = response;
     // Keep the slot until underlying I/O settles, even after the caller's deadline.

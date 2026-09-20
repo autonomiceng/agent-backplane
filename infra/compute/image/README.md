@@ -1,6 +1,12 @@
 # Backplane workerd image
 
-This packages Cloudflare's unmodified workerd `1.20260918.1` binary on the pinned Debian
+The mounted supervisor protocol requires `/usr/bin/bun`. The Dockerfile pins the official
+Bun `1.4.2-debian` OCI index and independently verifies each extracted architecture binary.
+The image gate checks those executable bytes and both Bun license files. This addition
+still needs actual-artifact qualification before publication. See the
+[runtime gate](../runtime.md) for prototype and actual-artifact commands.
+
+This packages Cloudflare's unmodified workerd `1.20260918.1` and official Bun `1.4.2` binaries on the pinned Debian
 Bookworm slim base. It installs no packages and includes no Backplane code or credentials.
 The Compose overlay mounts the trusted loader separately. This is a Backplane image,
 not an official Cloudflare container image.

@@ -53,6 +53,8 @@ return `operations_disabled` (503); a missing or incorrect bearer token returns
 
 | Codes | Operator action |
 | --- | --- |
+| `files_unknown`, `files_unavailable` | Check the storage binding phase, selected backend and store marker; see [storage identity](storage-identity.md). |
+| `functions_unknown`, `functions_unavailable` | Validate `BP_COMPUTE_URL`, `BP_COMPUTE_TOKEN` and `BP_WORKERD_RUNTIME_ID`, then check workerd reachability and control-file compatibility. |
 | `pool_saturated`, `pool_waiters`, `database_saturated`, `database_capacity_invalid` | Inspect long transactions and connection usage. Reduce concurrency or resolve blocked queries before increasing the fixed pool/cluster capacity. |
 | `transaction_old` | Inspect `pg_stat_activity` and locks; identify the owning request and resolve it. |
 | `queue_ready_old`, `queue_expiry_stale` | Check consumers, Run credentials and failed claim/recovery requests. |

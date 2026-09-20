@@ -30,7 +30,7 @@ if [ "$observed" != "$expected" ]; then
   exit 1
 fi
 export BP_WORKERD_RUNTIME_ID="workerd-binary-sha256:$observed"
-control=$(cd /compute && sha256sum loader.js config.capnp start.sh)
+control=$(cd /compute && sha256sum loader.js config.capnp start.sh supervisor.ts child-process.ts)
 control=$(printf '%s\n' "$control" | sha256sum)
 export BP_WORKERD_CONTROL_SHA256="${control%% *}"
-exec /usr/bin/workerd serve /compute/config.capnp --experimental "$@"
+exec /usr/bin/bun /compute/supervisor.ts "$@"
