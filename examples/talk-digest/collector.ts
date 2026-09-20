@@ -66,16 +66,26 @@ async function verifyFile(id: string, expected: Uint8Array) {
     if (actual.length !== expected.length || sha256(actual) !== sha256(expected)) throw new Error("stored_file_mismatch");
   } finally { await rm(dir, { recursive: true, force: true }); }
 }
-function metadata(value: Json) {
+export function metadata(value: Json) {
   const m = object(value, "metadata");
   if (m.schemaVersion !== 1 || typeof m.fictional !== "boolean") throw new Error("metadata_version_invalid");
   for (const field of ["demoRun", "sourceId", "title", "mediaType"] as const) text(m[field], field);
   strings(m.speakers, "speakers"); strings(m.topicTags, "topicTags");
   for (const field of ["talkDate", "videoUrl", "transcriptUrl"] as const)
     if (m[field] !== null && typeof m[field] !== "string") throw new Error(`${field}_invalid`);
-  object(m.transcriptAccess, "transcriptAccess"); object(m.license, "license");
+  const access = object(m.transcriptAccess, "transcriptAccess"), license = object(m.license, "license");
+  const status = access.status;
+  if (!(typeof status === "string" && status.trim())
+    && !(typeof status === "number" && Number.isInteger(status) && status >= 100 && status <= 599))
+    throw new Error("transcript_access_status_invalid");
+  if (!text(license.status, "license_status").trim()) throw new Error("license_status_invalid");
   return m;
 }
+export function handoffKeys(demoRun: string, sourceId: string) {
+  const identity = sha256(new TextEncoder().encode(JSON.stringify([demoRun, sourceId])));
+  return { handoffKey: `talk:${identity}:handoff:v1`, messageKey: `talk:${identity}:message:v1` };
+}
+
 export function preparedMetadataMatches(prepared: Obj, source: Obj) {
   const original = Object.fromEntries(Object.entries(prepared).filter(([key]) =>
     !["transcriptFile", "collector", "provenance"].includes(key)));
@@ -136,7 +146,7 @@ async function handoff(transcriptPath: string, preparedPath: string) {
   if (file.sha256 !== hash || file.byteLength !== bytes.length) throw new Error("local_transcript_mismatch");
   await verifyFile(fileId, bytes);
   const sourceId = text(source.sourceId, "sourceId"), demoRun = text(source.demoRun, "demoRun");
-  const handoffKey = `talk:${demoRun}:${sourceId}:handoff:v1`, messageKey = `talk:${demoRun}:${sourceId}:message:v1`;
+  const { handoffKey, messageKey } = handoffKeys(demoRun, sourceId);
   const payload: Obj = { schemaVersion: 1, sourceId, title: source.title!, speakers: source.speakers!, talkDate: source.talkDate!,
     topicTags: source.topicTags!, videoUrl: source.videoUrl!, transcriptUrl: source.transcriptUrl!, fictional: source.fictional!,
     transcriptFile: file, transcriptAccess: source.transcriptAccess!, license: source.license!, collector,
