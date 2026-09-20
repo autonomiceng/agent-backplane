@@ -56,9 +56,11 @@ both edge and gateway. Relative Compose files resolve from the selected checkout
 Saved relative Compose paths resolve beside the env file. Preparation requires the
 checkout's root `compose.yaml` first, followed by the ordered overlays. Explicit
 selectors must agree with recorded values. A saved empty `COMPOSE_PROFILES` selects
-no optional profiles; `--profile ''` makes that selection explicit. Existing
-observer invocations and timer units with explicit files and no profile flags
-retain their original empty-profile meaning.
+no optional profiles; `--profile ''` makes that selection explicit. Omitted profiles
+inherit the recorded selection even when files are explicit.
+Older explicit matching timer units remain valid, including profile order from
+the recorded selection or repeated original arguments. Saved empty profiles still
+produce the same units without profile flags.
 
 The env file defaults to `<checkout>/.env`. With no recorded settings or explicit
 selectors, the project defaults to `agent-backplane`, the Compose selection to
@@ -112,12 +114,55 @@ a newly started manager waits until that point. Later runs start 30 seconds afte
 completion, so observations do not overlap. Unit arguments escape systemd specifier
 and environment expansion.
 
-Existing unit files are never overwritten. A pre-activation partial write removes
-only files created by that attempt. An activation failure retains both units. Run
-`systemctl --user disable --now agent-backplane-status.timer`, then remove both
-`~/.config/systemd/user/agent-backplane-status.service` and
-`~/.config/systemd/user/agent-backplane-status.timer` before retrying. The user
-manager must remain active and have Docker access; enable lingering separately if
+Replace `--install` with `--check` for a read-only preflight. It checks the user
+manager and accepts an absent pair or the exact generated pair for the same
+selection. It creates no directories, units, env files or private copies. A fresh
+check permits an env file that the owning bootstrap has not created yet.
+Existing units require the original env file.
+
+Unit enumeration can exit nonzero for an absent name. The installer then requires
+`show` to confirm `LoadState=not-found` with empty fragment and drop-in paths.
+An unavailable manager or inconclusive response still refuses before writing.
+
+Both check and install refuse foreign loaded or installed unit fragments, drop-ins,
+partial or malformed pairs, symlinks, hard links, non-private unit files, and unsafe
+unit destinations. Install checks the manager **before** creating a user override.
+Unit names alone never establish ownership. New units are private, and both the
+files and containing directory are fsynced. Existing directory permissions and
+systemd argument quoting are preserved.
+
+The timer repeatedly executes the selected checkout's Python code, the installing
+interpreter, Docker CLI, and Compose configuration as the installation user with
+its Docker access. Anyone who can modify those files or replace a directory on
+their paths gains that authority, as with bootstrap and Compose themselves. Keep
+these inputs writable only by the installation user or root; shared checkouts
+writable by other users are unsupported. The installer protects its generated
+unit destination; it does not verify the entire code and configuration chain.
+Use a checkout path without symlink components so the observer can publish status.
+
+Unit-directory ancestors must be owned by root or the installation user and must
+not be group- or other-writable, except trusted sticky directories with existing
+trusted children. Every new component requires a parent owned by the installation
+user with no group/other write permission; the final unit directory has the same
+strict rule. Symlink ancestors are refused. These checks apply only to timer units,
+not general status publication. Inspect unsafe ancestors with the host administrator;
+the installer never changes existing directory permissions.
+
+Repeat the same `--install` command after an interrupted activation. An exact
+pair is not rewritten. After reload, the installer verifies both loaded fragments
+and absence of drop-ins, then enables the timer and verifies enabled and active
+state. Activation failure retains the pair. A partial pair or different selection
+requires inspection through the owning recovery procedure; the installer never
+disables, deletes or overwrites installed units. Do not change the selection or
+unit files concurrently. Host and disposable acceptance remain separate from these checks.
+
+For an absent unit pair, check validates the native project, ordered files and
+profiles plus any existing status directories, without rendering Compose. Missing
+env/status directories are left for the owning bootstrap. A matching installed pair
+requires complete installation evidence. Actual install always verifies the rootful
+local Docker endpoint, effective read-only status mount and prepared status/public
+directories through the existing owning installation checks. Preflight never relaxes
+those requirements or changes native selection. Enable lingering separately if
 observation must continue after logout.
 
 Native Compose resolves variables from the selected env file. The observer removes
