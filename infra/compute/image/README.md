@@ -27,9 +27,13 @@ Source inputs were checked against the official npm release integrity:
 
 This fixes build inputs; it does not claim bit-identical OCI output from different
 Docker builders. Record `docker image inspect` content identity after building. A local
-image ID is not a registry manifest digest. Do not place it in `BP_WORKERD_DIGEST` under
-the existing repository/digest deployment contract. Publishing and qualifying an exact
-artifact, or introducing a verified local-image identity contract, remain release gates.
+image ID is not a registry manifest digest. Do not place it in the legacy `BP_WORKERD_DIGEST`. The [runtime identity contract](../runtime.md)
+accepts local tags through `BP_WORKERD_IMAGE` and verifies executable bytes against
+`BP_WORKERD_BINARY_SHA256` at startup. The locally qualified amd64 packaging artifact is
+`agent-backplane-workerd:1.20260918.1`, image ID
+`sha256:1b5694d34643f982d7e7a511f81afbb1f59ec49bce0a60685e88deff24bebe3f`.
+This local config ID is candidate evidence, not a shipped default. `BP_WORKERD_IMAGE` is required.
+No registry artifact is published; full runtime qualification remains pending.
 Arm64 input integrity does not establish arm64 runtime qualification.
 
 Run `bun tests/acceptance/workerd-image.ts agent-backplane-workerd:1.20260918.1`

@@ -1,15 +1,50 @@
-# Compute runtime release gate
+# Compute Runtime Identity and release gate
 
-No workerd deployment artifact has completed full runtime qualification. **Release remains blocked until the runtime gate passes.** The [project image](image/README.md) packages a verified official binary under the explicit ADR-0009 exception; building it does not enable compute or qualify a deployment. The operator must load the validated image into the local Docker image store under the configured repository and digest before enabling compute; `pull_policy: never` prevents Compose from fetching it. The overlay requires `BP_WORKERD_REPOSITORY`, a bare 64-character SHA-256 `BP_WORKERD_DIGEST`, and `BP_COMPUTE_TOKEN`; enable it together with the compute profile. The core profile omits the overlay and leaves `BP_COMPUTE_URL` unset.
+No workerd artifact has completed full runtime qualification. **Release remains blocked until F-GATE passes.** The [project image](image/README.md) packages a verified official binary under ADR-0009. No registry artifact has been published. ADR-0018 defines Runtime Identity and its separate artifact evidence.
 
-Full-reference workerd experiments depend on F-IMAGE packaging and runtime qualification. `BP_WORKERD_IMAGE` is not supported yet. The server currently records the configured `BP_WORKERD_DIGEST` in deployment configuration; it cannot measure an arbitrary tag's running content. F-IMAGE must establish the artifact and an observed identity contract before this overlay accepts tags or local images. Retaining an unrelated configured digest for a new image would misattribute deployments. Existing repository/digest configuration remains unchanged and requires the qualified local artifact described above.
+## Configuration
 
-Validate image provenance, publisher, immutable digest, host architecture, `/usr/bin/workerd`, and support for `serve --experimental`, Worker Loader, `enable_ctx_exports`, `Check` RPC, and custom global outbound bindings. Run the deployment attribution scenario against that pinned container, including compilation failure, initializer timeout, restart/eviction, redirect rejection, private-address rejection, and cross-Workspace egress rejection. A project-packaged binary image requires an explicit ADR-0009 exception before release.
+`BP_WORKERD_IMAGE` is required for compute, including when using bootstrap. An absent or empty value refuses clearly. It accepts full references including local tags, registry digests and local `sha256:<image-config-id>` references. There is no shipped image default until F-GATE, publication and B-DEFAULT approval. `pull_policy: never` requires the image already present. The local candidate `agent-backplane-workerd:1.20260918.1` has only packaging qualification. Core omits this overlay and leaves `BP_COMPUTE_URL` unset.
 
-The authenticated control endpoint is internal and publishes no port. Preparation imports the bundle in a child with empty bindings and no outbound access; it never invokes the submitted fetch handler. The compatibility date is `2026-01-01`. Both server and loader hash the identical trusted Check source into the fixed configuration tuple. Keep those sources synchronized when changing the wrapper.
+`BP_WORKERD_BINARY_SHA256` is the expected SHA-256 of `/usr/bin/workerd`. Empty uses the known packaged amd64 binary, `f31da6d248028d698806aa93d1b3aec28bbd4b4b7ddc31e967408ab6406fa5aa`. Another executable requires an explicit verified hash. Other architectures require an explicit pin and their own runtime gate. Images must provide `/bin/sh`, `sha256sum` and `/usr/bin/workerd` and run with the overlay restrictions. Settings and host declarations are documented in `.env.example`.
 
-S31 must recover manifests from committed active deployments and bind Egress via `ctx.exports.Egress({ props: { workspaceId, urls: outboundUrls } })`. The designated API origin is `http://server:3000`; only `/api/v1/workspaces/<workspaceId>/` paths pass. External access permits exact normalized declared HTTPS URLs over workerd's public-only network. Children receive no disk, loader, raw network, or API bindings. Invocation and credential binding are outside S30.
+## Measurements and compatibility
 
-Workerd is not a hardened sandbox. Hostile code requires stronger isolation. The server deadline does not terminate workerd CPU execution; validate container resource limits and failure recovery.
+The trusted mounted entrypoint measures the executable before `exec`, refuses a mismatched expected hash, and exports `BP_WORKERD_RUNTIME_ID=workerd-binary-sha256:<observed-hash>` to the private authenticated loader. It also measures the control files in this exact order: `loader.js`, `config.capnp`, `start.sh`. Each file's SHA-256 becomes a line `<lowercase-hex>  <filename>\n`; the SHA-256 of those three concatenated lines is `BP_WORKERD_CONTROL_SHA256`. This matches POSIX `sha256sum` output from `/compute` and Bun's explicit file-reading helper. There is no file I/O on module import.
 
-Runtime behavior references: [Worker Loader API](https://developers.cloudflare.com/dynamic-workers/api-reference/), [egress control](https://developers.cloudflare.com/dynamic-workers/usage/egress-control/), [upstream sandbox limitation](https://github.com/cloudflare/workerd#warning-workerd-is-not-a-hardened-sandbox).
+Every server identity verification compares the observed control hash with its own checkout. Changed mounts or a newer server checkout require restarting workerd with matching files. Runtime Identity and `configHash` remain unchanged when the executable is unchanged, so the control update requires no redeployment. The server checks the private endpoint before registration, preparation and invocation; the loader also compares each manifest's Runtime Identity before loading submitted code. Verification is bounded by compute request deadlines. Compute unavailability never blocks the core listener. Capability reporting is a separate M-BP concern.
+
+The API field `runtimeDigest` holds the namespaced executable identity and participates in immutable `configHash`. It excludes the image base, CA bundle, architecture and loader. Packages with identical executable bytes have the same Runtime Identity and still require separate artifact qualification. Operator-controlled images, utilities, mounts and control network remain trusted. This is not attestation against a malicious image or host. No Docker socket is mounted in either service.
+
+## Private artifact evidence
+
+Bootstrap inspects the selected full reference to obtain its actual local Docker image ID and architecture, verifies the binary in a disposable network-disabled container, and atomically records a private, fsynced launch decision under `data/compute/<uuid>.json` beside the bootstrap env file. `BP_DATA_DIR` overrides that host data directory; relative paths resolve beside the env file. The record contains only source, purpose, selected reference, host-observed image ID, binary hash, architecture and observation time. It is mode 0600 and contains no environment secrets. It records the immutable image selected for that launch attempt, including attempts where Compose later fails; it does not claim the image remains running forever.
+
+Bootstrap passes that ID through `BP_WORKERD_EFFECTIVE_IMAGE` **only in its child environment** and supplies `BP_WORKERD_HOST_IMAGE_ID` as a host declaration. It never rewrites `BP_WORKERD_IMAGE` or persists an effective-image override. Every bootstrap resolves the current reference again. A subsequent bare `docker compose up` is an explicit deployment action and may resolve a moving tag again. Use an immutable image ID/reference for repeatability. The evidence record never drives future image selection.
+
+The private identity endpoint carries `artifact: { source: "host-declared", reference, hostObservedImageId }` separately from measured hashes. Bare Compose defaults the image ID to null; it is never inferred from a tag. A trusted operator may explicitly set `BP_WORKERD_HOST_IMAGE_ID`, including via tooling environment, and owns the accuracy of that declaration. The server validates and bounds these facts and records them in `function.deploy`, `function.activate` and `function.invoke` Audit Events. They are private audit evidence, absent from public status and deployment responses, and excluded from `configHash`. Malformed facts refuse compute; a valid change of artifact facts does not change eligibility. Invocation facts describe its verified admission observation, not proof of eventual execution. Principal, Run and temporary invocation authority remain unchanged.
+
+## Legacy deployments and root integration
+
+Historical bare 64-character `runtimeDigest` values retain their meaning as configured OCI digests. Migration 33 preserves them and existing Audit Events without rewriting history. These deployments remain readable; activation/invocation under the new runtime refuse with `compute_unavailable`. Active legacy deployments will therefore be unavailable until replaced. Register a new deployment ID through the API and activate it with the previous active ID. Legacy `BP_WORKERD_REPOSITORY` and `BP_WORKERD_DIGEST` configuration is refused by bootstrap and the entrypoint; replace it with the full image reference and expected executable hash.
+
+Deploy the migration and server wiring together. Migration 33 follows root's storage/S-identity schema migration 32; this slice's protected-file patch remains unapplied. There is no generated API shape change.
+
+## Bounded acceptance gates
+
+Root runs these in disposable fixtures after applying the protected patch:
+
+```sh
+# Owns containers sequentially. Includes real HTTPS unless --identity-only is supplied.
+bun tests/acceptance/workerd-image.ts agent-backplane-workerd:1.20260918.1
+
+# Set BP_COMPUTE_URL, BP_COMPUTE_TOKEN and BP_WORKERD_RUNTIME_ID for a separately owned runtime.
+bun test --preload ./apps/server/testing/preload.ts ./tests/acceptance/workerd-identity.ts
+bun test apps/server/compute/compute-launcher.test.ts
+```
+
+The image probe records reference, actual image ID, architecture, binary and control hashes. It checks private persistence, wrong identity refusal, null bare-Compose image evidence, unchanged configuration with/without image facts, and loader-drift refusal followed by healthy preparation of the original manifest. Each Docker command is bounded to 120 seconds, control requests to five seconds and startup/restart waits to 15 seconds. The 30-second PG gate writes through the server, checks persisted deployment/activation/invocation evidence and unchanged Principal/Run attribution, and uses real HTTP to check core readiness and authentication while compute refuses a wrong identity.
+
+Full F-GATE remains separate: initializer timeout, restart/eviction lifecycle, resource limits, redirect/private-address/cross-Workspace egress refusal and subsequent healthy invocation. Workerd is not a hardened sandbox; server deadlines do not prove CPU termination. No shipping support or published artifact custody is claimed.
+
+Preparation imports bundles in a child with empty bindings and no outbound access. The compatibility date is `2026-01-01`; both server and loader hash the identical trusted Check source into the deployment tuple. Children receive no disk, loader, raw network or API bindings. Egress permits only Workspace paths at `http://server:3000` and exact declared HTTPS URLs over workerd's public-only network.

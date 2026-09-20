@@ -37,7 +37,7 @@ export function activateFunction(pool: Pool, context: RunContext, name: string, 
     if (metadata.status === "active") return computeSuccess(metadata);
     if (active) await tx`UPDATE control.deployments SET status = 'retired' WHERE workspace_id = ${context.workspaceId} AND id = ${active.id}`;
     await tx`UPDATE control.deployments SET status = 'active' WHERE workspace_id = ${context.workspaceId} AND id = ${id}`;
-    await emit("function.activate", [name, id], 1, { deploymentId: id, previousActiveId: active?.id ?? null });
+    await emit("function.activate", [name, id], 1, { deploymentId: id, previousActiveId: active?.id ?? null, artifact: preparation.value });
     return computeSuccess({ ...metadata, status: "active" });
   });
 }

@@ -9,3 +9,32 @@ Compute activation records eligibility after isolated preparation. Workerd's exp
 Preparation may succeed before a transaction rolls back. Prepared isolates have no invocation ingress, and invocation must authorize against committed active deployments on every request. Isolates are disposable caches and may disappear after eviction or restart.
 
 Workerd is not a hardened sandbox. The two-second preparation deadline bounds server occupancy, without guaranteeing termination of an initializer. Container resource limits constrain damage; hostile code needs stronger isolation beyond this experimental profile.
+
+Amended 2026-09-20: Runtime Identity is the measured workerd executable, recorded as
+`workerd-binary-sha256:<sha256>` in `runtimeDigest` and the immutable deployment
+configuration hash. It excludes the image, base, CA bundle, architecture and loader.
+This permits full image overrides without attributing a different executable to an
+unrelated configured registry digest. Historical bare digests retain their original
+meaning and remain readable; activation and invocation refuse them until a new
+Deployment is registered and activated through the API. History is never rewritten.
+
+The trusted entrypoint separately measures `loader.js`, `config.capnp` and `start.sh`.
+The server compares that control-surface hash with its checkout on private identity
+verification. Changed control files require a workerd restart, without a new deployment
+when the binary is unchanged. Verification is bounded per compute operation; an
+unavailable runtime does not prevent the core listener from starting.
+
+Image facts are distinct host-declared artifact evidence. Bootstrap privately records
+the selected reference, resolved local image config ID, binary hash, architecture and
+observation time as a launch decision. The private control endpoint carries the
+selected reference and an optional host-observed image ID into deploy, activate and
+invoke Audit Events. Valid evidence does not change eligibility or `configHash`;
+malformed evidence is refused. Principal and Run authority are unchanged. No container
+claims to measure its own image ID, and no Docker socket is exposed.
+
+An explicit Compose deployment may resolve a moving tag again. Bootstrap's effective
+image override lives only in its child environment; the evidence record never selects
+future images. Direct Compose reports a null image ID unless the trusted operator
+supplies a declaration. Use an immutable reference for repeatability. There is no
+shipped image default until runtime qualification, publication and B-DEFAULT approval.
+The known amd64 binary hash alone does not qualify another architecture or image.
