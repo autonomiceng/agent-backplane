@@ -98,6 +98,7 @@ test("fresh install operations reports empty queues and initial disk growth as k
   } finally { await pool.close(); }
 });
 
+// The real publisher fsyncs the manifest, receipt and directory on shared CI storage.
 test("public checkpoint receipt reports only its database and rejects malformed or unsafe paths", async () => {
   const url=await migratedDatabase(), pool=createPool(url), admin=new SQL({url:adminUrl(url),max:1});
   const dir=await mkdtemp(join(tmpdir(),"bp-checkpoint-health-")), name=`bp_${"b".repeat(32)}`, health=join(dir,"health.json");
@@ -141,7 +142,7 @@ publish_checkpoint(dest,doc)
     await rm(health);
     expect(await observe()).toEqual({completedAt:receipt.completedAt,restorePoint:receipt.restorePoint});
   } finally { await pool.close(); await admin.close(); await rm(dir,{recursive:true,force:true}); }
-});
+}, 30000);
 
 test("reconciliation deadline releases its database lease and root readiness failures have stable errors", async () => {
   const url=adminUrl(await migratedDatabase()), admin=new SQL({url,max:1});

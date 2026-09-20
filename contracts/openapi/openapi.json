@@ -16760,8 +16760,7 @@
                             "backend": {
                               "enum": [
                                 "filesystem",
-                                "s3",
-                                "workerd"
+                                "s3"
                               ],
                               "nullable": true,
                               "type": [
@@ -16797,11 +16796,7 @@
                         "functions": {
                           "properties": {
                             "backend": {
-                              "enum": [
-                                "filesystem",
-                                "s3",
-                                "workerd"
-                              ],
+                              "const": "workerd",
                               "nullable": true,
                               "type": [
                                 "string",
@@ -18803,8 +18798,7 @@
                                 "backend": {
                                   "enum": [
                                     "filesystem",
-                                    "s3",
-                                    "workerd"
+                                    "s3"
                                   ],
                                   "nullable": true,
                                   "type": [
@@ -18840,11 +18834,7 @@
                             "functions": {
                               "properties": {
                                 "backend": {
-                                  "enum": [
-                                    "filesystem",
-                                    "s3",
-                                    "workerd"
-                                  ],
+                                  "const": "workerd",
                                   "nullable": true,
                                   "type": [
                                     "string",
