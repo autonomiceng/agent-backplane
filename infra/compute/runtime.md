@@ -58,7 +58,7 @@ One operation occupies the operation slot from admission through child reaping. 
 operations return `compute_unavailable` without spawning or queueing. Identity has one
 reserved, singleflight probe slot and no completed-result cache. It must complete a real
 loader identity round trip within the existing two-second budget, including under CPU
-load. N=1 is the initial bound; it has not been qualified under the container CPU cap.
+load. N=1 is the initial bound; the artifact gate exercises it under the container CPU cap.
 
 The admission deadline includes body reading, fresh child startup, execution and response
 buffering. Invocation sends the remaining server budget after the authority transaction
@@ -98,3 +98,14 @@ The host fixture runs six lifecycle cases. The artifact fixture verifies identit
 one-CPU load, child termination, aggregate memory recovery, and container restart after
 an injected lost exit observation. Full server authority and orphan-Run recovery are
 qualified separately before release. Socket, network, image or fixture failures fail the gate.
+
+Admitted supervisor requests and authenticated, parsed API invokes disable only their
+request's listener idle timer while the operation deadline is active. Other requests
+retain their listener timeout. This keeps long, quiet invocations within their configured
+budget. The supervisor transport cap is one MiB above its handler cap. Bare transport
+413s map to `function_failed`; forwarded function responses carry a supervisor-owned
+marker so an ordinary function 413 remains an ordinary result.
+
+Interrupted fixtures attempt ownership-checked cleanup on SIGINT/SIGTERM at bounded
+operation boundaries. SIGKILL cannot execute cleanup; `on-failure:10` bounds automatic
+failure retries and does not remove a leaked container.

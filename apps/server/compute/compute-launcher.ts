@@ -42,6 +42,10 @@ export function createComputeLauncher(config: { url: string | undefined; token: 
         headers: { authorization: `Bearer ${token}`, "content-type": "application/json", "x-backplane-budget-ms": String(Math.max(1, Math.floor(remainingMs))),
           "x-backplane-runtime": evidence.runtimeDigest, "x-backplane-control": evidence.controlHash, "x-backplane-artifact": JSON.stringify(evidence.artifact) },
         body: JSON.stringify(invocation), signal, redirect: "manual" });
+      if (response.status === 413 && response.headers.get("x-backplane-response") !== "proxied") {
+        await response.body?.cancel();
+        throw new InvocationError("function_failed");
+      }
       const reason = response.headers.get("x-backplane-error");
       if ((response.status === 503 && reason === "compute_unavailable") || (response.status === 502 && reason === "function_failed")
         || (response.status === 504 && reason === "function_timeout")) {
