@@ -282,7 +282,7 @@ def check(root, env_file, project, compose_files, profiles, state_dir, unit_dir,
         check_units(contents, unit_dir, runner)
     else:
         saved = saved_settings(env_file) if env_file.exists() else {}
-        recorded_state = (env_file.parent / saved.get('BP_STATUS_DIR', 'data')).absolute()
+        recorded_state = Path(os.path.abspath(env_file.parent / saved.get('BP_STATUS_DIR', 'data')))
         effective_state = Path(os.path.abspath(state_dir)) if state_dir else recorded_state
         if state_dir and 'BP_STATUS_DIR' in saved and effective_state != recorded_state:
             raise Unavailable()

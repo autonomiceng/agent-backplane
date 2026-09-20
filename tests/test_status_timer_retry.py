@@ -140,6 +140,16 @@ class TimerRetryTests(unittest.TestCase):
             self.invoke(check=True)
         self.assertEqual(self.snapshot(), before)
 
+    def test_fresh_check_normalizes_saved_state_before_comparing_override(self):
+        with self.env.open('a') as stream:
+            stream.write('BP_STATUS_DIR=unused/../data\n')
+        before = self.snapshot()
+        self.invoke(check=True, state_dir=self.state)
+        self.assertEqual(self.snapshot(), before)
+        with self.assertRaises(Unavailable):
+            self.invoke(check=True, state_dir=self.root / 'other')
+        self.assertEqual(self.snapshot(), before)
+
     def test_absent_enumeration_uses_show_and_manager_failures_refuse_without_writes(self):
         self.manager.enumeration_fails = True
         self.assertEqual(self.manager(['systemctl', '--user', 'list-units', '--all',
