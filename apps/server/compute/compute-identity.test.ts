@@ -15,6 +15,7 @@ test("artifact changes preserve stored config hashes; activation verifies before
     { source: "host-declared", reference: "fixture:second", hostObservedImageId: null },
   ];
   const paths: string[][] = [[], []];
+  const dispatched: (string | null)[][] = [];
   let observedControl = control;
   let rejectDispatch = false;
   let hold: Promise<void> | undefined;
@@ -29,9 +30,7 @@ test("artifact changes preserve stored config hashes; activation verifies before
       return new Response(null, { status: 204, headers: { "x-backplane-runtime": runtimeDigest,
         "x-backplane-control": observedControl, "x-backplane-artifact": JSON.stringify(artifact) } });
     }
-    expect(request.headers.get("x-backplane-runtime")).toBe(runtimeDigest);
-    expect(request.headers.get("x-backplane-control")).toBe(observedControl);
-    expect(request.headers.get("x-backplane-artifact")).toBe(JSON.stringify(artifact));
+    dispatched.push([path, request.headers.get("x-backplane-runtime"), request.headers.get("x-backplane-control"), request.headers.get("x-backplane-artifact")]);
     if (rejectDispatch) return new Response(null, { status: 503, headers: { "x-backplane-error": "compute_unavailable" } });
     return path === "/prepare" ? new Response(null, { status: 204 }) : Response.json({ ok: true });
   } }));
@@ -97,6 +96,8 @@ test("artifact changes preserve stored config hashes; activation verifies before
       expect([response.status, await response.json()]).toEqual([503, { error: "compute_unavailable" }]);
     }
     expect(paths[1]?.filter(path => path !== "/identity")).toEqual(["/prepare", "/invoke", "/prepare", "/invoke"]);
+    expect(dispatched).toEqual(["/prepare", "/invoke", "/prepare", "/invoke"].map(path =>
+      [path, runtimeDigest, control, JSON.stringify(artifacts[1])]));
     expect(await pool<{ kind: string; reason: string; principal_id: string; run_id: string }[]>`SELECT kind, reason, principal_id, run_id FROM audit.rejections WHERE workspace_id = ${workspaceId} ORDER BY id`)
       .toEqual(["function.activate", "function.invoke", "function.deploy", "function.activate", "function.invoke", "function.deploy", "function.activate", "function.invoke"].map(kind => ({ kind, reason: "compute_unavailable", principal_id: principalId, run_id: runId })));
   } finally { release?.(); await Promise.all(servers.map(server => server.stop(true))); await pool.close(); }

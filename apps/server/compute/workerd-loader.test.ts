@@ -48,11 +48,30 @@ test("missing or oversized operation evidence is refused before parsing the body
   }
 });
 
+test.each([503, 302])("loader preserves child status %i and body while stripping the reserved marker", async status => {
+  const bundle = "export default { fetch() {} }";
+  const input = { version: 1, workspaceId: "w", functionName: "f", id: "id", bundle, bundleSha256: sha256(bundle),
+    entryPoint: "default", compatibilityDate, outboundUrls: [], keyRef: { workspaceId: "w", principalId: "p" }, runtimeDigest } as const;
+  const manifest = { ...input, outboundUrls: [], configHash: configHash({ ...input, outboundUrls: [] }) };
+  const child = Response.json({ result: "from function" }, { status, headers: {
+    "x-backplane-error": "compute_unavailable", location: "/elsewhere", "x-function-result": "preserved",
+  } });
+  const response = await loader.fetch(request("/invoke", { manifest,
+    props: { token: "bp_i_" + "a".repeat(64), runId: crypto.randomUUID(), workspaceId: "w" }, input: null,
+  }), { ...env, LOADER: { get() { return { getEntrypoint() { return { fetch: async () => child }; } }; } } },
+  { exports: { Egress: () => ({}) } });
+  expect(response.status).toBe(status);
+  expect(response.headers.get("x-backplane-error")).toBeNull();
+  expect(response.headers.get("location")).toBe("/elsewhere");
+  expect(response.headers.get("x-function-result")).toBe("preserved");
+  expect(await response.json()).toEqual({ result: "from function" });
+});
+
 test("one verification binds prepare and invoke to the loader's control and artifact observation", async () => {
-  let children = 0;
+  let children = 0, childStatus = 503;
   const current = { ...env, CONTROL_SHA256: await readControlSurfaceHash(), LOADER: { get() {
     children++;
-    return { getEntrypoint() { return { check: async () => true, fetch: async () => Response.json({ ok: true }, { status: 503 }) }; } };
+    return { getEntrypoint() { return { check: async () => true, fetch: async () => Response.json({ ok: true }, { status: childStatus, headers: { "x-backplane-error": "compute_unavailable", location: "/redirect-target", "x-function-result": "preserved" } }) }; } };
   } } };
   const paths: string[] = [];
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
@@ -70,20 +89,26 @@ test("one verification binds prepare and invoke to the loader's control and arti
     const signal = AbortSignal.timeout(5000), evidence = await launcher.verify(signal);
     if (!evidence) throw Error("verification failed");
     expect(await launcher.prepare(manifest, signal, evidence)).toEqual({ ok: true, value: evidence.artifact });
-    const response = await launcher.invoke(invocation, signal, evidence);
-    expect(response.status).toBe(503); // An ordinary function response remains an invocation result.
-    expect(await response.json()).toEqual({ ok: true });
-    expect(children).toBe(2);
+    for (const status of [503, 302]) {
+      childStatus = status;
+      const response = await launcher.invoke(invocation, signal, evidence);
+      expect(response.status).toBe(status);
+      expect(response.headers.get("x-backplane-error")).toBeNull();
+      expect(response.headers.get("x-function-result")).toBe("preserved");
+      expect(response.headers.get("location")).toBe("/redirect-target");
+      expect(await response.json()).toEqual({ ok: true });
+    }
+    expect(children).toBe(3);
     for (const change of [{ CONTROL_SHA256: "c".repeat(64) }, { IMAGE_REFERENCE: "fixture:replacement" }, { HOST_IMAGE_ID: "sha256:" + "d".repeat(64) }]) {
       Object.assign(current, env, { CONTROL_SHA256: evidence.controlHash }, change);
       expect(await launcher.prepare(manifest, signal, evidence)).toEqual({ ok: false, reason: "compute_unavailable" });
       await expect(launcher.invoke(invocation, signal, evidence)).rejects.toThrow("compute_unavailable");
-      expect(children).toBe(2);
+      expect(children).toBe(3);
     }
-    expect(paths).toEqual(["/identity", "/prepare", "/invoke", "/prepare", "/invoke", "/prepare", "/invoke", "/prepare", "/invoke"]);
+    expect(paths).toEqual(["/identity", "/prepare", "/invoke", "/invoke", "/prepare", "/invoke", "/prepare", "/invoke", "/prepare", "/invoke"]);
     const refreshed = await launcher.verify(signal);
     if (!refreshed) throw Error("changed valid artifact must be verifiable");
     expect(await launcher.prepare(manifest, signal, refreshed)).toEqual({ ok: true, value: refreshed.artifact });
-    expect(children).toBe(3);
+    expect(children).toBe(4);
   } finally { await server.stop(true); }
 });

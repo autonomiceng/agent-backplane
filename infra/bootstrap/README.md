@@ -50,3 +50,10 @@ The issuance command uses `BP_URL` and the User session. It reserves the output 
 A stale `.lock` requires investigation. Confirm no preparation or bootstrap process is running before removing only that lock. Retain the checkpoint: recovered `key:in-flight` validates its existing credential file with `whoami` and promotes it to `key:saved`; otherwise it becomes `key:ambiguous`. Only a proven pre-send connection or handshake failure (`transport_unsent`), or a local session failure identified before invocation, returns issuance to `principal:saved` for retry and removes the credential-file reference. Ordinary HTTP 4xx responses now retain ambiguity; they no longer qualify for this rollback. Failed recovery from `key:saved` preserves that checkpoint.
 
 Exit codes: `0` complete, `1` usage or invalid input, `2` server not ready or recovery required (adoption, capability or identity), `3` ambiguous issuance. A readiness probe waits up to 120 seconds.
+
+Storage initialization is an explicit operator command in this checkout. Automatic
+Compose initialization and startup verification are delivered together in the
+separate activation slice. The [storage identity procedure](../../docs/operations/storage-identity.md)
+provides `storage_operator initialize` for an empty store and empty installation,
+and fenced adoption for an existing unbound installation. Crash leftovers can be
+recorded for permanent retention without deleting or moving their bytes.

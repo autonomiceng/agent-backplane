@@ -193,13 +193,20 @@ def prune_checkpoints(root, keep, remove=shutil.rmtree):
     return boundaries
 
 
-def backup(stack):
+def require_backup_services(running, edge, offline):
+    if offline:
+        if 'postgres' not in running or set(running) & {'server', 'edge', 'storage-init'}:
+            raise ValueError('offline backup requires postgres running and server, edge, storage-init stopped')
+    elif not {'postgres', 'server', *(['edge'] if edge else [])} <= set(running):
+        raise ValueError('backup requires running postgres and server')
+
+
+def backup(stack, offline=False):
     stack.attest()
     if any('@' not in image['reference'] for name, image in stack.images.items() if name in ('postgres', 'edge')):
         print('Upstream image custody is external: retain the recorded immutable references in a registry or a tested off-host image archive; publication was not checked.', file=sys.stderr, flush=True)
     running = stack.dc('ps', '--status', 'running', '--services').split()
-    if not {'postgres', 'server', *(['edge'] if 'edge' in stack.services else [])} <= set(running):
-        raise ValueError('backup requires running postgres and server')
+    require_backup_services(running, 'edge' in stack.services, offline)
     if not 180000 <= int(stack.pg('SHOW server_version_num')) < 190000:
         raise ValueError('Checkpoint recovery requires the PostgreSQL 18 data layout')
     if stack.pg('SHOW data_directory') != '/var/lib/postgresql/18/docker':
@@ -252,7 +259,7 @@ def backup(stack):
         ''', 'sh', target, first, segment)
         for volume, mount in stack.stores.items():
             if volume != 'postgres-data':
-                stack.helper('umask 077; tar -C /source -cf "$1" .', f'{target}/{volume}.tar',
+                stack.helper('umask 077; tar --hard-dereference -C /source -cf "$1" .', f'{target}/{volume}.tar',
                              mounts=('-v', f'{stack.volume(volume)}:/source:ro'))
         stack.helper('chown -R "$2:$3" "$1"; chmod -R u+rwX,go-rwx "$1"', target, str(os.getuid()), str(os.getgid()))
         command(['docker', 'save', '--output', str(dest / 'server-image.tar'), stack.images['server']['id']])
@@ -393,7 +400,10 @@ def main():
     parser.add_argument('action', choices=['backup', 'restore'])
     parser.add_argument('checkpoint', nargs='?', type=Path)
     parser.add_argument('--env-file', type=Path, default=ROOT / '.env')
+    parser.add_argument('--offline', action='store_true', help='capture a fenced stopped server without restarting it')
     args = parser.parse_args()
+    if args.offline and args.action != 'backup':
+        parser.error('--offline is only valid for backup')
     os.umask(0o077)
     lock_path = args.env_file.with_suffix(args.env_file.suffix + '.lock')
     with lock_path.open('x'):
@@ -402,7 +412,7 @@ def main():
             with (stack.backups / '.checkpoint.lock').open('w') as repository_lock:
                 fcntl.flock(repository_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 if args.action == 'backup':
-                    backup(stack)
+                    backup(stack, args.offline)
                 else:
                     if args.checkpoint is None:
                         raise ValueError('checkpoint path required')
