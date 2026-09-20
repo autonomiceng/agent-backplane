@@ -13,9 +13,9 @@ test("effective runtime identity preserves deployer authority and refuses a wron
   if (!evidence) throw Error("owned runtime identity verification failed");
   const { artifact } = evidence;
   const pool = createPool(await migratedDatabase());
-  expect((await capabilityProbe(pool, undefined, compute)()).functions).toMatchObject({ state: "healthy", backend: "workerd" });
   let listener: Bun.Server<undefined> | undefined;
   try {
+    expect((await capabilityProbe(pool, undefined, compute)()).functions).toMatchObject({ state: "healthy", backend: "workerd" });
     const fixture = await principalFixture(pool, {}, afterAll);
     const { workspaceId, principalId, cookie } = fixture;
     const key = await issueKey(fixture.app, cookie, workspaceId, principalId);
