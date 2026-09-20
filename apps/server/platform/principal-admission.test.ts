@@ -2,6 +2,29 @@ import { expect, test } from "bun:test";
 import { Elysia } from "elysia";
 import { PrincipalAdmission, principalAdmission } from "./principal-admission.ts";
 
+test.each(["invoke", "invoke/"])("%s keeps admission until invocation cleanup after disconnect", async (path) => {
+  const gate = new PrincipalAdmission(2, 100);
+  const controller = new AbortController();
+  const invocation = new Request(`http://localhost/api/v1/workspaces/workspace/functions/digest/${path}`, {
+    method: "POST", signal: controller.signal,
+  });
+  const next = new Request("http://localhost/work", { method: "POST" });
+  try {
+    expect(await gate.acquire(invocation)).toBe(true);
+    const waiting = gate.acquire(next);
+    controller.abort();
+    expect(gate.snapshot()).toMatchObject({ inUse: 1, waiters: 1 });
+    gate.release(invocation);
+    expect(await waiting).toBe(true);
+    gate.release(invocation);
+    expect(gate.snapshot()).toMatchObject({ inUse: 1, waiters: 0 });
+  } finally {
+    gate.release(invocation);
+    gate.release(next);
+  }
+  expect(gate.snapshot().inUse).toBe(0);
+});
+
 // Budget overage: one pure, millisecond-scale sibling test covers permit lifecycle failures.
 test("Thrown handlers, active aborts, queued aborts and timeouts do not leak admission permits", async () => {
   const gate = new PrincipalAdmission(2, 20);

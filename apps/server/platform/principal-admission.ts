@@ -19,7 +19,7 @@ export class PrincipalAdmission {
     const previous = this.acquisitions.get(request);
     if (previous) return previous;
     const callback = isInvocation(request);
-    const invocation = /\/functions\/[^/]+\/invoke$/.test(new URL(request.url).pathname);
+    const invocation = /\/functions\/[^/]+\/invoke\/?$/.test(new URL(request.url).pathname);
     const pending = new Promise<boolean>((resolve) => {
       const finish = (ok: boolean) => {
         clearTimeout(timer); this.waiting.delete(enter); request.signal.removeEventListener("abort", abort);
