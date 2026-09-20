@@ -34,3 +34,15 @@ Amended 2026-09-20: ADR-0018 defines measured Runtime Identity, separate image a
 evidence and control-surface compatibility. Workerd requires an explicit full image
 reference until F-GATE, publication and B-DEFAULT approval; a local config ID is not a
 registry pin or a supported default.
+
+
+Amended 2026-09-20 (local artifact delivery): This supersedes the publication prerequisite
+above. After H-PROOF/F-GATE and B-DEFAULT approval, the shipped checksum-pinned recipe
+is the supported local-build delivery method for amd64; registry publication is optional.
+Missing or blank `BP_WORKERD_IMAGE` builds that recipe. Explicit overrides remain
+operator-selected local artifacts and must pass executable verification without being
+built over or implicitly pulled. This trades registry release infrastructure for build
+network access and a compatible Docker/BuildKit toolchain on the installation host.
+No registry release or arm64 qualification is claimed. Arm64 recipe inputs alone cannot
+promote an arm64 default. Fresh minimal selection and the trusted operator/enrolled-agent
+boundary remain unchanged; this preparatory change does not satisfy either runtime gate.
