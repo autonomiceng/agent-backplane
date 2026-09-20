@@ -68,3 +68,59 @@ bun "$BACKPLANE_REPO/examples/talk-digest/collector.ts" handoff \
 ```
 
 For each real catalog entry, fetch its direct author or event transcript page without login, bypass, or YouTube extraction. Normalize the transcript to a private local text file and create metadata with the same fields as the fixture. Preserve the catalog's exact source URLs, speakers, dates, access check, and license status. Do not silently store HTML as transcript text. Run the same `prepare` then `handoff` commands with those two files. The collector deliberately performs no general HTML scraping.
+
+## Analyst procedure
+
+This is also gated demo work. Run it only after the collector handoff and an explicit release from the demo owner. Use the analyst Principal's credential file and a new session/cache. Keep every claimed transcript, claim state, authored summary, invocation response, and proof under the private data directory. The claim state contains the Receipt and must never be committed, uploaded, copied into the page, or used after expiry.
+
+```bash
+export BACKPLANE_REPO=/absolute/path/to/agent-backplane
+export BP_CREDENTIALS_FILE=/absolute/private/analyst.credentials.json
+export DEMO_WORKSPACE_ID=YOUR_WORKSPACE_UUID DEMO_PRINCIPAL_ID=YOUR_ANALYST_PRINCIPAL_UUID
+export DEMO_TOKEN="$(bun -e 'console.log(crypto.randomUUID())')"
+export BP_SESSION="analyst-$DEMO_TOKEN"
+export BP_DATA_DIR="$BACKPLANE_REPO/.scratch/private/analyst/$DEMO_TOKEN"
+export BP_HARNESS=codex BP_MODEL=gpt-5.6-sol BP_RUN_LABEL=platform-talk-analyst
+mkdir -p "$BP_DATA_DIR" && chmod 700 "$BP_DATA_DIR"
+bp() { bun "$BACKPLANE_REPO/packages/cli/runtime/main.ts" "$@"; }
+bun "$BACKPLANE_REPO/examples/talk-digest/analyst.ts" discover
+```
+
+`discover` checks `whoami`, creates the attributed Run, and performs MCP initialization plus `tools/list`. Claim only when an analyst is ready to work. The command downloads the File by ID, verifies its byte count and SHA-256, then saves the transcript and Receipt-bearing state privately.
+
+```bash
+bun "$BACKPLANE_REPO/examples/talk-digest/analyst.ts" claim \
+  "$BP_DATA_DIR/transcript.txt" "$BP_DATA_DIR/claim.json"
+```
+
+Read the private transcript and author `$BP_DATA_DIR/summary.json` yourself. No deterministic summarizer or paid model API is part of this example. The combined digest and points must be at most 150 words. If a direct quote is useful, keep quoted words below 25 per source.
+
+```json
+{
+  "sourceId": "SOURCE_ID_FROM_THE_CLAIM",
+  "digestText": "A concise agent-authored digest.",
+  "keyPoints": ["A main point.", "Another main point."]
+}
+```
+
+Renew while the Receipt is live if analysis takes time. `complete` also renews when fewer than two minutes remain and refuses an expired Receipt. It first submits a deliberately wrong `expectRows`, verifies the SQL rollback and still-leased Delivery, then uses a fresh idempotency key for the correct SQL-plus-ack transaction. It repeats the identical successful request and requires one joined result. The standalone HTML escapes all source and summary text, accepts only HTTP(S) source links, labels fixture versus real material, and is stored as a File.
+
+```bash
+bun "$BACKPLANE_REPO/examples/talk-digest/analyst.ts" renew "$BP_DATA_DIR/claim.json"
+bun "$BACKPLANE_REPO/examples/talk-digest/analyst.ts" complete \
+  "$BP_DATA_DIR/transcript.txt" "$BP_DATA_DIR/claim.json" "$BP_DATA_DIR/summary.json" \
+  "$BP_DATA_DIR/review.html" "$BP_DATA_DIR/proof.json"
+bun "$BACKPLANE_REPO/examples/talk-digest/analyst.ts" deploy "$BP_DATA_DIR/proof.json"
+```
+
+The Function has no arbitrary external URL allowlist. On invocation it uses the supported internal callback and its temporary invocation credential to read the completed Workspace rows as the deploying analyst Principal. It returns `{html, metadata}` as authenticated invocation JSON and makes no anonymous-hosting promise. A root or collector Principal should perform the cross-Principal invocation in its separately configured CLI environment and save its response. Then restore the analyst environment before running `publish`:
+
+```bash
+bp functions invoke-function --name talk-digest-review --body - >/absolute/private/invocation.json <<JSON
+{"input":{"sourceId":"SOURCE_ID_FROM_THE_CLAIM"}}
+JSON
+bun "$BACKPLANE_REPO/examples/talk-digest/analyst.ts" publish \
+  "$BP_DATA_DIR/proof.json" /absolute/private/invocation.json
+```
+
+Run the fixture before real talks. `publish` checks that the callback SQL and terminal Function events carry the analyst Principal and invocation Run, then stores safe proof JSON containing source, File, deployment, invocation, Run, rollback, and retry identifiers. It never includes the Receipt or transcript. Viewing the exported HTML is ordinary human review, not an Approval.
