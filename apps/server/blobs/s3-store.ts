@@ -1,8 +1,8 @@
 // Explicit S3 storage uses private Workspace prefixes and a rotating, bounded listing.
 import { S3Client } from "bun";
-import { blobUuid, bufferBlob } from "./blob-store.ts";
+import { blobUuid, bufferBlob, type BlobRef } from "./blob-store.ts";
 import { storeMarker, type BindingStore } from "./storage-binding.ts";
-export function s3Store(options: ConstructorParameters<typeof S3Client>[0]): BindingStore {
+export function s3Store(options: ConstructorParameters<typeof S3Client>[0]) {
   const client = new S3Client(options), cursors = new Map<string, string>();
   const key = (workspace: string, id: string, staging = false) => {
     if (!blobUuid.test(workspace) || !blobUuid.test(id)) throw new Error("invalid_input");
@@ -26,9 +26,18 @@ export function s3Store(options: ConstructorParameters<typeof S3Client>[0]): Bin
       ...(continuationToken ? { continuationToken } : {}) }), deadline.promise]).finally(() => clearTimeout(timer));
   };
   return {
-    backend: "s3",
+    backend: "s3" as const,
+    async createStored(workspace: string, ref: BlobRef, bytes: Uint8Array) {
+      const name = key(workspace, ref.id, ref.staging);
+      const response = await fetch(client.presign(name, { method: "PUT", expiresIn: 60 }), {
+        method: "PUT", headers: { "If-None-Match": "*" }, body: Buffer.from(bytes), redirect: "error", signal: AbortSignal.timeout(10000),
+      });
+      await response.body?.cancel();
+      if (!response.ok && response.status !== 412) throw new Error("blob_binding_copy_failed");
+      if (!Buffer.from(bytes).equals(await transfer(name, "GET"))) throw new Error("blob_binding_copy_conflict");
+    },
     readMarker: () => transfer(storeMarker, "GET"),
-    async markerOrAbsent(signal) {
+    async markerOrAbsent(signal?: AbortSignal) {
       const response = await fetch(client.presign(storeMarker, { method: "GET", expiresIn: 60 }), { signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10000)]) : AbortSignal.timeout(10000), redirect: "error" });
       if (response.status === 404) { await response.body?.cancel(); return null; }
       if (!response.ok) { await response.body?.cancel(); throw new Error("blob_unavailable"); }
@@ -75,5 +84,5 @@ export function s3Store(options: ConstructorParameters<typeof S3Client>[0]): Bin
         return match && match[2] && blobUuid.test(match[2]) ? [{ id: match[2], staging: Boolean(match[1]) }] : [];
       });
     },
-  };
+  } satisfies BindingStore & { createStored(workspace: string, ref: BlobRef, bytes: Uint8Array): Promise<void> };
 }
