@@ -11,6 +11,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'scripts'))
 import install_status_timer as installer
 from status_io import Unavailable
+from test_status_timer_retry import FakeManager
 
 
 class StatusTimerTests(unittest.TestCase):
@@ -19,6 +20,7 @@ class StatusTimerTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name) / 'checkout %$"'
         (root / 'scripts').mkdir(parents=True)
+        root.chmod(0o755)
         (root / 'scripts/status_observer.py').write_text('')
         (root / 'compose.yaml').write_text('services: {}\n')
         (root / 'compose.edge.yaml').write_text('services: {}\n')
@@ -26,6 +28,7 @@ class StatusTimerTests(unittest.TestCase):
         state = root / 'host state'
         (state / 'status').mkdir(parents=True, mode=0o700)
         (state / 'console').mkdir(mode=0o755)
+        state.chmod(0o755)
         config = {'name': 'selected_project', 'networks': {}, 'services': {'edge': {
             'volumes': [{'type': 'bind', 'source': str(state / 'console'),
                          'target': '/srv/status', 'read_only': True}]}}}
@@ -33,6 +36,8 @@ class StatusTimerTests(unittest.TestCase):
 
         def runner(argv, **options):
             calls.append((argv, options))
+            if argv[0] == 'systemctl':
+                return runner.manager(argv, **options)
             if argv[1:3] == ['context', 'inspect']:
                 return json.dumps([{'Endpoints': {'docker': {'Host': 'unix:///selected.sock'}}}])
             if argv[1:3] == ['info', '--format']:
@@ -40,6 +45,7 @@ class StatusTimerTests(unittest.TestCase):
             if argv[1] == 'compose':
                 return json.dumps(config)
             return ''
+        runner.manager = FakeManager(root / 'units')
         return root, state, calls, runner
 
     def test_exact_edge_selection_is_reconciled_and_systemd_escaped(self):
@@ -111,6 +117,7 @@ class StatusTimerTests(unittest.TestCase):
         (root / '.env').write_text("COMPOSE_PROFILES='blobs,edge'\n")
         install = installer.install
         unit_config = root / 'user-config'
+        runner.manager.unit_dir = unit_config / 'systemd/user'
         argv = ['install_status_timer.py', '--install', '--checkout', str(root),
                 '--env-file', str(root / '.env'), '--compose-project', 'selected_project',
                 '--compose-file', 'compose.yaml', '--compose-file', 'compose.edge.yaml']
@@ -138,20 +145,21 @@ class StatusTimerTests(unittest.TestCase):
                     return runner(argv, **options)
                 if 'enable' in argv:
                     raise Unavailable()
-                return ''
+                return runner(argv, **options)
             installer.install(root, root / '.env', 'selected_project',
                               ['compose.yaml', 'compose.edge.yaml'], ['edge'], None,
                               unit_dir, failed_activation)
         self.assertEqual({path.name for path in unit_dir.iterdir()},
                          {installer.NAME + '.service', installer.NAME + '.timer'})
         activation_calls = []
-        with self.assertRaises(Unavailable):
-            installer.install(root, root / '.env', 'selected_project',
-                              ['compose.yaml', 'compose.edge.yaml'], ['edge'], None,
-                              unit_dir, lambda argv, **options: activation_calls.append(argv) or runner(argv, **options))
-        self.assertFalse(any(call[0] == 'systemctl' for call in activation_calls))
+        before = {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in unit_dir.iterdir()}
+        installer.install(root, root / '.env', 'selected_project',
+                          ['compose.yaml', 'compose.edge.yaml'], ['edge'], None,
+                          unit_dir, lambda argv, **options: activation_calls.append(argv) or runner(argv, **options))
+        self.assertEqual(before, {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in unit_dir.iterdir()})
 
         partial_dir = root / 'partial-units'
+        runner.manager.unit_dir = partial_dir
         original_open = installer.os.open
         def fail_timer(path, flags, *args, **kwargs):
             if path == installer.NAME + '.timer' and flags & os.O_CREAT:
