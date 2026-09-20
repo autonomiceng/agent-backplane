@@ -91,4 +91,17 @@
 	}
 }
 
+# Shared ingress owns TLS; the configured public origin owns auth policy.
+(mode-proxy) {
+    http://:80 {
+        import access-log
+        route {
+            @health path /health
+            respond @health 200
+            import operator-deny
+            import upstream
+        }
+    }
+}
+
 import mode-{$BP_ACCESS_MODE}

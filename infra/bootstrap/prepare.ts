@@ -15,7 +15,8 @@ export async function prepare(argv: string[], env: Environment, run: Runner = do
     "capability-file": { type: "string" }, "compose-project": { type: "string" }, profile: { type: "string", multiple: true },
   } });
   const profiles = [...new Set(values.profile ?? [])];
-  if (profiles.some(p => !["blobs", "compute", "edge"].includes(p)) || !values["capability-file"]) throw new CliError("invalid_arguments", 1);
+  if (profiles.some(p => !["blobs", "compute", "edge", "gateway"].includes(p)) || !values["capability-file"]) throw new CliError("invalid_arguments", 1);
+  if (profiles.includes("edge") && profiles.includes("gateway")) throw new CliError("choose_one_gateway", 1);
   const project = values["compose-project"] ?? "agent-backplane";
   if (!/^[a-z0-9][a-z0-9_-]*$/.test(project)) throw new CliError("invalid_compose_project", 1);
   const path = resolve(values["env-file"] ?? resolve(import.meta.dir, "../../.env"));
@@ -44,6 +45,7 @@ export async function prepare(argv: string[], env: Environment, run: Runner = do
       if (entries[key] === undefined) { entries[key] = value; additions.push(`${key}='${value}'`); }
     }
     const access = resolveAccess(entries, profiles.includes("edge")), url = access.origin;
+    if (profiles.includes("gateway") && access.mode !== "proxy") throw new CliError("gateway_requires_proxy_mode", 1);
     for (const [key, value] of [["BP_ACCESS_MODE", access.mode], ["BP_PUBLIC_URL", url]]) {
       if (key && value && entries[key] === undefined) { entries[key] = value; additions.push(`${key}='${value}'`); }
     }

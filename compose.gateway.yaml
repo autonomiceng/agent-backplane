@@ -1,0 +1,20 @@
+# Internal gateway behind Platform Edge. Standalone installs use compose.edge.yaml.
+services:
+  edge:
+    extends:
+      file: compose.edge.yaml
+      service: edge
+    profiles: !override [gateway]
+    entrypoint: ["caddy"]
+    command: ["run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
+    environment:
+      BP_ACCESS_MODE: proxy
+    ports: !reset []
+
+volumes:
+  edge-data:
+    external: true
+    name: ${BP_VOLUME_PREFIX:-agent-backplane}_edge-data
+  edge-config:
+    external: true
+    name: ${BP_VOLUME_PREFIX:-agent-backplane}_edge-config

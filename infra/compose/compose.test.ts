@@ -105,3 +105,12 @@ test("every merged service uses journald without a Docker file cache or Alloy de
   expect(JSON.stringify(rendered)).not.toMatch(/alloy|json-file|\/var\/log/);
   expect(rendered.services.rustfs.environment.RUSTFS_OBS_LOG_DIRECTORY).toBe("");
 });
+
+ test("internal gateway retains routing without publishing host ports", async () => {
+  const rendered = await config(["compose.gateway.yaml"], "gateway", ["BP_ACCESS_MODE=proxy", "BP_PUBLIC_URL=https://backplane.example.com"]);
+  expect(rendered.services.edge.ports ?? []).toEqual([]);
+  expect(rendered.services.edge.environment.BP_ACCESS_MODE).toBe("proxy");
+  expect(rendered.services.edge.networks.platform.aliases).toEqual(["bp-gateway"]);
+  expect(rendered.services.edge.logging).toEqual({ driver: "journald", options: { "cache-disabled": "true" } });
+  expect(rendered.services.postgres.networks.platform).toBeUndefined();
+});
