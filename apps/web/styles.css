@@ -15,3 +15,5 @@ label { display: block; margin: 1rem 0; }
 input { display: block; box-sizing: border-box; width: 100%; padding: .6rem; margin-top: .3rem; }
 button { padding: .6rem 1rem; }
 [role="alert"] { color: #991b1b; }
+.workspace-list { list-style: none; padding: 0; }
+.workspace-list h3 { margin-top: 0; }
