@@ -40,7 +40,8 @@ class StatusProbeTests(unittest.TestCase):
         projected = probes.capabilities('container', capability_runner)
         self.assertEqual(set(projected), {'files', 'functions'})
         flattened = '\n'.join(' '.join(call) for call in calls)
-        self.assertNotIn('operator-secret-value', flattened)
+        self.assertEqual(calls[-1], ['docker', 'exec', 'container', 'timeout', '-s', 'KILL', '3',
+                                     'bun', '-e', probes.CAPABILITIES_SOURCE])
         self.assertIn('process.env.BP_OPERATIONS_TOKEN', flattened)
         self.assertNotIn('Bun.version', flattened)
         self.assertEqual(probes.configured_image('server', 'server:private@sha256:' + 'a' * 64),
