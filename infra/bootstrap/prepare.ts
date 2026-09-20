@@ -71,7 +71,7 @@ export async function prepare(argv: string[], env: Environment, run: Runner = do
       child.BP_WORKERD_HOST_IMAGE_ID = identity.imageId;
     }
     for (const key of keys) if (entries[key] === undefined) {
-      // RustFS service-account secrets accept at most 40 characters.
+      // RustFS service-account creation accepts at most 40 characters.
       const bytes = key === "BP_RUSTFS_ROOT_USER" || key === "BP_BLOB_S3_ACCESS_KEY" ? 10 : key === "BP_BLOB_S3_SECRET_KEY" ? 20 : 32;
       entries[key] = randomBytes(bytes).toString("hex");
       additions.push(`${key}=${entries[key]}`);

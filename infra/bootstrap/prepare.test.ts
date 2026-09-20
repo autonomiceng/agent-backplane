@@ -55,6 +55,10 @@ test("prepare preserves complete image references and rejects ambiguous server a
     expect(prepared).toMatch(/^BP_RUSTFS_ROOT_PASSWORD=[a-f0-9]{64}$/m);
     await prepare(args, {}, runner);
     expect(await readFile(path, "utf8")).toBe(prepared);
+    const legacy = prepared.replace(/^BP_BLOB_S3_SECRET_KEY=.*$/m, `BP_BLOB_S3_SECRET_KEY=${"a".repeat(64)}`);
+    await Bun.write(path, legacy);
+    await prepare(args, {}, runner);
+    expect(await readFile(path, "utf8")).toBe(legacy);
     await Bun.write(path, prepared + "BP_SERVER_IMAGE=other\n");
     await expect(prepare(args, {}, runner)).rejects.toMatchObject({ error: "env_repair_required" });
   } finally { await rm(directory, { recursive: true, force: true }); }

@@ -139,7 +139,7 @@ async function credentialsScenario() {
   await assertPolicy(); await allowed(); await denied();
   const before = await accountKeys(); assert.deepEqual(before, [scopedPair()[0]]);
   assert.equal(await bootstrap(), 0); assert.deepEqual(await accountKeys(), before); await assertPolicy();
-  const oldPair = scopedPair(), rotated = crypto.randomUUID();
+  const oldPair = scopedPair(), rotated = randomBytes(20).toString("hex");
   const broad = { Version: "2012-10-17", Statement: [{ Effect: "Allow", Action: ["s3:*"], Resource: ["arn:aws:s3:::*"] }] };
   await checked("POST", `${admin}update-service-account${query}`, JSON.stringify({ newPolicy: broad }));
   await assertPolicy(broad);
@@ -150,6 +150,12 @@ async function credentialsScenario() {
     assert.equal(await checked("GET", `/${foreign}/probe`), "broadened access");
   } finally { await checked("DELETE", `/${foreign}/probe`); await checked("DELETE", `/${foreign}`); }
   try {
+    assert.notEqual(await bootstrap({ ...Bun.env,
+      BP_BLOB_S3_ACCESS_KEY: randomBytes(10).toString("hex"),
+      BP_BLOB_S3_SECRET_KEY: randomBytes(32).toString("hex"),
+    }), 0, "overlong new service-account secret accepted");
+    assert.deepEqual(await accountKeys(), before);
+    assert.equal((await signed("GET", `/${bucket()}?list-type=2`, "", oldPair)).status, 200);
     Bun.env.BP_BLOB_S3_SECRET_KEY = rotated;
     assert.equal(await bootstrap(), 0); await assertPolicy(); await allowed(); await denied();
     assert.equal((await signed("GET", `/${bucket()}?list-type=2`, "", oldPair)).status, 403);
