@@ -88,7 +88,7 @@ export function handoffEvidence(prepared: Obj) {
   if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(runId)) throw new Error("run_id_invalid");
   if (!/^\d+$/.test(eventCursor)) throw new Error("event_cursor_invalid");
   if (typeof provenance.fileUploadedInRun !== "boolean") throw new Error("file_uploaded_in_run_invalid");
-  if (text(file.mediaType, "media_type") !== text(prepared.mediaType, "media_type")) throw new Error("media_type_mismatch");
+  if (text(file.mediaType, "file_media_type") !== text(prepared.mediaType, "source_media_type")) throw new Error("media_type_mismatch");
   return { file, collector, provenance, runId, eventCursor };
 }
 async function prepare(transcriptPath: string, metadataPath: string, outputPath: string) {

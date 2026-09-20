@@ -55,7 +55,7 @@ bp queue create-queue --body - <<'JSON'
 JSON
 ```
 
-Run the fixture first. The prepared manifest is private runtime state and records the returned File ID. Re-running `prepare` with that output path verifies and reuses the exact File. Source metadata may also supply `existingFileId`; the collector accepts it only after downloading it and matching the local byte count and SHA-256. The `handoff` command never uploads and submits the exact transaction body twice.
+Run the fixture first. The prepared manifest is private runtime state and records the returned File ID. Re-running `prepare` with that output path verifies and reuses the exact File and refuses changed source metadata. If the prepared manifest is lost, its upload key is already taken: set `existingFileId` in the source metadata to reuse the stored File. The collector accepts it only after downloading it and matching the local byte count and SHA-256. The `handoff` command never uploads and submits the exact transaction body twice.
 
 ```bash
 bun "$BACKPLANE_REPO/examples/talk-digest/collector.ts" prepare \
