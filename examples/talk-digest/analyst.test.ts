@@ -51,6 +51,9 @@ test("completion retry distinguishes pending work from the identical completed d
     digest_principal_id: expected.principalId, digest_run_id: expected.runId };
   expect(completionDecision(completed, expected)).toBe("completed");
   expect(() => completionDecision({ ...completed, digest_text: "different" }, expected)).toThrow("completed_result_mismatch");
+  expect(() => completionDecision({ ...completed, digest_run_id: "00000000-0000-0000-0000-000000000099" }, expected))
+    .toThrow("completed_result_mismatch");
+  expect(() => completionDecision({ ...completed, transcript_sha256: "b".repeat(64) }, expected)).toThrow("source_row_mismatch");
 });
 
 test("invocation audit search crosses full pages, terminates, and proof events exclude metadata", async () => {

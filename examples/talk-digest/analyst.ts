@@ -36,7 +36,7 @@ type CompletionExpected = { sourceFileId: string; sourceSha256: string; sourceBy
 export function completionDecision(row: Obj, expected: CompletionExpected) {
   const sourceMatches = row.transcript_file_id === expected.sourceFileId && row.transcript_sha256 === expected.sourceSha256
     && row.transcript_bytes === String(expected.sourceBytes);
-  if (!sourceMatches) throw new Error("completed_source_mismatch");
+  if (!sourceMatches) throw new Error("source_row_mismatch");
   if (row.analysis_state === "pending" && row.digest_count === 0) return "pending" as const;
   const contentMatches = row.analysis_state === "complete" && row.digest_count === 1 && row.digest_text === expected.digest
     && same(json(row.key_points, "key_points"), expected.points) && same(json(row.analysis_metadata, "analysis_metadata"), expected.metadata)
@@ -193,7 +193,7 @@ async function complete(transcriptPath: string, statePath: string, summaryPath: 
     let proof: Obj | undefined;
     try { proof = await readObject(proofPath, "proof"); }
     catch (error) { if (!(typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT")) throw error; }
-    if (!proof) { console.log(JSON.stringify({ sourceId, alreadyCompleted: true, reused: false, proofAvailable: false })); return; }
+    if (!proof) throw new Error("completed_proof_unavailable");
     const transaction = object(proof.transaction, "proof_transaction");
     if (proof.sourceId !== sourceId || proof.sourceFileId !== file.id || proof.analystPrincipalId !== expected.principalId
       || proof.analystRunId !== expected.runId || transaction.expectedFailure !== "assertion_failed" || transaction.rollbackState !== "pending"
@@ -224,8 +224,7 @@ async function complete(transcriptPath: string, statePath: string, summaryPath: 
   if (!same(first, retry)) throw new Error("successful_retry_response_mismatch");
   const committed = object(first, "transaction");
   if (committed.committed !== true || !Array.isArray(committed.results) || committed.results.length !== 3) throw new Error("transaction_not_committed");
-  const verified = object(await bp(["sql", "execute-sql", "--body", "-"], { statement: "SELECT count(*)::int AS result_count FROM talk_sources s JOIN talk_digests d USING(source_id) WHERE s.source_id=$1 AND s.analysis_state='complete'", params: [sourceId] }), "result_check");
-  if (object((verified.rows as Json[])?.[0], "result_row").result_count !== 1) throw new Error("result_count_mismatch");
+  if (completionDecision(await inspect(), expected) !== "completed") throw new Error("result_count_mismatch");
   const html = renderPage(source, authored, collectionDate); await Bun.write(htmlPath, html);
   const upload = object(await bp(["blobs", "put-blob", "--key", `talk-digest/${keySegment(demoRun)}/${keySegment(sourceId, ".html")}`, "--x-backplane-sha256", sha256(html), "--file", htmlPath]), "output_file");
   const audit = object(await bp(["events", "read-audit", "--run-id", text(object(state.analyst, "analyst").runId, "run_id"), "--after", "0", "--limit", "500"]), "audit");
