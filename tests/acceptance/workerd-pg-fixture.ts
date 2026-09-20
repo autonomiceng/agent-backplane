@@ -76,4 +76,3 @@ export async function workerdPgFixture() {
     await pool.close(); await cleanupFixtures(); await rm(directory, { recursive: true, force: true }); throw error;
   }
 }
-

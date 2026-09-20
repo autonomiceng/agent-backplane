@@ -1,5 +1,5 @@
 // Upgrade proof uses historical control rows with bound provenance; no Workspace or queue writes.
-import { expect, test } from "bun:test";
+import { afterAll, expect, test } from "bun:test";
 import { loadMigrations, migrate } from "../../db/migrations.ts";
 import { sqlMigrationRunner } from "../../db/sql-migration-runner.ts";
 import { createPool } from "../../apps/server/platform/pool.ts";
@@ -12,7 +12,7 @@ import type { ComputeLauncher } from "../../apps/server/compute/compute-launcher
 test("migration 33 preserves legacy history, refuses legacy execution and activates a replacement", async () => {
   const url = await migratedDatabase(undefined, 32), pool = createPool(url), admin = createPool(adminUrl(url));
   try {
-    const fixture = await principalFixture(pool);
+    const fixture = await principalFixture(pool, {}, afterAll);
     const { workspaceId, principalId, cookie } = fixture;
     const key = await issueKey(fixture.app, cookie, workspaceId, principalId);
     const runId = await createRun(fixture.app, key, workspaceId);
@@ -51,7 +51,7 @@ test("migration 33 preserves legacy history, refuses legacy execution and activa
         return { ok: true, value: evidence.artifact };
       },
       async invoke() { invocations++; throw Error("legacy deployment must not reach dispatch"); } };
-    const app = await testApp(pool, { compute });
+    const app = await testApp(pool, { compute }, afterAll);
     const headers = { authorization: `Bearer ${key}`, "x-backplane-run": runId, "content-type": "application/json" };
     const base = `http://localhost/api/v1/workspaces/${workspaceId}/functions/legacy`;
     const post = (path: string, body: unknown) => app.handle(new Request(base + path, { method: "POST", headers, body: JSON.stringify(body) }));
