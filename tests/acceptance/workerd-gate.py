@@ -108,7 +108,8 @@ finally:
             if observed != owner:
                 raise RuntimeError('refusing unowned cleanup')
             docker('rm', '--force', container)
-        except Exception:
-            print('Owned runtime cleanup failed; inspect captured container ' + container, file=sys.stderr, flush=True)
+        except Exception as error:
+            reason = 'ownership verification refused' if str(error) == 'refusing unowned cleanup' else 'Docker cleanup command failed'
+            print('Owned runtime cleanup failed (' + reason + '); inspect captured container ' + container, file=sys.stderr, flush=True)
             if primary_error is None:
                 raise

@@ -89,7 +89,6 @@ test("recovery bounds a contended batch, advances to another Workspace, and late
     await acquired.promise;
     const started = performance.now();
     let otherRepaired = await reconcileInvocations(pool);
-    expect(otherRepaired).toBeGreaterThanOrEqual(0);
     expect(otherRepaired).toBeLessThanOrEqual(1);
     expect(performance.now() - started).toBeLessThan(6500);
     expect(poolSnapshot(pool)).toEqual({ inUse: 1, waiting: 0 });
@@ -98,10 +97,10 @@ test("recovery bounds a contended batch, advances to another Workspace, and late
     expect(await pool<{ kind: string }[]>`SELECT e.kind FROM audit.events e JOIN control.runs r ON r.id=e.run_id
       WHERE r.invocation_deployment_id=${f.deploymentId} AND e.kind LIKE 'function.%'`).toEqual([]);
     const fairDeadline = performance.now() + 2000;
-    do {
+    while (!otherRepaired && performance.now() < fairDeadline) {
       otherRepaired += await reconcileInvocations(pool);
       if (!otherRepaired) await Bun.sleep(20);
-    } while (!otherRepaired && performance.now() < fairDeadline);
+    }
     expect(otherRepaired).toBe(1);
     expect(await pool<{ kind: string }[]>`SELECT kind FROM audit.events WHERE run_id=${healthy.runIds[0]!}`).toEqual([{ kind: "function.fail" }]);
     release.resolve(); await blocker;
