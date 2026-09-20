@@ -3,6 +3,7 @@ import { chmod, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { prepare, resolveRustfsConsole, statusRecorder, type Runner } from "./prepare.ts";
+import { record as isRecord } from "../../packages/cli/runtime/http.ts";
 import { resolveAccess } from "../compose/validate-edge.ts";
 import { defaultWorkerdBinary } from "./workerd-image.ts";
 
@@ -24,24 +25,28 @@ const fakeRunner: Runner = async (args, env) => {
   }
   if (args.includes("config")) {
     const environment = { BP_BLOB_BACKEND: env.COMPOSE_PROFILES?.split(",").includes("blobs") ? "s3" : "filesystem" };
-    return JSON.stringify({ services: { server: { environment }, "storage-init": { environment } } });
+    return JSON.stringify({ services: { server: { environment: { ...environment, BP_COMPUTE_URL: env.COMPOSE_PROFILES?.split(",").includes("compute") ? "http://workerd:8080" : "" } }, "storage-init": { environment } } });
   }
+  if (args.some(arg => arg.includes("/health/operations"))) return JSON.stringify({ status: "degraded", capabilities: {
+    files: { state: "healthy", backend: env.COMPOSE_PROFILES?.split(",").includes("blobs") ? "s3" : "filesystem", observedAt: new Date().toISOString() },
+    functions: { state: "healthy", backend: "workerd", observedAt: new Date().toISOString() },
+  } });
   return args.some(arg => arg.includes("curl")) ? JSON.stringify({ enrollment: { state: "claimed" } }) : "";
 };
 
-test("prepare launches root compose without the core profile", async () => {
+test("prepare launches minimal root compose without the core profile", async () => {
   const directory = await mkdtemp(join(tmpdir(), "bp-prepare-compose-"));
   const calls: string[][] = [];
   const runner: Runner = async (args, env) => {
     calls.push(args);
     if (args[0] === "context") return "unix:///var/run/docker.sock";
     if (args[0] === "volume") return "";
-    if (args.some(arg => arg.includes("curl"))) return JSON.stringify({ enrollment: { state: "claimed" } });
+    if (args.some(arg => arg.includes("/health/ready"))) return JSON.stringify({ enrollment: { state: "claimed" } });
     return fakeRunner(args, env);
   };
   try {
     await prepare([
-      "--env-file", join(directory, ".env"),
+      "--mode", "minimal", "--env-file", join(directory, ".env"),
       "--backup-dir", directory,
       "--public-url", "http://localhost:3000",
       "--capability-file", join(directory, "capability"),
@@ -73,7 +78,7 @@ test("prepare preserves complete image references and rejects ambiguous server a
   };
   try {
     await Bun.write(path, images);
-    const args = ["--env-file", path, "--backup-dir", directory, "--capability-file", join(directory, "capability"), "--profile", "blobs"];
+    const args = ["--env-file", path, "--backup-dir", directory, "--capability-file", join(directory, "capability"), "--profile", "blobs", "--profile", "compute"];
     await prepare(args, {}, runner);
     const prepared = await readFile(path, "utf8");
     expect(prepared).toMatch(/^BP_BLOB_S3_SECRET_KEY='[a-f0-9]{40}'$/m);
@@ -173,7 +178,7 @@ test("console validates complete authorities, separate origins and literal opera
 test("preparation emits standalone domain and proxy authority routing without changing browser authentication", async () => {
   const directory = await mkdtemp(join(tmpdir(), "bp-console-routing-")), path = join(directory, ".env");
   const runner = fakeRunner;
-  const args = ["--env-file", path, "--backup-dir", directory, "--capability-file", join(directory, "capability"), "--profile", "blobs"];
+  const args = ["--env-file", path, "--backup-dir", directory, "--capability-file", join(directory, "capability"), "--profile", "blobs", "--profile", "compute"];
   try {
     for (const mode of ["local", "public"]) {
       await Bun.write(path, `BP_ACCESS_MODE=${mode}\nBP_PUBLIC_DOMAIN=example.com\nBP_HTTPS_PORT=8443\nBP_RUSTFS_CONSOLE=true\n`);
@@ -260,7 +265,7 @@ test("status recorder exposes only stable diagnostics and reports a missing Pyth
 test("prepare records bootstrap unavailable before launch and healthy only after readiness custody", async () => {
   const directory = await mkdtemp(join(tmpdir(), "bp-prepare-record-"));
   const path = join(directory, ".env"), capability = join(directory, "capability"), records: string[][] = [];
-  const args = ["--env-file", path, "--backup-dir", directory, "--capability-file", capability];
+  const args = ["--mode", "minimal", "--env-file", path, "--backup-dir", directory, "--capability-file", capability];
   const record = async (recordArgs: string[]) => {
     if (recordArgs.at(-1) === "healthy") expect(await readFile(capability, "utf8")).toMatch(/^[a-f0-9]{64}\n$/);
     records.push(recordArgs);
@@ -268,7 +273,7 @@ test("prepare records bootstrap unavailable before launch and healthy only after
   const runner: Runner = async (composeArgs, env) => {
     if (composeArgs[0] === "context") return "unix:///var/run/docker.sock";
     if (composeArgs[0] === "volume") return "";
-    if (composeArgs.some(arg => arg.includes("curl"))) return JSON.stringify({ enrollment: { state: "pending" } });
+    if (composeArgs.some(arg => arg.includes("/health/ready"))) return JSON.stringify({ enrollment: { state: "pending" } });
     if (composeArgs.at(-1) === "/data/enrollment/capability") return `${"a".repeat(64)}\n`;
     return fakeRunner(composeArgs, env);
   };
@@ -302,32 +307,139 @@ async function selectionFixture(check: (fixture: {
 }
 const mutations = (calls: string[][]) => calls.filter(args => (args[0] === "volume" || args[0] === "network") && args[1] === "create" || args.includes("up"));
 
-test("fresh default and explicit profiles persist native Compose selection", async () => {
-  for (const profiles of [[], ["blobs"], ["compute"], ["edge"], ["gateway"]]) await selectionFixture(async ({ path, args, runner, record, calls }) => {
-    await prepare([...args, ...profiles.flatMap(p => ["--profile", p]),
-      ...(profiles.includes("gateway") ? ["--access-mode", "proxy", "--public-url", "https://example.test"] : [])], {}, runner, record);
+test("fresh full and minimal save native Compose selections, including independently selected ingress", async () => {
+  for (const mode of [undefined, "full", "minimal"]) for (const ingress of [undefined, "edge", "gateway"]) await selectionFixture(async ({ path, args, runner, record, calls }) => {
+    await prepare([...args, ...(mode ? ["--mode", mode] : []), ...(ingress ? ["--profile", ingress] : []),
+      ...(ingress === "gateway" ? ["--access-mode", "proxy", "--public-url", "https://example.test"] : [])], {}, runner, record);
+    const profiles = [...(mode === "minimal" ? [] : ["blobs", "compute"]), ...(ingress ? [ingress] : [])];
     const saved = await readFile(path, "utf8"), root = resolve(import.meta.dir, "../..");
     expect(saved).toContain("COMPOSE_PROJECT_NAME='agent-backplane'");
     expect(saved).toContain(`COMPOSE_PROFILES='${profiles.join(",")}'`);
-    if (profiles.includes("compute")) expect(saved).not.toContain("BP_WORKERD_IMAGE=");
+    expect(saved).not.toContain("BP_WORKERD_IMAGE=");
     expect(saved).toContain(`COMPOSE_FILE='${[join(root, "compose.yaml"), ...profiles.map(p => join(root, `compose.${p}.yaml`))].join(":")}'`);
-    expect(saved).toContain(`BP_BLOB_BACKEND='${profiles.includes("blobs") ? "s3" : "filesystem"}'`);
+    expect(saved).toContain(`BP_BLOB_BACKEND='${mode === "minimal" ? "filesystem" : "s3"}'`);
+    expect(saved.includes("BP_COMPUTE_TOKEN=")).toBe(mode !== "minimal");
+    expect(calls.some(call => call[0] === "build")).toBe(mode !== "minimal");
+    expect(calls.some(call => call[0] === "create")).toBe(mode !== "minimal");
     expect(calls.findIndex(call => call.includes("config"))).toBeLessThan(calls.findIndex(call => call[0] === "volume" && call[1] === "create"));
+  });
+  for (const source of [undefined, "# retain operator settings\nBP_WORKERD_IMAGE=\n"]) await selectionFixture(async ({ directory, path, args, runner, record, calls, records }) => {
+    if (source !== undefined) await writeFile(path, source);
+    await expect(prepare(args, {}, async (command, env) => {
+      const result = await runner(command, env);
+      if (command[0] === "build") throw Error("artifact build failed");
+      return result;
+    }, record)).rejects.toThrow("artifact build failed");
+    expect(await readFile(path, "utf8").catch(error => { if (error.code === "ENOENT") return undefined; throw error; })).toBe(source);
+    expect(mutations(calls)).toEqual([]); expect(records).toEqual([]);
+    expect(calls.findIndex(call => call.includes("config"))).toBeLessThan(calls.findIndex(call => call[0] === "build"));
+    await expect(lstat(join(directory, "data"))).rejects.toMatchObject({ code: "ENOENT" });
+    calls.length = 0;
+    await prepare([...args, "--mode", "minimal", "--profile", ""], {}, runner, record);
+    expect(await readFile(path, "utf8")).toContain("COMPOSE_PROFILES=''");
+    expect(await readFile(path, "utf8")).toContain("BP_BLOB_BACKEND='filesystem'");
+    expect(calls.some(call => call[0] === "build" || call[0] === "create")).toBe(false);
   });
 });
 
-test("omitted flags reuse project, profiles, volumes, secrets and image overrides", async () => {
-  await selectionFixture(async ({ path, args, runner, record, calls }) => {
-    await writeFile(path, "BP_VOLUME_PREFIX=original\nBP_PLATFORM_NETWORK=shared\nBP_SERVER_IMAGE=local:experiment\n");
-    await prepare([...args, "--compose-project", "original", "--profile", "blobs"], {}, runner, record);
+test("complete full and minimal selections preserve project, files, secrets and settings on rerun", async () => {
+  for (const mode of ["full", "minimal"]) await selectionFixture(async ({ path, args, runner, record, calls }) => {
+    await writeFile(path, "BP_VOLUME_PREFIX=original\nBP_PLATFORM_NETWORK=shared\nBP_SERVER_IMAGE=local:experiment\nBP_WORKERD_IMAGE=local:workerd\n");
+    await prepare([...args, "--mode", mode, "--compose-project", "original"], {}, runner, record);
     const saved = await readFile(path, "utf8");
     calls.length = 0;
     await prepare(args, {}, runner, record);
+    await prepare([...args, "--mode", mode], {}, runner, record);
     expect(await readFile(path, "utf8")).toBe(saved);
     const up = calls.find(call => call.includes("up"));
-    expect(up).toContain("original"); expect(up).toContain("blobs"); expect(up).toContain("--no-build");
+    expect(up).toContain("original"); expect(up).toContain("--no-build");
+    expect(up?.includes("compute")).toBe(mode === "full");
+    expect(calls.some(call => call[0] === "build")).toBe(false);
     expect(calls.filter(call => call[0] === "volume" && call[1] === "create").every(call => call.at(-1)?.startsWith("original_"))).toBe(true);
     expect(calls.find(call => call[0] === "network" && call[1] === "inspect")?.at(-1)).toBe("shared");
+  });
+});
+
+test("conflicting modes and shell selectors refuse before persisted or runtime mutation", async () => {
+  for (const mode of ["full", "minimal"]) await selectionFixture(async ({ path, args, runner, record, calls, records }) => {
+    await prepare([...args, "--mode", mode], {}, runner, record);
+    const saved = await readFile(path, "utf8");
+    calls.length = 0; records.length = 0;
+    await expect(prepare([...args, "--mode", mode === "full" ? "minimal" : "full"], {}, runner, record))
+      .rejects.toMatchObject({ error: "mode_conflict_requires_explicit_upgrade_or_migration" });
+    expect(calls).toEqual([]); expect(records).toEqual([]);
+    expect(await readFile(path, "utf8")).toBe(saved);
+  });
+  await selectionFixture(async ({ path, args, runner, record, calls, records }) => {
+    for (const env of [{ COMPOSE_PROFILES: "" }, { COMPOSE_PROFILES: "blobs" }, { COMPOSE_FILE: resolve(import.meta.dir, "../../compose.yaml") }]) {
+      await expect(prepare(args, env, runner, record)).rejects.toMatchObject({ error: "selection_conflict" });
+    }
+    await expect(prepare([...args, "--mode", "minimal", "--profile", "compute"], {}, runner, record))
+      .rejects.toMatchObject({ error: "mode_conflict_requires_explicit_upgrade_or_migration" });
+    await expect(prepare([...args, "--profile", ""], {}, runner, record)).rejects.toMatchObject({ error: "invalid_arguments", exit: 1 });
+    expect(await prepare(["--help"], {})).toContain("Fresh --profile '' requires --mode minimal");
+    expect(calls).toEqual([]); expect(records).toEqual([]);
+    await expect(lstat(path)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+});
+
+test("selected capability failures cannot publish healthy bootstrap or enrollment success", async () => {
+  for (const capability of ["files", "functions"]) for (const fault of ["unavailable", "unknown", "disabled", "wrong-backend", "stale", "missing", "invalid-json", "timeout", "unsupported"]) {
+    await selectionFixture(async ({ directory, args, runner, record, records, calls }) => {
+      let elapsed = 0, attempts = 0;
+      await expect(prepare(args, {}, async (command, env, timeoutMs) => {
+        const response = await runner(command, env);
+        if (!command.some(arg => arg.includes("/health/operations"))) return response;
+        attempts++;
+        expect(timeoutMs).toBe(Math.min(10_000, 30_000 - elapsed));
+        expect(command.at(-1)).toContain("--max-time 5");
+        if (fault === "timeout") { elapsed += timeoutMs ?? 0; throw Error("deadline"); }
+        if (fault === "invalid-json") return "invalid";
+        const body: unknown = JSON.parse(response);
+        if (!isRecord(body) || !isRecord(body.capabilities)) throw Error("invalid fixture");
+        if (fault === "unsupported") { delete body.capabilities; return JSON.stringify(body); }
+        const observation = body.capabilities[capability];
+        if (!isRecord(observation)) throw Error("missing fixture capability");
+        if (fault === "wrong-backend") observation.backend = "other";
+        else if (fault === "stale") observation.observedAt = new Date(Date.now() - 60_000).toISOString();
+        else if (fault === "missing") delete body.capabilities[capability];
+        else observation.state = fault;
+        return JSON.stringify(body);
+      }, record, { now: () => elapsed, sleep: async ms => { elapsed += ms; } })).rejects.toMatchObject({
+        error: fault === "unsupported" ? "operations_capabilities_unsupported" : "selected_capabilities_not_ready", exit: 2,
+      });
+      expect(attempts).toBe(fault === "unsupported" || fault === "invalid-json" ? 1 : fault === "timeout" ? 2 : 4);
+      expect(elapsed).toBe(fault === "timeout" ? 30_000 : fault === "unsupported" || fault === "invalid-json" ? 0 : 15000);
+      expect(calls.some(call => call.at(-1) === "/data/enrollment/capability")).toBe(false);
+      await expect(lstat(join(directory, "capability"))).rejects.toMatchObject({ code: "ENOENT" });
+      expect(records.filter(call => call.includes("--state")).map(call => call.at(-1))).toEqual(["unavailable"]);
+    });
+  }
+});
+
+test("capability polling outlasts a cached failure before exporting pending enrollment", async () => {
+  await selectionFixture(async ({ directory, args, runner, record, records }) => {
+    let attempts = 0, elapsed = 0;
+    const sleeps: number[] = [];
+    const output = await prepare(args, {}, async (command, env) => {
+      const response = await runner(command, env);
+      if (command.some(arg => arg.includes("/health/ready"))) return JSON.stringify({ enrollment: { state: "pending" } });
+      if (command.some(arg => arg.includes("/health/operations"))) {
+        attempts++;
+        expect(records.some(call => call.at(-1) === "healthy")).toBe(false);
+        await expect(lstat(join(directory, "capability"))).rejects.toMatchObject({ code: "ENOENT" });
+        if (elapsed < 5000) return JSON.stringify({ capabilities: { files: { state: "unknown" }, functions: { state: "unknown" } } });
+      }
+      if (command.at(-1) === "/data/enrollment/capability") {
+        expect(attempts).toBe(2);
+        return `${"a".repeat(64)}\n`;
+      }
+      return response;
+    }, record, { now: () => elapsed, sleep: async ms => { sleeps.push(ms); elapsed += ms; } });
+    expect(sleeps).toEqual([5000]);
+    expect(output).toContain("bp bootstrap");
+    expect(await readFile(join(directory, "capability"), "utf8")).toBe(`${"a".repeat(64)}\n`);
+    expect(records.filter(call => call.includes("--state")).map(call => call.at(-1))).toEqual(["unavailable", "healthy"]);
   });
 });
 
@@ -393,7 +505,7 @@ test("conflicting selectors, ambiguous assignments and backend changes refuse be
     expect(calls).toEqual([]);
     expect(records).toEqual([]);
     await expect(lstat(path)).rejects.toMatchObject({ code: "ENOENT" });
-    await prepare(args, { COMPOSE_PROJECT_NAME: "agent-backplane", COMPOSE_FILE: base, COMPOSE_PROFILES: "" }, runner, record);
+    await prepare([...args, "--mode", "minimal"], { COMPOSE_PROJECT_NAME: "agent-backplane", COMPOSE_FILE: base, COMPOSE_PROFILES: "" }, runner, record);
     const saved = await readFile(path, "utf8");
     for (const flags of [["--compose-project", "other"], ["--profile", "blobs"], ["--profile", "edge", "--profile", "gateway"]]) {
       calls.length = 0; records.length = 0;
@@ -456,7 +568,7 @@ test("interruption after atomic env publication retains selection and identities
       if (args.includes("create") && args[0] === boundary || args.includes(boundary) && boundary === "up") {
         saved = await readFile(path, "utf8");
         expect(saved).toContain("COMPOSE_PROJECT_NAME='retained'");
-        expect(saved).toContain("COMPOSE_PROFILES='blobs'");
+        expect(saved).toContain("COMPOSE_PROFILES='blobs,compute'");
         expect(saved).toMatch(/BP_AUTH_SECRET='[a-f0-9]{64}'/);
         throw Error("interrupted");
       }
