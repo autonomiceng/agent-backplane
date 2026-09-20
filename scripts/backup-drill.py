@@ -207,7 +207,7 @@ def drill(offline=False, s3=False):
                 if offline:
                     stack.dc('stop', 'server')
                 source_proof = inspect_storage(stack) if s3 else None
-                stack.helper('chmod 0700 /backup/backups')
+                stack.helper('chown "$1:$2" /backup/backups; chmod 0700 /backup/backups', str(host_uid), str(host_gid))
                 checkpoint = backup(stack, offline=offline, fenced=True)
                 receipt = json.loads(stack.dc(*health_probe))
                 doc = json.loads((checkpoint / 'manifest.json').read_text())
