@@ -9,7 +9,7 @@ op=runpy.run_path('storage-migrate.py'); g=op['stack_from_env'].__globals__
 with tempfile.TemporaryDirectory() as root:
  p=Path(root); env=p/'install.env'; base=str(p/'compose.yaml'); overlay=str(p/'custom overlay.yaml')
  os.environ['COMPOSE_FILE']='retained-parent-selection'
- def boundary(path): return SimpleNamespace(compose=[], selected=os.environ['COMPOSE_FILE'], env_file=path)
+ def boundary(path, *, compose_files): return SimpleNamespace(compose=[arg for name in compose_files for arg in ('-f',name)], selected=os.environ['COMPOSE_FILE'], env_file=path)
  g['Stack']=boundary
  def selected(assignment, files):
   source="COMPOSE_PROJECT_NAME='agent-backplane'\n"+assignment+"\nCOMPOSE_PROFILES=''\n"
@@ -143,6 +143,31 @@ with tempfile.TemporaryDirectory() as root:
   assert op['engine'](target,args.state,'prepare',state['id'],state['target'],checkpoint,budget=7100)=={'phase':'copying'}
  finally: g['subprocess'].run=original_run
  assert not (args.state/'request.json').exists() and not (args.state/'helper.json').exists()
+`], { cwd: import.meta.dir, stdout: "pipe", stderr: "pipe", env: { ...Bun.env, PYTHONDONTWRITEBYTECODE: "1" } });
+  const [out, err] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text()]);
+  expect(await child.exited, err).toBe(0);
+  expect(out + err).toBe("");
+});
+
+test("migration renders its initial model with the selected file order and path base", async () => {
+  const child = Bun.spawn(["python3", "-c", `import json, runpy, tempfile
+from pathlib import Path
+from checkpoint import Stack
+op=runpy.run_path('storage-migrate.py'); calls=[]
+class Rendered(Exception): pass
+class RenderProbe(Stack):
+ def dc(self, *args):
+  calls.append((self.compose, args))
+  raise Rendered()
+op['stack_from_env'].__globals__['Stack']=RenderProbe
+with tempfile.TemporaryDirectory() as temporary:
+ root=Path(temporary); selected=root/'external'; selected.mkdir()
+ env=root/'private.env'; first=selected/'base.yaml'; second=root/'override.yaml'
+ env.write_text("COMPOSE_FILE='"+str(first)+':'+str(second)+"'\\n"); env.chmod(0o600)
+ try: op['stack_from_env'](env)
+ except Rendered: pass
+ else: raise AssertionError('initial render not reached')
+ assert calls==[(['docker','compose','--project-directory',str(selected),'--env-file',str(env),'-f',str(first),'-f',str(second)], ('config','--format','json'))]
 `], { cwd: import.meta.dir, stdout: "pipe", stderr: "pipe", env: { ...Bun.env, PYTHONDONTWRITEBYTECODE: "1" } });
   const [out, err] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text()]);
   expect(await child.exited, err).toBe(0);
