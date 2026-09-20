@@ -15,7 +15,7 @@ target LSN, checksums and completion time, never resolved environment values.
 Restore needs the original database passwords and `BP_AUTH_SECRET`.
 
 ```sh
-scripts/backup.sh --env-file .env
+scripts/backup.sh --fenced --env-file .env
 # Reports $BP_BACKUP_DIR/backups/YYYYMMDDTHHMMSSffffffZ
 ```
 
@@ -238,9 +238,11 @@ data directory. Socket-only URLs and relocated or symlinked configuration are re
 before capture. These constraints do not alter the core Compose Checkpoint interface.
 
 For storage adoption or recovery when startup is blocked, stop server and edge
-writers, then use `bash scripts/backup.sh --offline --env-file PATH` with the same
+writers, then use `bash scripts/backup.sh --offline --fenced --env-file PATH` with the same
 Compose configuration. Offline capture requires PostgreSQL running and leaves the
 application stopped. It preserves hidden storage markers, publication candidates,
 and retained staging/orphan bytes. Store archives dereference hard links into
 regular entries for safe restore. Follow the [storage recovery procedure](../../docs/operations/storage-identity.md)
 before resuming the server. Automated S3 capture is still unsupported.
+
+Compose Checkpoints require `--fenced` to attest that external writers and mutating helpers remain stopped for the entire command. Local S3 capture and fresh-store restore use the [qualified RustFS procedure](../../docs/operations/s3-checkpoints.md); unsupported S3 layouts refuse before capture.
