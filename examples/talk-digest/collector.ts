@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { mkdtemp, open, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
+import { keySegment } from "./key-segment.ts";
 
 const WORKSPACE = process.env.DEMO_WORKSPACE_ID;
 const PRINCIPAL = process.env.DEMO_PRINCIPAL_ID;
@@ -94,12 +95,11 @@ async function prepare(transcriptPath: string, metadataPath: string, outputPath:
   const run = object(await bp(["run", "new", "--body", "-"], {
     harness: process.env.BP_HARNESS!, model: process.env.BP_MODEL!, label: process.env.BP_RUN_LABEL!,
   }), "run");
-  const keyPart = (value: string) => value.replaceAll(/[^A-Za-z0-9._-]/g, "_").slice(0, 64);
   let id: string;
   if (source.existingFileId !== undefined) {
     id = text(source.existingFileId, "existingFileId");
   } else {
-    const upload = object(await bp(["blobs", "put-blob", "--key", `talk-digest/${keyPart(text(source.demoRun, "demoRun"))}/${keyPart(text(source.sourceId, "sourceId"))}.txt`,
+    const upload = object(await bp(["blobs", "put-blob", "--key", `talk-digest/${keySegment(text(source.demoRun, "demoRun"))}/${keySegment(text(source.sourceId, "sourceId"), ".txt")}`,
       "--x-backplane-sha256", hash, "--file", transcriptPath]), "upload");
     id = text(upload.id, "file_id");
     if (upload.sha256 !== hash || upload.size !== bytes.length) throw new Error("upload_metadata_mismatch");
