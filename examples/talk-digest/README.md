@@ -19,9 +19,9 @@ VALUES ($1, $2, $3::jsonb, $4::jsonb, CURRENT_TIMESTAMP);
 
 Both SQL operations use `expectRows: 1`; the following operation acknowledges the Delivery with its live Receipt. Any failure rolls back all three operations. The analyst's stable transaction key is `talk:<demoRun>:<sourceId>:digest:v1`. `talk_digests` gains server-stamped analyst Principal and Run columns through the Workspace contract.
 
-## Released demo procedure
+## Collector procedure
 
-Do not run this section until the demo gate is explicitly released. Use only the supplied collector credential file. The variables below make a unique private CLI cache for the actual Harness run.
+Use a dedicated Workspace and the collector Principal's private credential file. The variables below make a unique private CLI cache for the actual Harness run.
 
 ```bash
 export BACKPLANE_REPO=/absolute/path/to/agent-backplane
