@@ -65,4 +65,3 @@ limitation above for the supervisor protocol once qualified; standalone workerd 
 still do not establish CPU termination. The control hash includes `supervisor.ts` and
 `child-process.ts` in addition to the original three files. Artifact identity remains
 host-declared, and the new Bun packaging and resource gates remain release requirements.
-

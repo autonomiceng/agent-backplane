@@ -1,6 +1,6 @@
 // Explicit PG gate against the actual supervisor prototype or newly built Bun/workerd artifact.
 // The old workerd-only artifact cannot satisfy the five-file control identity. No Docker mutations here.
-import { expect, test } from "bun:test";
+import { afterAll, expect, test } from "bun:test";
 import { createComputeLauncher } from "../../apps/server/compute/compute-launcher.ts";
 import { createPool } from "../../apps/server/platform/pool.ts";
 import { migratedDatabase } from "../../apps/server/testing/postgres.ts";
@@ -15,11 +15,11 @@ test("effective runtime identity preserves deployer authority and refuses a wron
   const pool = createPool(await migratedDatabase());
   let listener: Bun.Server<undefined> | undefined;
   try {
-    const fixture = await principalFixture(pool);
+    const fixture = await principalFixture(pool, {}, afterAll);
     const { workspaceId, principalId, cookie } = fixture;
     const key = await issueKey(fixture.app, cookie, workspaceId, principalId);
     const runId = await createRun(fixture.app, key, workspaceId);
-    const app = await testApp(pool, { compute });
+    const app = await testApp(pool, { compute }, afterAll);
     const url = `http://localhost/api/v1/workspaces/${workspaceId}/functions/identity/deployments`;
     const headers = { authorization: `Bearer ${key}`, "x-backplane-run": runId, "content-type": "application/json" };
     const input = { id: crypto.randomUUID(), bundle: 'export default { fetch() { return Response.json({ok:true}); } };', entryPoint: "default", outboundUrls: [] };
@@ -33,7 +33,7 @@ test("effective runtime identity preserves deployer authority and refuses a wron
     const wrong = createComputeLauncher({ url: Bun.env.BP_COMPUTE_URL, token: Bun.env.BP_COMPUTE_TOKEN,
       runtimeDigest: "workerd-binary-sha256:" + "0".repeat(64) });
     if (!wrong) throw Error("launcher missing");
-    const badApp = await testApp(pool, { compute: wrong });
+    const badApp = await testApp(pool, { compute: wrong }, afterAll);
     const refusedId = crypto.randomUUID();
     listener = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: request => badApp.handle(request) });
     const refused = await fetch(new URL(new URL(url).pathname, listener.url), { method: "POST", headers,
