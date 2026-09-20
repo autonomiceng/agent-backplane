@@ -49,6 +49,10 @@ export function resolvePublicOrigin(env: Record<string, string | undefined>, fal
 
 export function readConfig(env: Record<string, string | undefined>): Config {
   const accessMode = readAccessMode(env);
+  const startupBudget = env.BP_STARTUP_VERIFY_TIMEOUT ?? "120";
+  if (!/^[0-9]+$/.test(startupBudget) || Number(startupBudget) < 1 || Number(startupBudget) > 86400) {
+    throw new ConfigError("BP_STARTUP_VERIFY_TIMEOUT must be an integer from 1 to 86400 seconds");
+  }
   if (env.BP_ADMIN_DATABASE_URL !== undefined) throw new ConfigError("BP_ADMIN_DATABASE_URL is forbidden in the server; run the migrate service");
   const databaseUrl = env.BP_DATABASE_URL;
   if (!databaseUrl) throw new ConfigError("BP_DATABASE_URL is required");

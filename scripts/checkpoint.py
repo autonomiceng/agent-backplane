@@ -254,6 +254,7 @@ def backup(stack, offline=False):
     target = '/backup/backups/' + name
     stopped = []
     completed = None
+    capture_failed = True
     try:
         for service in ('edge', 'server'):
             if service in running:
@@ -321,9 +322,10 @@ def backup(stack, offline=False):
                 done
             ''', f'{timeline:08X}', boundary)
         print(dest)
+        capture_failed = False
         return dest
     finally:
-        resume_source(stack, stopped, completed, sys.exc_info()[0] is not None)
+        resume_source(stack, stopped, completed, capture_failed)
 
 
 def verify(source, stack):
