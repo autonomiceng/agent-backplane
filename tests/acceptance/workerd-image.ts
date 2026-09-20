@@ -261,7 +261,24 @@ try {
     await timedOut.body?.cancel();
     assert.equal((await command(["exec", container, "test", "-e", `/proc/${ownedChild}`])).code, 1, "captured child survived deadline response");
     console.log(JSON.stringify({ gate: "identity-under-cpu", identityUnderLoadMs, capturedChildExited: true }));
+    // Allowlisted accounting only: never include command lines, environment or credentials.
+    async function memorySnapshot() {
+      const accounting = await command(["exec", container, "sh", "-c", `
+        echo current; cat /sys/fs/cgroup/memory.current
+        echo stat; awk '$1 ~ /^(anon|file|kernel|kernel_stack|pagetables|sock|shmem|file_mapped|file_dirty|file_writeback|inactive_anon|active_anon|inactive_file|active_file|slab|slab_reclaimable|slab_unreclaimable|workingset_refault_file)$/ {print}' /sys/fs/cgroup/memory.stat
+        echo events; awk '$1 ~ /^(low|high|max|oom|oom_kill|oom_group_kill)$/ {print}' /sys/fs/cgroup/memory.events
+        echo children; cat /proc/1/task/1/children; echo
+        for status in /proc/[0-9]*/status; do
+          echo "$status"
+          awk '$1 ~ /^(Name:|State:|Pid:|PPid:|VmRSS:|RssAnon:|RssFile:|RssShmem:|VmSwap:)$/ {print}' "$status" 2>/dev/null || true
+        done`]);
+      const restart = await command(["inspect", "--format", "{{.RestartCount}}", container]);
+      return { accounting: accounting.code === 0 ? accounting.out : diagnostic(accounting.err),
+        restartCount: restart.code === 0 ? Number(restart.out) : null };
+    }
     const baseline = Number(await docker("exec", container, "cat", "/sys/fs/cgroup/memory.current"));
+    const baselineMemory = await memorySnapshot();
+    console.log(JSON.stringify({ gate: "memory-baseline", baseline, ...baselineMemory }));
     const beforeEvents = await docker("exec", container, "cat", "/sys/fs/cgroup/memory.events");
     const memoryRestartsBefore = Number(await docker("inspect", "--format", "{{.RestartCount}}", container));
     const bomb = manifest('export default {fetch(){const retained=[];while(true){const bytes=new Uint8Array(16*1024*1024);bytes.fill(1);retained.push(bytes)}}}', runtimeDigest);
@@ -272,6 +289,10 @@ try {
     }, body: JSON.stringify({ manifest: bomb, props, input: null }), signal: AbortSignal.any([interrupted.signal, AbortSignal.timeout(12000)]), redirect: "manual" })
       .then(async response => { await response.body?.cancel(); return { status: response.status, reason: response.headers.get("x-backplane-error") }; })
       .catch(error => { if (error instanceof Error && error.name === "TimeoutError") throw error; return null; });
+    const childObservation = await command(["exec", container, "cat", "/proc/1/task/1/children"]);
+    const memoryChild = childObservation.code === 0 ? childObservation.out : "";
+    const duringMemory = await memorySnapshot();
+    console.log(JSON.stringify({ gate: "memory-child", memoryChild, ...duringMemory }));
     const outcome = await pending;
     assert(outcome === null || outcome.status === 502 && outcome.reason === "function_failed", "memory fixture timed out or returned an ordinary response");
     console.log(JSON.stringify({ gate: "memory-recovery-start", outcome,
@@ -291,9 +312,13 @@ try {
       if (recoveredBytes <= baseline + 64 * 1048576) break;
       await Bun.sleep(100);
     }
-    assert(recoveredBytes <= baseline + 64 * 1048576, "aggregate memory did not recover after child exit");
-    console.log(JSON.stringify({ gate: "memory-container", baseline, recoveredBytes, outcome, beforeEvents, afterEvents,
-      restartCount: await docker("inspect", "--format", "{{.RestartCount}}", container) }));
+    const recoveredMemory = await memorySnapshot();
+    const capturedMemoryChildExited = /^\d+$/.test(memoryChild)
+      ? (await command(["exec", container, "test", "-e", `/proc/${memoryChild}`])).code === 1 : null;
+    console.log(JSON.stringify({ gate: "memory-container", baseline, recoveredBytes, limitBytes: baseline + 64 * 1048576,
+      outcome, beforeEvents, afterEvents, memoryChild, capturedMemoryChildExited, ...recoveredMemory }));
+    assert(recoveredBytes <= baseline + 64 * 1048576,
+      `aggregate memory did not recover after child exit: baseline=${baseline}, recovered=${recoveredBytes}, limit=${baseline + 64 * 1048576}`);
     // Inject a lost exit observation into this owned mount, then exercise actual PID 1 restart.
     const helper = join(controlDirectory, "child-process.ts");
     const originalHelper = await Bun.file(helper).text();
