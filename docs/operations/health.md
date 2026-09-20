@@ -102,8 +102,8 @@ taken before a purge still contain those bytes. See
 valid Checkpoint manifest for this database identity. A missing manifest yields
 `NaN`, matching the other backup signals.
 
-Before upgrades whose migrations take exclusive locks (including 000028, 000030
-and 000031), reuse the deployment's original env file, project, Compose files and
+Before upgrades whose migrations take exclusive locks (including 000028, 000030,
+000031 and 000033), reuse the deployment's original env file, project, Compose files and
 profiles for both commands. From the repository root, define the invocation once
 with those settings; this example includes the edge overlay. Export
 `COMPOSE_PROJECT_NAME` for a custom project, including when it is normally stored

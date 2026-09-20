@@ -11,6 +11,6 @@ export function computeRoutes(pool: Pool, auth: Auth, authUrl: string, launcher?
     if (!/^\/api\/v1\/workspaces\/[^/]+\/functions(?:\/|$)/.test(new URL(request.url).pathname)) return;
     set.headers["Cache-Control"] = "no-store";
     if (!launcher) return status(503, { error: "compute_disabled" });
-  }).use(deployFunctionRoute(pool, launcher?.runtimeDigest ?? ""))
+  }).use(deployFunctionRoute(pool, launcher))
     .use(activateFunctionRoute(pool, auth, authUrl, launcher)).use(getFunctionDeploymentRoute(pool, auth));
 }
