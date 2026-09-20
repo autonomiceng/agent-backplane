@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { auditProofEvent, completionDecision, escapeHtml, findInvocationEvent, renderPage, safeUrl } from "./analyst.ts";
+import { auditProofEvent, completionDecision, completionKeys, escapeHtml, findInvocationEvent, renderPage, safeUrl } from "./analyst.ts";
 import handler from "./function.js";
 
 const source = {
@@ -71,4 +71,17 @@ test("invocation audit search crosses full pages, terminates, and proof events e
     principal_id: "caller", run_id: "caller-run" });
   expect(JSON.stringify(auditProofEvent(invoked))).not.toContain("private");
   expect(await findInvocationEvent("501", runId, async () => ({ events: [], nextAfter: "501" }))).toBeUndefined();
+});
+
+test("completion transaction identities distinguish tuple boundaries, stay stable, and fit the API limit", () => {
+  const first = completionKeys("a:b", "c"), second = completionKeys("a", "b:c");
+  expect(first.failureKey).not.toBe(second.failureKey);
+  expect(first.digestKey).not.toBe(second.digestKey);
+  expect(first).toEqual(completionKeys("a:b", "c"));
+  expect(first.failureKey).not.toBe(first.digestKey);
+  expect(first.failureKey.endsWith(":expected-failure:v1")).toBeTrue();
+  expect(first.digestKey.endsWith(":digest:v1")).toBeTrue();
+  for (const key of Object.values(completionKeys("demo:".repeat(1000), "source:".repeat(1000)))) {
+    expect(Buffer.byteLength(key)).toBeLessThanOrEqual(256);
+  }
 });

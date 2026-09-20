@@ -17,7 +17,7 @@ INSERT INTO talk_digests
 VALUES ($1, $2, $3::jsonb, $4::jsonb, CURRENT_TIMESTAMP);
 ```
 
-Both SQL operations use `expectRows: 1`; the following operation acknowledges the Delivery with its live Receipt. Any failure rolls back all three operations. The analyst's stable transaction key is `talk:<demoRun>:<sourceId>:digest:v1`. `talk_digests` gains server-stamped analyst Principal and Run columns through the Workspace contract.
+Both SQL operations use `expectRows: 1`; the following operation acknowledges the Delivery with its live Receipt. Any failure rolls back all three operations. The analyst's stable transaction keys are `talk:<identity>:digest:v1` and `talk:<identity>:expected-failure:v1`, where `identity` is the SHA-256 hex digest of `JSON.stringify([demoRun, sourceId])`. `talk_digests` gains server-stamped analyst Principal and Run columns through the Workspace contract.
 
 ## Collector procedure
 

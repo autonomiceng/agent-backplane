@@ -22,6 +22,10 @@ function list(value: Json | undefined, name: string) {
   return value as string[];
 }
 const sha256 = (bytes: Uint8Array | string) => createHash("sha256").update(bytes).digest("hex");
+export function completionKeys(demoRun: string, sourceId: string) {
+  const identity = sha256(JSON.stringify([demoRun, sourceId]));
+  return { failureKey: `talk:${identity}:expected-failure:v1`, digestKey: `talk:${identity}:digest:v1` };
+}
 const canonical = (value: Json): string => Array.isArray(value) ? `[${value.map(canonical).join(",")}]`
   : typeof value === "object" && value !== null ? `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical(value[key]!)}`).join(",")}}`
   : JSON.stringify(value);
@@ -211,7 +215,8 @@ async function complete(transcriptPath: string, statePath: string, summaryPath: 
     { sql: { statement: insert, params: [sourceId, authored.digest, JSON.stringify(authored.points), JSON.stringify(metadata)], expectRows: 1 } },
     { ack: { deliveryId: text(state.deliveryId, "delivery_id"), receipt: text(state.receipt, "receipt") } },
   ];
-  const failed = await bpResult(["transaction", "--body", "-"], { idempotencyKey: `talk:${demoRun}:${sourceId}:expected-failure:v1`, operations: operations(2) });
+  const { failureKey, digestKey } = completionKeys(demoRun, sourceId);
+  const failed = await bpResult(["transaction", "--body", "-"], { idempotencyKey: failureKey, operations: operations(2) });
   const failure = object(failed.failure, "expected_failure");
   const failureDetails = object(failure.details, "expected_failure_details");
   if (failed.code === 0 || failure.error !== "assertion_failed" || failureDetails.operationIndex !== 0) throw new Error("expected_assertion_failure_missing");
@@ -219,7 +224,7 @@ async function complete(transcriptPath: string, statePath: string, summaryPath: 
   const deliveries = object(await bp(["queue", "list-deliveries", "--queue", QUEUE, "--state", "leased", "--limit", "100"]), "deliveries");
   const ackUncommitted = Array.isArray(deliveries.items) && deliveries.items.some(item => object(item, "delivery").id === state.deliveryId);
   if (rollbackRow.analysis_state !== "pending" || rollbackRow.digest_count !== 0 || !ackUncommitted) throw new Error("failure_did_not_roll_back");
-  const successBody: Obj = { idempotencyKey: `talk:${demoRun}:${sourceId}:digest:v1`, operations: operations(1) };
+  const successBody: Obj = { idempotencyKey: digestKey, operations: operations(1) };
   const first = await bp(["transaction", "--body", "-"], successBody), retry = await bp(["transaction", "--body", "-"], successBody);
   if (!same(first, retry)) throw new Error("successful_retry_response_mismatch");
   const committed = object(first, "transaction");
