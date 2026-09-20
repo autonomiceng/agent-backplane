@@ -1,12 +1,26 @@
 # Compute Runtime Identity and release gate
 
-No workerd artifact has completed full runtime qualification. **Release remains blocked until F-GATE passes.** The [project image](image/README.md) packages a verified official binary under ADR-0009. No registry artifact has been published. ADR-0018 defines Runtime Identity and its separate artifact evidence.
+No workerd artifact has completed full runtime qualification. **Default promotion remains gated on H-PROOF/F-GATE and B-DEFAULT approval.** The [project image](image/README.md) packages a verified official binary under ADR-0009. No registry artifact has been published. ADR-0018 defines Runtime Identity and its separate artifact evidence.
 
 ## Configuration
 
-`BP_WORKERD_IMAGE` is required for compute, including when using bootstrap. An absent or empty value refuses clearly. It accepts full references including local tags, registry digests and local `sha256:<image-config-id>` references. There is no shipped image default until F-GATE, publication and B-DEFAULT approval. `pull_policy: never` requires the image already present. The local candidate `agent-backplane-workerd:1.20260918.1` has only packaging qualification. Core omits this overlay and leaves `BP_COMPUTE_URL` unset.
+When compute is selected, bootstrap builds `infra/compute/image/Dockerfile` as
+`agent-backplane-workerd:1.20260918.1` if `BP_WORKERD_IMAGE` is missing or blank. Cached
+rebuilds are allowed. The build requires an amd64 Docker host and compatible BuildKit with
+network access to pinned inputs. Arm64 is refused for this default even with an explicit
+binary pin; its recipe inputs do not establish architecture qualification. Fresh minimal
+selection remains unchanged and leaves `BP_COMPUTE_URL` unset.
 
-`BP_WORKERD_BINARY_SHA256` is the expected SHA-256 of `/usr/bin/workerd`. Empty uses the known packaged amd64 binary, `f31da6d248028d698806aa93d1b3aec28bbd4b4b7ddc31e967408ab6406fa5aa`. Another executable requires an explicit verified hash. Other architectures require an explicit pin and their own runtime gate. The supervisor protocol requires images to provide `/bin/sh`, `sha256sum`, `/usr/bin/bun` and `/usr/bin/workerd` and run with the overlay restrictions. Settings and host declarations are documented in `.env.example`.
+An explicit `BP_WORKERD_IMAGE` accepts full local tags, registry digest references and
+local `sha256:<image-config-id>` references. It must already exist locally: bootstrap
+never builds over or implicitly pulls an explicit override. Server and other image
+overrides remain independent. The resolved image ID is used for verification and the
+subsequent Compose launch. The overlay has no build stanza, so `up` cannot rebuild workerd.
+After H-PROOF/F-GATE and B-DEFAULT approval, this qualified local recipe is the supported
+delivery method; ADR-0009/0018 now make registry publication optional. Preparatory code
+and a successful build establish neither those gates nor a registry release.
+
+`BP_WORKERD_BINARY_SHA256` is the expected SHA-256 of `/usr/bin/workerd`. Empty uses the known packaged amd64 binary, `f31da6d248028d698806aa93d1b3aec28bbd4b4b7ddc31e967408ab6406fa5aa`. Another executable requires an explicit verified hash. Other architectures require an explicit pin and their own runtime gate. The supervisor protocol requires images to provide `/bin/sh`, `sha256sum`, `/usr/bin/bun` and `/usr/bin/workerd` and run with the overlay restrictions. Bootstrap also requires the recipe's architecture-specific Bun 1.4.2 executable hash and version. Both executables must run `--version` under the overlay restrictions; custom workerd bytes still require their own runtime gate. Settings and host declarations are documented in `.env.example`.
 
 `BP_COMPUTE_URL` is a secret-bearing destination: verification sends the control token before checking identity, so every HTTPS override must point to an operator-owned runtime. It accepts HTTPS authorities, the private Compose authority `http://workerd:8080`, and explicit loopback HTTP (`localhost`, IPv4 `127.0.0.0/8`, or IPv6 `[::1]`, with any port). Other cleartext authorities, including private LAN addresses, are refused before any token is sent. Loopback is for an operator-owned local runtime; the Compose hostname relies on the trusted private network. No arbitrary hostname is resolved to decide this exception. Userinfo, query strings and fragments are refused. A path prefix is preserved for `/identity`, `/prepare` and `/invoke`; path construction never changes the configured authority. Identity and preparation refuse redirects. Invocation returns function 3xx responses as ordinary results without following their Location. An invalid nonempty URL disables compute operations with `compute_unavailable` while core remains available.
 
@@ -22,7 +36,7 @@ The API field `runtimeDigest` holds the namespaced executable identity and parti
 
 ## Artifact evidence
 
-Bootstrap inspects the selected full reference to obtain its actual local Docker image ID and architecture, verifies the binary in a disposable network-disabled container, and atomically records a private, fsynced launch decision under `data/compute/<uuid>.json` beside the bootstrap env file. `BP_DATA_DIR` overrides that host data directory; relative paths resolve beside the env file. The record contains only source, purpose, selected reference, host-observed image ID, binary hash, architecture and observation time. It is mode 0600 and contains no environment secrets. These host records are operator-owned and never automatically pruned. It records the immutable image selected for that launch attempt, including attempts where Compose later fails; it does not claim the image remains running forever.
+Bootstrap inspects the selected full reference to obtain its actual local Docker image ID and architecture, verifies both executable hashes and version output in disposable network-disabled containers, and atomically records a private, fsynced launch decision under `data/compute/<uuid>.json` beside the bootstrap env file. `BP_DATA_DIR` overrides that host data directory; relative paths resolve beside the env file. The record contains only source, purpose, selected reference, host-observed image ID, workerd and supervisor binary hashes, both version strings, architecture and observation time. It is mode 0600 and contains no environment secrets. These host records are operator-owned and never automatically pruned. It records the immutable image selected for that launch attempt, including attempts where Compose later fails; it does not claim the image remains running forever.
 
 Bootstrap passes that ID through `BP_WORKERD_EFFECTIVE_IMAGE` **only in its child environment** and supplies `BP_WORKERD_HOST_IMAGE_ID` as a host declaration. It never rewrites `BP_WORKERD_IMAGE` or persists an effective-image override. Bootstrap refuses any persisted `BP_WORKERD_EFFECTIVE_IMAGE` assignment. Every bootstrap resolves the current reference again. A subsequent bare `docker compose up` is an explicit deployment action and may resolve a moving tag again. Bare Compose cannot enforce that the internal effective-image override is absent from the shell or env file; an override can select an image different from the reported `BP_WORKERD_IMAGE`. Operators using bare Compose must remove that override and own the accuracy of their declarations. Use an immutable image ID/reference for repeatability. The evidence record never drives future image selection.
 
@@ -49,7 +63,7 @@ bun run test apps/server/compute/compute-launcher.test.ts apps/server/compute/co
 
 The image probe records reference, actual image ID, architecture, binary and control hashes. It checks private persistence, wrong identity refusal, null bare-Compose image evidence, stale admission evidence refusal for prepare/invoke after changing artifact declarations or loader bytes with the same binary, followed by healthy preparation of the original manifest. Each Docker command is bounded to 120 seconds, control requests to five seconds and startup/restart waits to 15 seconds. The 30-second PG gate writes through the server, checks persisted deployment/activation/invocation evidence and unchanged Principal/Run attribution, and uses real HTTP to check core readiness and authentication while compute refuses a wrong identity. The local HTTP/PG regression checks stored configuration hashes across two artifact declarations and one identity check per operation. The legacy PG gate seeds an active deployment under schema 32, applies migration 33, and checks unchanged history, API readability, attributed activation/invocation refusal, constraint enforcement, and replacement activation retiring the legacy deployment.
 
-Full F-GATE remains unverified until the supervisor artifact and the cases below pass. Workerd remains an experimental trusted-code boundary. The old workerd-only image cannot start the new protocol; the Dockerfile includes the pinned Bun addition, which still requires the actual artifact gate before publication. No shipping support or published artifact custody is claimed.
+Full F-GATE remains unverified until the supervisor artifact and the cases below pass. Workerd remains an experimental trusted-code boundary. The old workerd-only image cannot start the new protocol; the Dockerfile includes the pinned Bun addition, which still requires the actual artifact gate before default promotion. No shipping support or published artifact custody is claimed.
 
 ## Operation lifecycle
 
