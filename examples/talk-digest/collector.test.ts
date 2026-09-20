@@ -44,3 +44,11 @@ test("handoff identities distinguish tuple boundaries and stay stable on retry",
   expect(first).toEqual(handoffKeys("a:b", "c"));
   expect(first.handoffKey).not.toBe(first.messageKey);
 });
+
+test("source dates reject malformed and impossible calendar values before preparation", () => {
+  const valid = { ...source, schemaVersion: 1, fictional: true, topicTags: [] };
+  for (const talkDate of [null, "2025-06-04", "2024-02-29", "2000-02-29", "0001-01-01", "9999-12-31"])
+    expect(metadata({ ...valid, talkDate }).talkDate).toBe(talkDate);
+  for (const talkDate of ["", " ", "2025-6-4", "2025-02-29", "1900-02-29", "2100-02-29", "2024-02-30", "2025-04-31", "2025-00-01", "2025-13-01", "2025-01-00", "0000-01-01", "2025-06-04T00:00:00Z", "infinity", "today", "not-a-date"])
+    expect(() => metadata({ ...valid, talkDate })).toThrow("talkDate_invalid");
+});
