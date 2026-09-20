@@ -86,7 +86,7 @@ with tempfile.TemporaryDirectory(prefix='bp-status-proof-') as temporary:
     try:
         for name in [project + '_default', project + '-platform']:
             networks.append(docker('network', 'create', '--label', 'io.backplane.status-proof=' + owner, name))
-        container = docker('create', '--name', project, '--pull', 'never', '--user', '65534:65534',
+        container = docker('create', '--name', project, '--pull', 'missing', '--user', '65534:65534',
                            '--label', 'io.backplane.status-proof=' + owner,
                            '--label', 'com.docker.compose.project=' + project,
                            '--label', 'com.docker.compose.service=edge',
