@@ -10,6 +10,11 @@ import { checkpointProof } from "./storage-migration-checkpoint.ts";
 import { migrateStorage, type MigrationTarget } from "./storage-migration.ts";
 import { storageAdminError } from "./storage-admin.ts";
 import { blobUuid } from "./blob-store.ts";
+// Python's existing ensure_ascii JSON commitment escapes UTF-16 code units, including DEL.
+export function migrationCredentialsCommitment(id: string, credentials: string[]) {
+  const encoded = JSON.stringify([id, ...credentials]).replace(/[\u007f-\uffff]/g, unit => `\\u${unit.charCodeAt(0).toString(16).padStart(4, "0")}`);
+  return pbkdf2Sync(encoded, createHash("sha256").update(id).digest(), 600000, 32, "sha256").toString("hex");
+}
 if (import.meta.main) {
   let pool: ReturnType<typeof createPool> | undefined;
   const budget = Number(Bun.env.BP_STORAGE_MIGRATION_TIMEOUT ?? "3600");
@@ -34,7 +39,7 @@ if (import.meta.main) {
     const target = s3Store({ endpoint: request.target.endpoint, bucket: request.target.bucket, region: "us-east-1",
       accessKeyId: required("BP_BLOB_S3_ACCESS_KEY"), secretAccessKey: required("BP_BLOB_S3_SECRET_KEY") });
     const credentials = ["BP_RUSTFS_ROOT_USER", "BP_RUSTFS_ROOT_PASSWORD", "BP_BLOB_S3_ACCESS_KEY", "BP_BLOB_S3_SECRET_KEY"].map(required);
-    const commitment = pbkdf2Sync(JSON.stringify([request.id, ...credentials]), createHash("sha256").update(request.id).digest(), 600000, 32, "sha256").toString("hex");
+    const commitment = migrationCredentialsCommitment(request.id, credentials);
     if (commitment !== request.target.credentialsSha256) throw new Error("blob_binding_migration_credentials");
     const attestTarget = async () => {
       // The helper checks root authentication, scoped account policy and never-enabled versioning.

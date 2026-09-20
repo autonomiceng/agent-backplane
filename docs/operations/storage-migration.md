@@ -53,6 +53,28 @@ restoring adequate performance or a separately reviewed recovery decision.
 Files created by the tool use `0600`
 and its private state directory uses `0700`. Commands below contain paths only.
 
+Before capture, run the existing storage admin `inspect --fenced` using the source
+Compose selection and its `storage-init` service. Every object must be referenced
+or already retained. If inspection reports unreferenced objects, explicitly run
+`reconcile --fenced --retain-unreferenced --checkpoint <recovery-reference>` under
+the same fence, then capture a fresh filesystem checkpoint. Migration performs this
+read-only preflight again before verifying the supplied checkpoint or creating its
+state directory and pins. `blob_binding_migration_unreferenced_reconcile_required`
+means complete that reconciliation and fresh capture first; the tool never reconciles
+implicitly.
+
+Choose `--budget SECONDS` for each migration helper, from 1 through 86400 (initial
+default 3600). Size it for hashing all checkpoint artifacts, multiple complete
+source/target inventory scans, and a full create-only copy at measured local disk
+and RustFS throughput, with operational margin. Object count and request latency
+matter as well as total bytes. Resume still scans existing bytes, so repeated short
+budgets may never converge. This budget is saved in `intent.json`; a plain retry
+reuses a custom saved value, while an explicitly different value refuses with
+`blob_binding_migration_budget_changed`. Choose it before the first attempt. The
+outer operator invocation remains capped at 24 hours. Startup verification has the
+separate budget described above. Fresh-restore finalization uses its existing
+3600-second helper default; this migration option does not configure restore.
+
 Capture the stopped filesystem installation with the existing checkpoint tool:
 
 ```sh
@@ -82,6 +104,15 @@ or lost lease leaves the durable gate in place and all partial target bytes inta
 An interrupted env lock may remain; confirm that its operator process and helper
 container have stopped before explicitly removing that lock and retrying. Never
 kill processes by pattern.
+
+Every invocation reattests application and helper image references and content IDs
+against the original checkpoint. Target-only roles, including RustFS and bootstrap,
+are recorded separately in private operator state and must also remain identical.
+Rebuilding a mutable local tag causes `blob_binding_migration_image_custody`; load
+the originally recorded image before retrying. State predating target-image custody
+cannot acquire that evidence automatically. Retain it for an explicit recovery
+review rather than editing or guessing its original image IDs. Unicode credentials
+retain the existing Python ASCII-escaped JSON / PBKDF2 commitment format.
 
 ## Recovery boundaries
 
@@ -143,6 +174,12 @@ Helper failures expose only a stable `blob_binding_*` JSON error token. Raw Comp
 stderr and credentials are never printed. Keep the fence, state files and all bytes
 when diagnosing a refusal.
 
+Fenced inspection reports either `copying` or `committed_pending_checkpoint` while
+all serving and mutating adoption paths remain gated. A routine checkpoint during
+either phase refuses with `pending storage migration requires its explicit offline
+checkpoint`. Only the migration operator can request its exact pending-cutover
+capture; inspection does not authorize a checkpoint during copying.
+
 Source and post-cutover checkpoints are pinned in private `backups/.pins` metadata,
 outside the immutable artifact inventories. A reservation protects post-cutover
 captures even if the operator dies before saving its local result. Pruning validates
@@ -150,6 +187,26 @@ pinned custody and includes their WAL boundaries. Pins are never removed by this
 command. A later operator decision must explicitly identify the recovery boundaries
 being relinquished before removing the corresponding pin records and reservation.
 Keep the full origin filesystem and partial targets regardless of pin decisions.
+
+Pin publication uses the exclusive repository lock, a private fsynced staging file,
+atomic rename and directory fsync. Only names matching
+`.<migration-UUID>-<manifest-hash-or-pending>.json.<32-hex-nonce>.tmp` are unpublished
+staging records; retention ignores those private regular files even if a crash left
+partial JSON. Completed `<UUID>-<hash>.json` pins and `<UUID>-pending.json`
+reservations are always validated. Unknown debris, malformed committed records,
+missing checkpoints or changed pinned bytes refuse pruning with
+`blob_binding_checkpoint_pin_recovery_required`; no checkpoint is deleted on that
+refusal. A capture may already be published when retention reports this failure.
+
+For that refusal, keep the fence and acquire exclusive repository custody after
+confirming no operator/helper remains. Inspect `.pins` and the saved migration state.
+Restore a moved checkpoint to its recorded name and exact original bytes, or recover
+a damaged committed pin from its verified saved record and matching checkpoint/intent.
+Unknown old `.migration-*` debris must be identified as unpublished and all required
+committed pins reconstructed before it can be quarantined outside `.pins`. Retain
+the suspect records and every checkpoint during diagnosis. Never delete broken pins
+to force pruning; if custody cannot be established, keep retention blocked for an
+explicit recovery decision. Recognized staging debris can remain in place safely.
 
 ## Qualification
 
@@ -170,5 +227,15 @@ not recovery backups. The sixth case injects a stopped RustFS after binding and 
 the normal operator path with the same container ID and binding, captures real physical PostgreSQL/filesystem
 and S3 archives, restores fresh volumes, and verifies SQL, two Principals' Files,
 metadata, provenance and retained inventory through the existing recovery flow.
+The seventh scenario unconditionally exercises the local filesystem custody proof,
+including private pins, content hashes, artifact sets, nonfiles, capture fencing and
+S3 evidence. It needs neither PostgreSQL nor Docker. Required CI explicitly runs
+the real five-case engine gate; the default unit command intentionally skips those
+Docker-bound cases. Focused pure checks are:
+
+```sh
+bun test apps/server/blobs/storage-migration-checkpoint.test.ts apps/server/blobs/storage-migration-admin.test.ts scripts/storage-migrate.test.ts scripts/checkpoint.test.ts
+```
+
 Failed drills retain their disposable resources for diagnosis. Root must review
 these commands and their evidence before scheduling any host migration.

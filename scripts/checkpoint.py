@@ -308,70 +308,94 @@ def wal_boundary(base_manifest, segment_bytes):
 
 
 def pin_checkpoint(repository, checkpoint, migration):
-    if not re.fullmatch(r'[a-f0-9-]{36}', migration):
+    if str(uuid.UUID(migration)) != migration:
         raise ValueError('invalid migration pin identity')
     directory = repository / '.pins'
     directory.mkdir(mode=0o700, exist_ok=True)
     if directory.is_symlink() or directory.stat().st_mode & 0o077:
-        raise ValueError('checkpoint pins must be private')
-    digest = hashlib.sha256((checkpoint / 'manifest.json').read_bytes()).hexdigest()
-    record = dict(checkpoint=checkpoint.name, manifestSha256=digest, migration=migration)
-    path = directory / (migration + '-' + digest + '.json')
+        raise ValueError('blob_binding_checkpoint_pin_recovery_required')
+    digest = hashlib.sha256((checkpoint / 'manifest.json').read_bytes()).hexdigest() if checkpoint is not None else None
+    record = dict(checkpoint=checkpoint.name, manifestSha256=digest, migration=migration) if checkpoint is not None else dict(checkpoint=None, migration=migration)
+    path = directory / (migration + '-' + (digest or 'pending') + '.json')
     content = json.dumps(record, sort_keys=True).encode() + b'\n'
-    try:
-        with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600), 'wb') as file:
-            file.write(content); file.flush(); os.fsync(file.fileno())
-    except FileExistsError:
-        if path.is_symlink() or path.read_bytes() != content:
-            raise ValueError('checkpoint pin differs')
-    fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        os.fsync(fd)
-    finally:
-        os.close(fd)
+    # Callers hold the repository lock. Only a fully synced record is published;
+    # this recognizable unpublished name carries no checkpoint custody obligation.
+    if path.exists() or path.is_symlink():
+        if (path.is_symlink() or not path.is_file() or path.stat().st_mode & 0o077 or path.stat().st_nlink != 1
+                or path.stat().st_uid != os.getuid() or path.stat().st_size > 4096 or path.read_bytes() != content):
+            raise ValueError('blob_binding_checkpoint_pin_recovery_required')
+    else:
+        temporary = directory / ('.' + path.name + '.' + uuid.uuid4().hex + '.tmp')
+        try:
+            with os.fdopen(os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600), 'wb') as file:
+                file.write(content); file.flush(); os.fsync(file.fileno())
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
+    for parent in (directory, repository):
+        fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
     return path, digest
 
 
 def pinned_checkpoints(repository):
-    directory = repository / '.pins'
-    if not directory.exists():
-        return set()
-    if directory.is_symlink() or directory.stat().st_mode & 0o077:
-        raise ValueError('checkpoint pins must be private')
-    result = set()
-    for path in directory.iterdir():
-        if path.is_symlink() or not path.is_file() or path.stat().st_mode & 0o077:
-            raise ValueError('invalid checkpoint pin')
-        record = json.loads(path.read_text())
-        name = record['checkpoint']
-        if name is None:
-            candidates = [candidate for candidate in repository.iterdir() if candidate.is_dir() and not candidate.is_symlink()
-                          and (candidate / 'manifest.json').is_file()
-                          and json.loads((candidate / 'manifest.json').read_text()).get('migration', {}).get('id') == record['migration']]
-        else:
-            if Path(name).name != name or name in ('.', '..'):
-                raise ValueError('invalid pinned checkpoint')
-            candidates = [repository / name]
-        for checkpoint in candidates:
-            if name is not None and hashlib.sha256((checkpoint / 'manifest.json').read_bytes()).hexdigest() != record['manifestSha256']:
-                raise ValueError('pinned checkpoint manifest changed')
-            doc = json.loads((checkpoint / 'manifest.json').read_text())
-            if doc['artifacts'] != inventory(checkpoint):
-                raise ValueError('pinned checkpoint artifacts changed')
-            result.add(checkpoint.name)
-    return result
+    try:
+        directory = repository / '.pins'
+        if directory.is_symlink():
+            raise ValueError('blob_binding_checkpoint_pin_recovery_required')
+        if not directory.exists():
+            return set()
+        if not directory.is_dir() or directory.stat().st_mode & 0o077:
+            raise ValueError('blob_binding_checkpoint_pin_recovery_required')
+        result = set()
+        for path in directory.iterdir():
+            if path.is_symlink() or not path.is_file() or path.stat().st_mode & 0o077 or path.stat().st_nlink != 1 or path.stat().st_uid != os.getuid() or path.stat().st_size > 4096:
+                raise ValueError('invalid checkpoint pin')
+            if re.fullmatch(r'\.[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}-(?:[a-f0-9]{64}|pending)\.json\.[a-f0-9]{32}\.tmp', path.name):
+                continue
+            record = json.loads(path.read_text())
+            migration, name = record['migration'], record['checkpoint']
+            if str(uuid.UUID(migration)) != migration:
+                raise ValueError('invalid pin identity')
+            if name is None:
+                if set(record) != {'checkpoint', 'migration'} or path.name != migration + '-pending.json':
+                    raise ValueError('invalid reservation')
+                candidates = [candidate for candidate in repository.iterdir() if candidate.is_dir() and not candidate.is_symlink()
+                              and (candidate / 'manifest.json').is_file()
+                              and json.loads((candidate / 'manifest.json').read_text()).get('migration', {}).get('id') == migration]
+            else:
+                digest = record['manifestSha256']
+                if (set(record) != {'checkpoint', 'migration', 'manifestSha256'} or not re.fullmatch('[a-f0-9]{64}', digest)
+                        or path.name != migration + '-' + digest + '.json' or Path(name).name != name or name in ('.', '..')):
+                    raise ValueError('invalid pinned checkpoint')
+                candidates = [repository / name]
+            for checkpoint in candidates:
+                if checkpoint.is_symlink() or (checkpoint / 'manifest.json').is_symlink():
+                    raise ValueError('invalid pinned checkpoint')
+                if name is not None and hashlib.sha256((checkpoint / 'manifest.json').read_bytes()).hexdigest() != record['manifestSha256']:
+                    raise ValueError('pinned checkpoint manifest changed')
+                doc = json.loads((checkpoint / 'manifest.json').read_text())
+                if doc['artifacts'] != inventory(checkpoint):
+                    raise ValueError('pinned checkpoint artifacts changed')
+                result.add(checkpoint.name)
+        return result
+    except (ValueError, OSError, KeyError, TypeError, AttributeError):
+        raise ValueError('blob_binding_checkpoint_pin_recovery_required') from None
 
 
 def prune_checkpoints(root, keep, remove=shutil.rmtree):
     if keep < 1:
         raise ValueError('BP_BACKUP_KEEP must be positive')
+    pins = pinned_checkpoints(root)
     complete = []
     for path in root.iterdir():
         if path.is_dir() and not path.is_symlink() and (path / 'manifest.json').is_file():
             doc = json.loads((path / 'manifest.json').read_text())
             complete.append((doc['completedAt'], path, doc))
     complete.sort(key=lambda item: item[0], reverse=True)
-    pins = pinned_checkpoints(root)
     kept = [item for index, item in enumerate(complete) if index < keep or item[1].name in pins]
     boundaries = {}
     for _, path, doc in kept:
