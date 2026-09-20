@@ -28,3 +28,4 @@ jobs:
       - run: bun tests/acceptance/workerd-image.ts agent-backplane-workerd:1.20260918.1 --lifecycle
       - run: python3 tests/acceptance/workerd-gate.py agent-backplane-workerd:1.20260918.1
       - run: python3 scripts/backup-drill.py --offline
+      - run: python3 scripts/backup-drill.py --s3
