@@ -1,6 +1,6 @@
 // Orchestrator-run Compose acceptance: three real RustFS/PostgreSQL scenarios, no embedded cluster.
 import { strict as assert } from "node:assert";
-import { createHash, createHmac } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import { chmod, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -286,8 +286,8 @@ async function orchestrate() {
   const root = resolve(import.meta.dir, "../.."), scratch = await mkdtemp(join(tmpdir(), "bp-rustfs-"));
   // The worker container runs as a different uid; the exchange directory must be writable to it.
   const exchangeDir = join(scratch, "exchange"); await mkdir(exchangeDir, { mode: 0o777 }); await chmod(exchangeDir, 0o777);
-  const env = { ...Bun.env, BP_RUSTFS_ROOT_USER: "s33root", BP_RUSTFS_ROOT_PASSWORD: crypto.randomUUID(),
-    BP_BLOB_S3_ACCESS_KEY: "s33scoped", BP_BLOB_S3_SECRET_KEY: crypto.randomUUID(), BP_BLOB_S3_BUCKET: "backplane",
+  const env = { ...Bun.env, BP_RUSTFS_ROOT_USER: randomBytes(10).toString("hex"), BP_RUSTFS_ROOT_PASSWORD: randomBytes(32).toString("hex"),
+    BP_BLOB_S3_ACCESS_KEY: randomBytes(10).toString("hex"), BP_BLOB_S3_SECRET_KEY: randomBytes(20).toString("hex"), BP_BLOB_S3_BUCKET: "backplane",
     BP_AUTH_SECRET: crypto.randomUUID(), BP_POSTGRES_ADMIN_PASSWORD: "postgres", BP_POSTGRES_PASSWORD: "bp_server",
     BP_BACKUP_DIR: join(scratch, "backup"), BP_PUBLIC_URL: "http://localhost:3000", BP_PORT: "0", BP_POSTGRES_PORT: "0" };
   const project = `s33-${crypto.randomUUID().slice(0, 8)}`;
