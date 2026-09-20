@@ -148,7 +148,12 @@ The bucket defaults to `backplane`. Root credentials belong only to RustFS and
 its isolated bootstrap. Never enable bucket versioning: both enabled and suspended
 versioning stop bootstrap, and deleting current objects would leave old bytes.
 
-For a manual MinIO-to-RustFS migration:
+For legacy unbound stores, a manual MinIO-to-RustFS copy can precede explicit
+[verified adoption](../../docs/operations/storage-identity.md). Already bound
+fresh-target migrations require a separate supported migration protocol; do not
+edit or copy only their marker to bypass identity checks.
+
+For the legacy unbound copy:
 
 1. Fence all writers and stop the server and cleanup workers. Take coordinated
    PostgreSQL and MinIO backups and retain the original MinIO volume untouched.
@@ -161,8 +166,8 @@ For a manual MinIO-to-RustFS migration:
    reference through a read-only database connection. Download objects to compute
    hashes; multipart ETags are not content hashes. Resolve missing or mismatched
    bytes before proceeding.
-5. Select the RustFS endpoint and scoped credentials, then start the server and
-   resume writers. Keep the source volume and matching backup until the migration
+5. Select the RustFS endpoint and scoped credentials, run fenced verified adoption
+   with the matching checkpoint reference, then start the server and resume writers. Keep the source volume and matching backup until the migration
    is verified and the retention window has passed. Rollback after new writes
    requires another coordinated migration.
 
@@ -222,3 +227,11 @@ The legacy physical helpers require a TCP administrator URL with an explicit use
 and canonical `postgresql.conf`, `pg_hba.conf` and `pg_ident.conf` files directly in the
 data directory. Socket-only URLs and relocated or symlinked configuration are refused
 before capture. These constraints do not alter the core Compose Checkpoint interface.
+
+For storage adoption or recovery when startup is blocked, stop server and edge
+writers, then use `bash scripts/backup.sh --offline --env-file PATH` with the same
+Compose configuration. Offline capture requires PostgreSQL running and leaves the
+application stopped. It preserves hidden storage markers, publication candidates,
+and retained staging/orphan bytes. Store archives dereference hard links into
+regular entries for safe restore. Follow the [storage recovery procedure](../../docs/operations/storage-identity.md)
+before resuming the server. Automated S3 capture is still unsupported.
