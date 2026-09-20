@@ -21,3 +21,11 @@ for operator experiments. Shipped defaults remain digest-pinned; an override is 
 a qualified release. Stateful compatibility and the three real RustFS acceptance
 scenarios remain release obligations. Checkpoints require verified reproducible image
 content and may refuse local-only upstream images before fencing.
+
+Amended 2026-09-20: Backplane may package an unmodified official Cloudflare workerd binary
+in a minimal project-owned container because no maintained official workerd OCI image
+has been verified. Pin and verify the binary archive, extracted binary and runtime base;
+preserve the upstream license and source identity. This is a narrow exception to the
+upstream-image policy, not permission to modify the runtime or claim stronger isolation.
+The artifact must pass real runtime qualification before becoming a supported default.
+Local image content IDs and registry manifest digests remain distinct identities.
