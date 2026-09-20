@@ -11,6 +11,8 @@ export async function finishInvocation(pool: Pool, runId: string, kind: "functio
     lease = await pool.reserve({ signal: controller.signal });
     if (controller.signal.aborted) { close(); controller.signal.throwIfAborted(); }
     await finishInvocationOnConnection(lease, runId, kind, durationMs, status);
+  } catch {
+    throw Error("invocation_finalize_failed");
   } finally {
     clearTimeout(timer); controller.signal.removeEventListener("abort", close);
     await closing; lease?.release();
