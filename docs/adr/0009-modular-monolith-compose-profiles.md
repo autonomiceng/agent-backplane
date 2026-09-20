@@ -15,3 +15,9 @@ Amended 2026-09-14: Blob bytes are durable state outside Postgres. Filesystem bl
 S33, 2026-09-14: By explicit user decision, RustFS 1.0.0-rc.6 replaces MinIO as the default optional S3 overlay while still a release candidate, superseding DESIGN.md’s GA prerequisite. Filesystem remains core’s default. Accept prerelease compatibility risk with validated digest pins and three real-backend acceptance scenarios. Root credentials remain confined to RustFS and isolated bootstrap. Buckets must never have versioning enabled. Backend changes require fresh storage and explicit object migration; coordinated PostgreSQL/blob backup obligations remain.
 
 Amended 2026-09-17: RustFS 1.0.0 replaces the release candidate at `rustfs/rustfs:1.0.0@sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff`. The accepted storage, credential, versioning, migration, and backup constraints remain unchanged.
+
+Amended 2026-09-20: Complete image references may be selected through `BP_*_IMAGE`
+for operator experiments. Shipped defaults remain digest-pinned; an override is not
+a qualified release. Stateful compatibility and the three real RustFS acceptance
+scenarios remain release obligations. Checkpoints require verified reproducible image
+content and may refuse local-only upstream images before fencing.

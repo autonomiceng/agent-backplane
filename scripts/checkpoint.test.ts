@@ -118,6 +118,11 @@ stack = cp.Stack(p/'.env')
 assert stack.images['postgres']['reference'] == 'pg:experiment'
 assert stack.images['postgres']['recoveryReference'] == saved
 assert stack.images['data-init']['id'] == stack.images['server']['id']
+running = True
+drift = 'postgres'
+try: cp.backup(stack)
+except ValueError as error: assert 'container differs' in str(error), str(error)
+else: raise AssertionError('reused Stack fenced without fresh container attestation')
 root.cleanup()
 `);
 });
@@ -162,5 +167,22 @@ for helper in ('backup-init','migrate','data-init'): del recorded[helper]
 (p/'manifest.json').write_text(json.dumps({'images':recorded,'artifacts':{}}))
 cp.Stack(p/'.env', p)
 root.cleanup()
+`);
+});
+
+
+test("capture refuses a PostgreSQL 18 experiment with a different data directory before fencing", async () => {
+  await python(`from types import SimpleNamespace
+import checkpoint as cp
+calls = []
+def pg(sql):
+ calls.append(sql)
+ return {'SHOW server_version_num':'180006', 'SHOW data_directory':'/custom/data'}[sql]
+stack = SimpleNamespace(attest=lambda: calls.append('attest'), services={},
+ dc=lambda *args: 'postgres server', pg=pg)
+try: cp.backup(stack)
+except ValueError as error: assert 'data_directory=/var/lib/postgresql/18/docker' in str(error)
+else: raise AssertionError('unsupported data directory was captured')
+assert calls == ['attest', 'SHOW server_version_num', 'SHOW data_directory']
 `);
 });

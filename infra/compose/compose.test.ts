@@ -34,7 +34,9 @@ async function config(overlays: string[] = [], profile?: string, settings = publ
     "-f", join(root, "compose.yaml"), ...overlays.flatMap(file => ["-f", join(root, file)]),
     ...(profile ? ["--profile", profile] : []), "config", "--format", "json"];
   try {
-    const child = Bun.spawn(args, { stdout: "pipe", stderr: "pipe" });
+    const child = Bun.spawn(args, { stdout: "pipe", stderr: "pipe",
+      env: Object.fromEntries(Object.entries(Bun.env).filter(([key]) => !key.startsWith("BP_") && !key.startsWith("COMPOSE_"))),
+    });
     const [stdout, stderr, code] = await Promise.all([
       new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
     ]);

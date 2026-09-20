@@ -94,7 +94,7 @@ class Stack:
             try:
                 if recorded is not None:
                     if expected is None or expected['reference'] != ref:
-                        raise ValueError(f'{service}: restore requires the recorded image reference in the env file')
+                        raise ValueError(f'{service}: restore requires the recorded image reference; check the env file and exported BP_* settings')
                     recovery = expected.get('recoveryReference', ref)
                     if service not in helpers and service != 'server':
                         if not re.fullmatch(r'[^\s@]+@sha256:[a-f0-9]{64}', recovery):
@@ -111,9 +111,6 @@ class Stack:
             image_id = info['Id']
             if expected is not None and image_id != expected['id']:
                 raise ValueError(f'{service}: image content differs; load the recorded image before restoring')
-            for container in self.dc('ps', '-aq', service).split():
-                if command(['docker', 'inspect', '--format', '{{.Image}}', container]) != image_id:
-                    raise ValueError(f'{service}: container differs from configured image; reconcile the deployment before capture')
             self.images[service] = dict(reference=ref, id=image_id)
             if service in helpers:
                 if image_id != self.images[helpers[service]]['id']:
@@ -125,6 +122,13 @@ class Stack:
                 if recovery is None:
                     raise ValueError(f'{service}: no verified RepoDigest; publish and pull this exact image or select a reproducible image before capture')
                 self.images[service]['recoveryReference'] = recovery
+        self.attest()
+
+    def attest(self):
+        for service, image in self.images.items():
+            for container in self.dc('ps', '-aq', service).split():
+                if command(['docker', 'inspect', '--format', '{{.Image}}', container]) != image['id']:
+                    raise ValueError(f'{service}: container differs from configured image; reconcile the deployment before capture')
 
     def dc(self, *args):
         return command(self.compose + list(args))
@@ -185,11 +189,14 @@ def prune_checkpoints(root, keep, remove=shutil.rmtree):
 
 
 def backup(stack):
+    stack.attest()
     running = stack.dc('ps', '--status', 'running', '--services').split()
     if not {'postgres', 'server', *(['edge'] if 'edge' in stack.services else [])} <= set(running):
         raise ValueError('backup requires running postgres and server')
     if not 180000 <= int(stack.pg('SHOW server_version_num')) < 190000:
         raise ValueError('Checkpoint recovery requires the PostgreSQL 18 data layout')
+    if stack.pg('SHOW data_directory') != '/var/lib/postgresql/18/docker':
+        raise ValueError('Checkpoint recovery requires data_directory=/var/lib/postgresql/18/docker')
     if stack.pg('SHOW archive_mode') != 'on':
         raise ValueError('WAL archiving is required')
     if stack.pg("SELECT count(*) FROM pg_tablespace WHERE spcname NOT IN ('pg_default','pg_global')") != '0':

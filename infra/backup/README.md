@@ -47,7 +47,9 @@ Pass the same overlays and profiles as the deployment (`COMPOSE_FILE`, `COMPOSE_
 the script removes only the volumes in the rendered configuration, so a `blobs`
 deployment destroyed without its profile keeps `rustfs-data`.
 Use a new project, a new `BP_VOLUME_PREFIX` and alternate ports for recovery. Restore refuses existing containers
-and every non-empty target volume, including hidden files.
+and every non-empty target volume, including hidden files. Image settings follow native
+Compose precedence: exported `BP_*` values override `.env`; clear conflicting exports
+when restoring recorded references.
 
 1. Provision a new encrypted repository mount and a protected env file containing
    the original secrets. Set `BP_BACKUP_DIR` to the new repository. Its `archive`
@@ -58,7 +60,9 @@ and every non-empty target volume, including hidden files.
    pulls the recorded upstream RepoDigests and verifies their content IDs. Keep
    image settings at their recorded references. Local server tags are restored from
    the archive; a server digest reference must also be available in the local Docker
-   store (pull that exact reference before restore).
+   store (pull that exact reference before restore). Restore rebinds tag references
+   to the recorded content, displacing an existing image tag of the same name on this host.
+   Use a dedicated recovery host or distinct tags; running containers retain their content.
 3. Set `COMPOSE_PROJECT_NAME`, a distinct `BP_VOLUME_PREFIX`, and alternate `BP_PORT`, `BP_HTTP_PORT` and
    `BP_HTTPS_PORT` as appropriate, then run:
 

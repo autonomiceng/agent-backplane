@@ -17,7 +17,8 @@ const base = ["docker", "compose", "--project-name", project, "--project-directo
   "--env-file", "/dev/null", "-f", join(directory, "compose.json")];
 async function command(args: string[]) {
   const child = Bun.spawn(args, { stdout: "pipe", stderr: "pipe",
-    env: { ...Bun.env, BP_PUBLIC_URL: "http://localhost:3000" } });
+    env: { ...Object.fromEntries(Object.entries(Bun.env).filter(([key]) => !key.startsWith("BP_") && !key.startsWith("COMPOSE_"))),
+      BP_PUBLIC_URL: "http://localhost:3000" } });
   const timer = setTimeout(() => child.kill(), 30_000);
   try {
     const [out, err, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
