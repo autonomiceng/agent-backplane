@@ -103,7 +103,7 @@ Read the private transcript and author `$BP_DATA_DIR/summary.json` yourself. No 
 }
 ```
 
-Renew while the Receipt is live if analysis takes time. `complete` first checks for an existing matching digest without renewing or using the Receipt. A completed retry reuses its matching private proof. Missing proof fails with `completed_proof_unavailable`; that state is terminal for the `sourceId` because the rollback and commit evidence cannot be reconstructed, so rerun the demo against a new `sourceId`. Pending work renews when fewer than two minutes remain and refuses an expired Receipt. It first submits a deliberately wrong `expectRows`, verifies the SQL rollback and still-leased Delivery, then uses a fresh idempotency key for the correct SQL-plus-ack transaction. It repeats the identical successful request and requires one joined result. The standalone HTML escapes all source and summary text, accepts only HTTP(S) source links, labels fixture versus real material, and is stored as a File.
+Renew while the Receipt is live if analysis takes time. `complete` first checks for an existing matching digest without renewing or using the Receipt. A completed retry reuses its matching private proof. If completion stopped before the proof was written, repeat the same command with the same private claim, summary and CLI session. The claim retains rollback evidence saved before commit; the retry retrieves the recorded transaction response without renewing or acknowledging the completed Delivery again, rebuilds the HTML, and reuses an identical File found through that Run’s audit events. Keep the private claim and CLI Run cache until publication is complete. Pending work renews when fewer than two minutes remain and refuses an expired Receipt. It first submits a deliberately wrong `expectRows`, verifies the SQL rollback and still-leased Delivery, then uses a fresh idempotency key for the correct SQL-plus-ack transaction. It repeats the identical successful request and requires one joined result. The standalone HTML escapes all source and summary text, accepts only HTTP(S) source links, labels fixture versus real material, and is stored as a File.
 
 ```bash
 bun "$BACKPLANE_REPO/examples/talk-digest/analyst.ts" renew "$BP_DATA_DIR/claim.json"
@@ -116,6 +116,8 @@ bun "$BACKPLANE_REPO/examples/talk-digest/analyst.ts" deploy "$BP_DATA_DIR/proof
 The Function has no arbitrary external URL allowlist. On invocation it uses the supported internal callback and its temporary invocation credential to read the completed Workspace rows as the deploying analyst Principal. It returns `{html, metadata}` as authenticated invocation JSON and makes no anonymous-hosting promise. The collector Principal should perform the cross-Principal invocation in its separately configured CLI environment and save its response. Then restore the analyst environment before running `publish`:
 
 ```bash
+mkdir -p /absolute/private && chmod 700 /absolute/private
+umask 077
 bp functions invoke-function --name talk-digest-review --body - >/absolute/private/invocation.json <<JSON
 {"input":{"sourceId":"SOURCE_ID_FROM_THE_CLAIM"}}
 JSON

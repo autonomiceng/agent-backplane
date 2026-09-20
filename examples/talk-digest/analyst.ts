@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { createHash, randomUUID } from "node:crypto";
-import { chmod, open, readFile, rename } from "node:fs/promises";
+import { link, open, readFile, rename, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import { keySegment } from "./key-segment.ts";
 
@@ -93,18 +93,43 @@ async function identity() {
   return who;
 }
 async function writePrivate(path: string, value: Json, replace = false) {
-  if (!replace) {
-    const file = await open(path, "wx", 0o600);
-    try { await file.writeFile(`${JSON.stringify(value, null, 2)}\n`); } finally { await file.close(); }
-    return;
-  }
   const temporary = `${path}.${randomUUID()}`;
   const file = await open(temporary, "wx", 0o600);
-  try { await file.writeFile(`${JSON.stringify(value, null, 2)}\n`); } finally { await file.close(); }
-  await rename(temporary, path);
-  await chmod(path, 0o600);
+  try {
+    try { await file.writeFile(`${JSON.stringify(value, null, 2)}\n`); await file.sync(); } finally { await file.close(); }
+    // Publish complete JSON atomically; initial publication must not replace an existing file.
+    if (replace) await rename(temporary, path);
+    else await link(temporary, path);
+  } finally { await rm(temporary, { force: true }); }
 }
 async function readObject(path: string, name: string) { return object(JSON.parse(await readFile(path, "utf8")) as Json, name); }
+
+async function runAudit(runId: string) {
+  const events: Obj[] = [];
+  let after = "0";
+  while (true) {
+    const page = object(await bp(["events", "read-audit", "--run-id", runId, "--after", after, "--limit", "500"]), "audit");
+    if (!Array.isArray(page.events)) throw new Error("audit_events_invalid");
+    events.push(...page.events.map(event => object(event, "event")));
+    if (page.events.length < 500) return events;
+    const next = text(page.nextAfter, "event_cursor");
+    if (next === after) throw new Error("audit_cursor_stalled");
+    after = next;
+  }
+}
+
+async function recoveredHtmlFile(runId: string, html: string, htmlPath: string) {
+  for (const event of await runAudit(runId)) {
+    if (event.kind !== "blob.put" || event.run_id !== runId || !Array.isArray(event.objects)) continue;
+    for (const candidate of event.objects) {
+      const id = text(candidate, "output_file_id"), temporary = `${htmlPath}.${randomUUID()}`;
+      try {
+        await bp(["blobs", "get-blob", "--id", id, "--out", temporary]);
+        if (await readFile(temporary, "utf8") === html) return id;
+      } finally { await rm(temporary, { force: true }); }
+    }
+  }
+}
 
 function sourcePayload(value: unknown) {
   const source = object(value, "queue_payload"), file = object(source.transcriptFile, "transcript_file");
@@ -193,21 +218,22 @@ async function complete(transcriptPath: string, statePath: string, summaryPath: 
     const response = object(await bp(["sql", "execute-sql", "--body", "-"], { statement: "SELECT s.analysis_state,s.transcript_file_id::text AS transcript_file_id,s.transcript_sha256,s.transcript_bytes::text AS transcript_bytes,d.digest_text,d.key_points,d.analysis_metadata,d.principal_id::text AS digest_principal_id,d.run_id::text AS digest_run_id,(SELECT count(*)::int FROM talk_digests c WHERE c.source_id=s.source_id) AS digest_count FROM talk_sources s LEFT JOIN talk_digests d USING(source_id) WHERE s.source_id=$1", params: [sourceId] }), "completion_check");
     return object((response.rows as Json[])?.[0], "completion_row");
   };
-  if (completionDecision(await inspect(), expected) === "completed") {
+  const completed = completionDecision(await inspect(), expected) === "completed";
+  if (completed) {
     let proof: Obj | undefined;
     try { proof = await readObject(proofPath, "proof"); }
     catch (error) { if (!(typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT")) throw error; }
-    if (!proof) throw new Error("completed_proof_unavailable");
-    const transaction = object(proof.transaction, "proof_transaction");
-    if (proof.sourceId !== sourceId || proof.sourceFileId !== file.id || proof.analystPrincipalId !== expected.principalId
-      || proof.analystRunId !== expected.runId || transaction.expectedFailure !== "assertion_failed" || transaction.rollbackState !== "pending"
-      || transaction.rollbackDigestCount !== 0 || transaction.ackUncommitted !== true || transaction.identicalRetry !== true
-      || transaction.resultCount !== 1 || typeof transaction.committedPosition !== "string" || typeof proof.outputFileId !== "string")
-      throw new Error("completed_proof_mismatch");
-    console.log(JSON.stringify({ sourceId, alreadyCompleted: true, reused: true, proof: proofPath, outputFileId: proof.outputFileId }));
-    return;
+    if (proof) {
+      const transaction = object(proof.transaction, "proof_transaction");
+      if (proof.sourceId !== sourceId || proof.sourceFileId !== file.id || proof.analystPrincipalId !== expected.principalId
+        || proof.analystRunId !== expected.runId || transaction.expectedFailure !== "assertion_failed" || transaction.rollbackState !== "pending"
+        || transaction.rollbackDigestCount !== 0 || transaction.ackUncommitted !== true || transaction.identicalRetry !== true
+        || transaction.resultCount !== 1 || typeof transaction.committedPosition !== "string" || typeof proof.outputFileId !== "string")
+        throw new Error("completed_proof_mismatch");
+      console.log(JSON.stringify({ sourceId, alreadyCompleted: true, reused: true, proof: proofPath, outputFileId: proof.outputFileId }));
+      return;
+    }
   }
-  await liveReceipt(statePath, state);
   const update = "UPDATE talk_sources SET analysis_state='complete' WHERE source_id=$1 AND analysis_state='pending'";
   const insert = "INSERT INTO talk_digests (source_id,digest_text,key_points,analysis_metadata,completed_at) VALUES ($1,$2,$3::jsonb,$4::jsonb,CURRENT_TIMESTAMP)";
   const operations = (expectRows: number): Json[] => [
@@ -216,14 +242,24 @@ async function complete(transcriptPath: string, statePath: string, summaryPath: 
     { ack: { deliveryId: text(state.deliveryId, "delivery_id"), receipt: text(state.receipt, "receipt") } },
   ];
   const { failureKey, digestKey } = completionKeys(demoRun, sourceId);
-  const failed = await bpResult(["transaction", "--body", "-"], { idempotencyKey: failureKey, operations: operations(2) });
-  const failure = object(failed.failure, "expected_failure");
-  const failureDetails = object(failure.details, "expected_failure_details");
-  if (failed.code === 0 || failure.error !== "assertion_failed" || failureDetails.operationIndex !== 0) throw new Error("expected_assertion_failure_missing");
-  const rollbackRow = await inspect();
-  const deliveries = object(await bp(["queue", "list-deliveries", "--queue", QUEUE, "--state", "leased", "--limit", "100"]), "deliveries");
-  const ackUncommitted = Array.isArray(deliveries.items) && deliveries.items.some(item => object(item, "delivery").id === state.deliveryId);
-  if (rollbackRow.analysis_state !== "pending" || rollbackRow.digest_count !== 0 || !ackUncommitted) throw new Error("failure_did_not_roll_back");
+  if (!completed) {
+    await liveReceipt(statePath, state);
+    const failed = await bpResult(["transaction", "--body", "-"], { idempotencyKey: failureKey, operations: operations(2) });
+    const failure = object(failed.failure, "expected_failure"), failureDetails = object(failure.details, "expected_failure_details");
+    if (failed.code === 0 || failure.error !== "assertion_failed" || failureDetails.operationIndex !== 0) throw new Error("expected_assertion_failure_missing");
+    const rollbackRow = await inspect();
+    const deliveries = object(await bp(["queue", "list-deliveries", "--queue", QUEUE, "--state", "leased", "--limit", "100"]), "deliveries");
+    const ackUncommitted = Array.isArray(deliveries.items) && deliveries.items.some(item => object(item, "delivery").id === state.deliveryId);
+    if (rollbackRow.analysis_state !== "pending" || rollbackRow.digest_count !== 0 || !ackUncommitted) throw new Error("failure_did_not_roll_back");
+    // Preserve the observed rollback before the successful transaction can commit.
+    state.completionRollback = { failureKey, expectedFailure: failure.error!, failedOperationIndex: failureDetails.operationIndex!,
+      rollbackState: rollbackRow.analysis_state!, rollbackDigestCount: rollbackRow.digest_count!, ackUncommitted };
+    await writePrivate(statePath, state, true);
+  }
+  const rollback = object(state.completionRollback, "completion_rollback");
+  if (rollback.failureKey !== failureKey || rollback.expectedFailure !== "assertion_failed" || rollback.failedOperationIndex !== 0
+    || rollback.rollbackState !== "pending" || rollback.rollbackDigestCount !== 0 || rollback.ackUncommitted !== true)
+    throw new Error("completion_rollback_mismatch");
   const successBody: Obj = { idempotencyKey: digestKey, operations: operations(1) };
   const first = await bp(["transaction", "--body", "-"], successBody), retry = await bp(["transaction", "--body", "-"], successBody);
   if (!same(first, retry)) throw new Error("successful_retry_response_mismatch");
@@ -231,16 +267,18 @@ async function complete(transcriptPath: string, statePath: string, summaryPath: 
   if (committed.committed !== true || !Array.isArray(committed.results) || committed.results.length !== 3) throw new Error("transaction_not_committed");
   if (completionDecision(await inspect(), expected) !== "completed") throw new Error("result_count_mismatch");
   const html = renderPage(source, authored, collectionDate); await Bun.write(htmlPath, html);
-  const upload = object(await bp(["blobs", "put-blob", "--key", `talk-digest/${keySegment(demoRun)}/${keySegment(sourceId, ".html")}`, "--x-backplane-sha256", sha256(html), "--file", htmlPath]), "output_file");
-  const audit = object(await bp(["events", "read-audit", "--run-id", text(object(state.analyst, "analyst").runId, "run_id"), "--after", "0", "--limit", "500"]), "audit");
-  const events = Array.isArray(audit.events) ? audit.events.map(auditProofEvent) : [];
-  const proof: Obj = { sourceId, sourceFileId: file.id!, outputFileId: upload.id!, analystPrincipalId: who.principalId!, analystRunId: object(state.analyst, "analyst").runId!,
+  let outputFileId = completed ? await recoveredHtmlFile(expected.runId, html, htmlPath) : undefined;
+  if (!outputFileId) outputFileId = text(object(await bp(["blobs", "put-blob", "--key", `talk-digest/${keySegment(demoRun)}/${keySegment(sourceId, ".html")}`,
+    "--x-backplane-sha256", sha256(html), "--file", htmlPath]), "output_file").id, "output_file_id");
+  const events = (await runAudit(expected.runId)).map(auditProofEvent);
+  const { failureKey: _failureKey, ...rollbackEvidence } = rollback;
+  const proof: Obj = { sourceId, sourceFileId: file.id!, outputFileId, analystPrincipalId: who.principalId!, analystRunId: object(state.analyst, "analyst").runId!,
     collectorPrincipalId: object(source.collector, "collector").principalId!, collectorRunId: object(source.collector, "collector").runId!, deliveryId: state.deliveryId!, messageId: state.messageId!,
     collectorEventCursor: text(object(source.provenance, "provenance").eventCursor, "event_cursor"),
-    transaction: { expectedFailure: failure.error!, failedOperationIndex: failureDetails.operationIndex!, rollbackState: rollbackRow.analysis_state!, rollbackDigestCount: rollbackRow.digest_count!, ackUncommitted,
+    transaction: { ...rollbackEvidence,
       committedPosition: committed.position!, identicalRetry: true, resultCount: 1 }, events };
   await writePrivate(proofPath, proof);
-  console.log(JSON.stringify({ sourceId, html: htmlPath, outputFileId: upload.id, proof: proofPath, identicalRetry: true, resultCount: 1 }));
+  console.log(JSON.stringify({ sourceId, html: htmlPath, outputFileId, proof: proofPath, identicalRetry: true, resultCount: 1 }));
 }
 
 async function deploy(proofPath: string, expectedActiveId?: string) {

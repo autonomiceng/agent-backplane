@@ -154,7 +154,7 @@ async function handoff(transcriptPath: string, preparedPath: string) {
   await verifyFile(fileId, bytes);
   const sourceId = text(source.sourceId, "sourceId"), demoRun = text(source.demoRun, "demoRun");
   const { handoffKey, messageKey } = handoffKeys(demoRun, sourceId);
-  const payload: Obj = { schemaVersion: 1, sourceId, title: source.title!, speakers: source.speakers!, talkDate: source.talkDate!,
+  const payload: Obj = { schemaVersion: 1, sourceId, demoRun, title: source.title!, speakers: source.speakers!, talkDate: source.talkDate!,
     topicTags: source.topicTags!, videoUrl: source.videoUrl!, transcriptUrl: source.transcriptUrl!, fictional: source.fictional!,
     transcriptFile: file, transcriptAccess: source.transcriptAccess!, license: source.license!, collector,
     provenance: prepared.provenance!, handoffIdempotencyKey: handoffKey };
