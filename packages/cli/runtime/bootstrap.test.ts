@@ -54,7 +54,7 @@ test("rerun overwrites secrets or repeats provisioning after an interrupted crea
   try {
     const envPath = join(f.directory, ".env"), capability = join(f.directory, "capability"), secret = "a".repeat(64);
     let existingVolume = false;
-    const runner: Runner = async args => args[0] === "context" ? "unix:///var/run/docker.sock" : args[0] === "volume" ? existingVolume ? "existing-data" : "" : args.at(-1) === "/data/enrollment/capability" ? secret : args.some(arg => arg.includes("curl")) ? JSON.stringify({ enrollment: { state: "pending" } }) : "";
+    const runner: Runner = async args => args[0] === "image" ? `sha256:${"e".repeat(64)} amd64` : args[0] === "run" ? `${"d".repeat(64)}  /usr/bin/workerd` : args[0] === "context" ? "unix:///var/run/docker.sock" : args[0] === "volume" ? existingVolume ? "existing-data" : "" : args.at(-1) === "/data/enrollment/capability" ? secret : args.some(arg => arg.includes("curl")) ? JSON.stringify({ enrollment: { state: "pending" } }) : "";
     const args = ["--env-file", envPath, "--backup-dir", f.directory, "--public-url", "http://localhost:3000", "--capability-file", capability];
     const unrelated = 'UNRELATED=${KEEP_THIS}\nUNRELATED=again\nOTHER=`untouched`\nBP_CUSTOM=${UNMANAGED}\n';
     await privateWrite(envPath, unrelated);
@@ -77,7 +77,7 @@ test("rerun overwrites secrets or repeats provisioning after an interrupted crea
     const symbolic = join(f.directory, "symbolic"); await symlink(envPath, symbolic);
     await expect(prepare(["--env-file", symbolic, "--capability-file", capability], {}, runner)).rejects.toMatchObject({ error: "unsafe_private_file" });
     const profilesPath = join(f.directory, "profiles.env"); existingVolume = false;
-    await privateWrite(profilesPath, `BP_RUSTFS_IMAGE=rustfs@sha256:${"b".repeat(64)}\nBP_BLOB_BOOTSTRAP_IMAGE=server@sha256:${"c".repeat(64)}\nBP_WORKERD_REPOSITORY=workerd\nBP_WORKERD_DIGEST=${"d".repeat(64)}\n`);
+    await privateWrite(profilesPath, `BP_RUSTFS_IMAGE=rustfs@sha256:${"b".repeat(64)}\nBP_BLOB_BOOTSTRAP_IMAGE=server@sha256:${"c".repeat(64)}\nBP_WORKERD_IMAGE=workerd:local\nBP_WORKERD_BINARY_SHA256=${"d".repeat(64)}\n`);
     await prepare([...args, "--env-file", profilesPath, "--profile", "blobs", "--profile", "compute"], {}, runner);
     const profiles = await readFile(profilesPath, "utf8");
     expect(profiles).toMatch(/^BP_COMPUTE_TOKEN=[a-f0-9]{64}$/m);

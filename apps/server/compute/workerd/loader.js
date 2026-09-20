@@ -18,11 +18,25 @@ async function authorized(value, token) {
   for (let i = 0; i < 32; i++) difference |= a[i] ^ b[i];
   return difference === 0;
 }
+function unavailable() { return new Response(null, { status: 503, headers: { "x-backplane-error": "compute_unavailable" } }); }
 export default {
   async fetch(request, env, ctx) {
     if (!env.TOKEN || !await authorized(request.headers.get("authorization"), env.TOKEN)) return new Response(null, { status: 401 });
+    if (!/^workerd-binary-sha256:[0-9a-f]{64}$/.test(env.RUNTIME_ID ?? "") || !/^[0-9a-f]{64}$/.test(env.CONTROL_SHA256 ?? "")) return unavailable();
+    const artifact = JSON.stringify({ source: "host-declared", reference: env.IMAGE_REFERENCE, hostObservedImageId: env.HOST_IMAGE_ID || null });
+    if (artifact.length > 1024) return unavailable();
+    if (request.method === "GET" && new URL(request.url).pathname === "/identity") {
+      return new Response(null, { status: 204, headers: {
+        "x-backplane-runtime": env.RUNTIME_ID, "x-backplane-control": env.CONTROL_SHA256, "cache-control": "no-store",
+        "x-backplane-artifact": artifact,
+      } });
+    }
     const invocation = new URL(request.url).pathname === "/invoke";
     if (request.method !== "POST" || (!invocation && new URL(request.url).pathname !== "/prepare")) return new Response(null, { status: 404 });
+    // Bind the admission observation to this loader before reading a bundle or creating a child.
+    if (request.headers.get("x-backplane-runtime") !== env.RUNTIME_ID
+      || request.headers.get("x-backplane-control") !== env.CONTROL_SHA256
+      || request.headers.get("x-backplane-artifact") !== artifact) return unavailable();
     try {
       const reader = request.body?.getReader(), chunks = [];
       let size = 0;
@@ -37,9 +51,10 @@ export default {
       let offset = 0;
       for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
       const envelope = JSON.parse(new TextDecoder().decode(bytes)), m = invocation ? envelope.manifest : envelope;
+      if (m.runtimeDigest !== env.RUNTIME_ID) return unavailable();
       if (m.version !== 1 || m.entryPoint !== "default" || m.compatibilityDate !== "2026-01-01"
         || typeof m.bundle !== "string" || new TextEncoder().encode(m.bundle).length > 4194304
-        || m.keyRef.workspaceId !== m.workspaceId || !/^[0-9a-f]{64}$/.test(m.runtimeDigest)) throw Error("bundle_invalid");
+        || m.keyRef.workspaceId !== m.workspaceId || !/^workerd-binary-sha256:[0-9a-f]{64}$/.test(m.runtimeDigest)) throw Error("bundle_invalid");
       const urls = [...new Set(m.outboundUrls.map((value) => {
         const url = new URL(value);
         if (url.protocol !== "https:" || url.username || url.password || url.hash) throw Error("bundle_invalid");
@@ -59,9 +74,12 @@ export default {
             export default { fetch(request, env, ctx) { return handler.fetch(request, ctx.props, ctx); } };` },
           env: {}, globalOutbound: ctx.exports.Egress({ props: { workspaceId: m.workspaceId, urls: m.outboundUrls } }),
         }));
-        return worker.getEntrypoint(null, { props }).fetch(new Request("https://function.invalid/invoke", {
+        const child = await worker.getEntrypoint(null, { props }).fetch(new Request("https://function.invalid/invoke", {
           method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input),
         }));
+        const headers = new Headers(child.headers);
+        headers.delete("x-backplane-error");
+        return new Response(child.body, { status: child.status, statusText: child.statusText, headers });
       }
       const worker = env.LOADER.get(`${m.workspaceId}/${m.id}/${m.configHash}/prepare`, () => ({
         compatibilityDate: m.compatibilityDate, compatibilityFlags: [], mainModule: "check.js",

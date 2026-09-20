@@ -21,5 +21,5 @@ export const deployments = pgSchema("control").table("deployments", {
   check("deployments_entry_point_check", sql`${t.entryPoint} = 'default'`),
   check("deployments_outbound_urls_check", sql`cardinality(${t.outboundUrls}) <= 16`),
   check("deployments_config_hash_check", sql`octet_length(${t.configHash}) = 32`),
-  check("deployments_runtime_digest_check", sql`${t.runtimeDigest} ~ '^[0-9a-f]{64}$'`),
+  check("deployments_runtime_digest_check", sql`${t.runtimeDigest} ~ '^([0-9a-f]{64}|workerd-binary-sha256:[0-9a-f]{64})$'`),
   check("deployments_status_check", sql`${t.status} IN ('registered', 'active', 'retired')`)]);

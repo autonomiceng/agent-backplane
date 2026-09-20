@@ -29,3 +29,8 @@ preserve the upstream license and source identity. This is a narrow exception to
 upstream-image policy, not permission to modify the runtime or claim stronger isolation.
 The artifact must pass real runtime qualification before becoming a supported default.
 Local image content IDs and registry manifest digests remain distinct identities.
+
+Amended 2026-09-20: ADR-0018 defines measured Runtime Identity, separate image artifact
+evidence and control-surface compatibility. Workerd requires an explicit full image
+reference until F-GATE, publication and B-DEFAULT approval; a local config ID is not a
+registry pin or a supported default.
