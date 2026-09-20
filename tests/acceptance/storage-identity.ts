@@ -24,6 +24,8 @@ async function database() {
   const url = await migratedDatabase(), pool = createPool(adminUrl(url)); pools.push(pool); return pool;
 }
 try {
+  // Clean CI runners have no image cache; acquire the exact qualified artifact.
+  await docker("pull", image);
   container = await docker("create", "--name", name, "--pull", "never", "--memory", "2g", "--publish", "127.0.0.1::9000",
     "--tmpfs", "/data:rw,mode=1777", "--env", "RUSTFS_ACCESS_KEY", "--env", "RUSTFS_SECRET_KEY",
     "--env", "RUSTFS_ADDRESS=:9000", "--env", "RUSTFS_CONSOLE_ENABLE=false", "--env", "RUSTFS_OBS_LOG_DIRECTORY=", image, "/data");
