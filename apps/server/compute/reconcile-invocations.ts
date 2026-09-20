@@ -1,6 +1,6 @@
 import type { ReservedSQL } from "bun";
 import type { Pool } from "../platform/pool.ts";
-import { finishInvocationOnConnection } from "./finish-invocation.ts";
+import { finalizationBudgetMs, finishInvocationOnConnection } from "./finish-invocation.ts";
 
 type ReconciliationState = { stopped: boolean; scheduled?: boolean; cursor?: { expiresAt: string; id: string } | undefined; running?: Promise<number> | undefined; controller?: AbortController | undefined };
 const states = new WeakMap<Pool, ReconciliationState>();
@@ -30,7 +30,8 @@ export function reconcileInvocations(pool: Pool): Promise<number> {
         return tx<{ id: string; expiresAt: string; durationMs: number }[]>`SELECT r.id,p.expires_at::text AS "expiresAt",
           least(2147483647,greatest(0,ceil(extract(epoch FROM clock_timestamp()-r.created_at)*1000)))::int AS "durationMs"
           FROM control.invocation_pending p JOIN control.runs r ON r.id=p.run_id
-          WHERE p.expires_at<=statement_timestamp()-interval '10 seconds'
+          -- Give the original finalizer twice its bounded cleanup budget to record its outcome.
+          WHERE p.expires_at<=statement_timestamp()-make_interval(secs => ${finalizationBudgetMs * 2 / 1000})
             AND (${state.cursor?.expiresAt ?? null}::timestamptz IS NULL OR
               (p.expires_at,p.run_id)>(${state.cursor?.expiresAt ?? null}::timestamptz,${state.cursor?.id ?? null}::uuid))
           ORDER BY p.expires_at,p.run_id LIMIT 16`;

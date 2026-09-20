@@ -1,6 +1,12 @@
 -- Deploy under the documented offline server fence. The table locks additionally
 -- serialize the backfill with in-flight writers, not only other migrators.
-LOCK TABLE control.runs, control.invocation_tokens IN SHARE ROW EXCLUSIVE MODE;
+DO $lock$
+DECLARE previous_timeout text := current_setting('lock_timeout');
+BEGIN
+  PERFORM set_config('lock_timeout','5s',true);
+  LOCK TABLE control.runs, control.invocation_tokens IN SHARE ROW EXCLUSIVE MODE;
+  PERFORM set_config('lock_timeout',previous_timeout,true);
+END $lock$;
 CREATE TABLE control.invocation_pending (
   run_id uuid PRIMARY KEY REFERENCES control.runs(id),
   expires_at timestamptz NOT NULL
@@ -70,3 +76,6 @@ BEGIN
   END;
   DELETE FROM control.invocation_tokens WHERE run_id=r.id;
 END $$;
+
+ALTER FUNCTION control.create_invocation(uuid,bytea,integer) OWNER TO bp_audit;
+ALTER FUNCTION control.finish_invocation(uuid,text,integer,integer) OWNER TO bp_audit;

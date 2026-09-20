@@ -44,7 +44,7 @@ test("real function callbacks retain owner Run and Workspace authority with exac
     const finished = await revoking; expect(finished.status).toBe(200);
     expect((await finished.json()).result).toEqual({ status: 401 });
   } finally { await f.close(); }
-}, 30000);
+}, 45000);
 
 test("server crash leaves expired invocation authority for startup recovery without terminating live or ordinary Runs", async () => {
   const f = await fixture();
@@ -68,7 +68,7 @@ test("server crash leaves expired invocation authority for startup recovery with
     const denied = await f.app.handle(new Request(`${f.base}/sql`, { method: "POST", headers: f.headers(token, runId), body: JSON.stringify({ statement: "SELECT 1", params: [] }) }));
     expect(denied.status).toBe(401);
     await f.start();
-    const deadline = performance.now() + 7000;
+    const deadline = performance.now() + 15000;
     let terminal;
     do { terminal = await f.pool<{ kind: string; metadata: { durationMs: number } }[]>`SELECT kind,metadata FROM audit.events WHERE run_id=${runId} AND kind LIKE 'function.%'`; if (terminal.length) break; await Bun.sleep(20); } while (performance.now() < deadline);
     expect(terminal).toHaveLength(1); expect(terminal[0]!.kind).toBe("function.fail"); expect(terminal[0]!.metadata.durationMs).toBeGreaterThanOrEqual(3000);
@@ -76,14 +76,14 @@ test("server crash leaves expired invocation authority for startup recovery with
     expect(await f.pool<{ kind: string }[]>`SELECT kind FROM audit.events WHERE run_id=${f.callerRun} AND kind IN ('function.fail','function.complete','function.timeout')`).toEqual([]);
     expect(await reconcileInvocations(f.pool)).toBe(0);
   } finally { await f.close(); }
-}, 30000);
+}, 45000);
 
 test("terminal lock exhaustion is repaired periodically and database delay consumes the dispatch budget", async () => {
   const f = await fixture();
   const release = Promise.withResolvers<void>(); let blocker: Promise<unknown> | undefined;
   try {
     const id = await f.deploy("contention", `export default {async fetch(r,props){${f.callbackSource}await new Promise(r=>setTimeout(r,800));return Response.json(null)}}`);
-    const pending = f.post("/functions/contention/invoke", { input: null });
+    const pending = f.post("/functions/contention/invoke", { input: null, timeoutMs: 2000 });
     const runId = await f.observed(id), locked = Promise.withResolvers<void>();
     blocker = withRunContext(f.pool, { workspaceId: f.workspaceId, principalId: f.callerId, runId: f.callerRun }, async () => { locked.resolve(); await release.promise; });
     await locked.promise;
@@ -91,7 +91,7 @@ test("terminal lock exhaustion is repaired periodically and database delay consu
     expect(await f.pool<{ run_id: string }[]>`SELECT run_id FROM control.invocation_tokens WHERE run_id=${runId}`).toEqual([]);
     expect(await f.pool<{ kind: string }[]>`SELECT kind FROM audit.events WHERE run_id=${runId} AND kind LIKE 'function.%'`).toEqual([]);
     release.resolve(); await blocker;
-    const until = performance.now() + 7000;
+    const until = performance.now() + 15000;
     let events;
     do { events = await f.pool<{ kind: string }[]>`SELECT kind FROM audit.events WHERE run_id=${runId} AND kind LIKE 'function.%'`; if (events.length) break; await Bun.sleep(20); } while (performance.now() < until);
     expect(events).toEqual([{ kind: "function.fail" }]);

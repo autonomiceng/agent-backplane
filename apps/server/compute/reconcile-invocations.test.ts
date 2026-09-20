@@ -130,10 +130,10 @@ test("schema upgrade backfills unfinished invocations and preserves closed-defin
     const migrations = await loadMigrations(new URL("../../../db/migrations", import.meta.url).pathname);
     await migrate(sqlMigrationRunner(admin), migrations);
     expect(await pool<{ runId: string }[]>`SELECT run_id AS "runId" FROM control.invocation_pending`).toEqual([{ runId: f.runIds[1]! }]);
-    const functions = await admin<{ secure: boolean; config: string[] }[]>`SELECT prosecdef AS secure,proconfig AS config FROM pg_proc p
+    const functions = await admin<{ secure: boolean; config: string[]; owner: string }[]>`SELECT prosecdef AS secure,proconfig AS config,proowner::regrole::text AS owner FROM pg_proc p
       JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='control' AND p.proname IN ('create_invocation','finish_invocation')`;
     expect(functions).toHaveLength(2);
-    for (const fn of functions) { expect(fn.secure).toBe(true); expect(fn.config).toContain("search_path=pg_catalog"); }
+    for (const fn of functions) { expect(fn.secure).toBe(true); expect(fn.owner).toBe("bp_audit"); expect(fn.config).toContain("search_path=pg_catalog"); }
     await expect(Promise.resolve(pool`DELETE FROM control.invocation_pending`)).rejects.toThrow("permission denied");
     await admin.begin(async tx => {
       await tx`SET LOCAL ROLE bp_executor`;
