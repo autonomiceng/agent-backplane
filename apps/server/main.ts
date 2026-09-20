@@ -3,6 +3,7 @@
 import { join } from "node:path";
 import { diskSampler } from "./platform/disk-sampler.ts";
 import { scheduledPurge, readPurgeInterval } from "./retention/scheduled-purge.ts";
+import { scheduleInvocationReconciliation } from "./compute/reconcile-invocations.ts";
 import { createComputeLauncher } from "./compute/compute-launcher.ts";
 import { verifyStorageBinding } from "./blobs/storage-binding.ts";
 import { createBlobStore } from "./blobs/blob-storage.ts";
@@ -50,6 +51,7 @@ await enrollment.prepare();
 const auth = createAuth(pool, config);
 const migrationProjection = createMigrationProjection(pool, config.dataDir, console, Bun.which("git", { PATH: Bun.env.PATH ?? "" }));
 const app = createApp({ production: Bun.env.NODE_ENV === "production", enrollment, pool, expectedSchemaVersion, auth, authUrl: config.publicOrigin, insecureOrigin: config.insecureOrigin, migrationProjection, compute, blobStore, operations: readOperationsConfig(Bun.env) }).listen(config.port);
+const stopInvocationReconciliation = scheduleInvocationReconciliation(pool);
 const stopDisk = diskSampler(pool, Bun.env.BP_BLOB_BACKEND === "s3" ? undefined : join(config.dataDir, "blobs"));
 const stopPurge = scheduledPurge(pool, purgeInterval, blobStore);
 console.log(`agent-backplane listening on :${config.port}`);
@@ -58,6 +60,7 @@ const shutdown = async () => {
   await stopPurge();
   await stopDisk();
   await app.stop();
+  await stopInvocationReconciliation();
   await stopStorage();
   await pool.close({ timeout: 5 });
   process.exit(0);

@@ -66,3 +66,10 @@ still do not establish CPU termination. The control hash includes `supervisor.ts
 `child-process.ts` in addition to the original three files. Artifact identity remains
 host-declared, and the new Bun packaging and resource gates remain release requirements.
 
+Expired or missing-token invocation Runs without terminal events are repaired through
+the existing `finishInvocation` definer by bounded startup, periodic and opportunistic
+server passes outside bound transactions. Ordinary Runs and live tokens are excluded.
+Recovery records `function.fail`; its `durationMs` is observed wall time from Run creation
+to reconciliation capped at int32, not CPU time or exact execution duration. SQL credential
+expiry and Principal/Workspace authority are unchanged. The terminal record alone is
+not evidence of runtime child exit.

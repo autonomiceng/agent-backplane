@@ -49,7 +49,7 @@ bun run test apps/server/compute/compute-launcher.test.ts apps/server/compute/co
 
 The image probe records reference, actual image ID, architecture, binary and control hashes. It checks private persistence, wrong identity refusal, null bare-Compose image evidence, stale admission evidence refusal for prepare/invoke after changing artifact declarations or loader bytes with the same binary, followed by healthy preparation of the original manifest. Each Docker command is bounded to 120 seconds, control requests to five seconds and startup/restart waits to 15 seconds. The 30-second PG gate writes through the server, checks persisted deployment/activation/invocation evidence and unchanged Principal/Run attribution, and uses real HTTP to check core readiness and authentication while compute refuses a wrong identity. The local HTTP/PG regression checks stored configuration hashes across two artifact declarations and one identity check per operation. The legacy PG gate seeds an active deployment under schema 32, applies migration 33, and checks unchanged history, API readability, attributed activation/invocation refusal, constraint enforcement, and replacement activation retiring the legacy deployment.
 
-Full F-GATE remains unverified until the supervisor artifact and the cases below pass. Workerd remains an experimental trusted-code boundary. The old workerd-only image cannot start the new protocol; root has supplied the pinned Bun addition, which still requires the actual artifact gate before publication. No shipping support or published artifact custody is claimed.
+Full F-GATE remains unverified until the supervisor artifact and the cases below pass. Workerd remains an experimental trusted-code boundary. The old workerd-only image cannot start the new protocol; the Dockerfile includes the pinned Bun addition, which still requires the actual artifact gate before publication. No shipping support or published artifact custody is claimed.
 
 ## Operation lifecycle
 
@@ -85,16 +85,57 @@ shutdown aborts outstanding work and kills captured children. The supervisor att
 and restart as the fallback. Memory is shared by the parent, one operation and one probe
 under 512 MiB; no per-isolate memory guarantee is claimed.
 
-## Supervisor lifecycle gate
+## Invocation recovery
+
+A separate startup, five-second periodic and opportunistic server pass selects at most
+16 invocation Runs under a session advisory lease, with `invocation_deployment_id` and `parent_run_id`, no terminal event,
+and no live token. Ordinary Runs and live invocations are excluded. Selection has a
+two-second statement timeout and each terminal call uses existing bounded finalization.
+The pass calls `finishInvocation` outside a bound transaction and retries future passes
+after contention. It emits existing `function.fail` events and deletes authority using
+the existing closed definer. SQL token expiry is unchanged.
+
+Reconciled `durationMs` is observed wall time from Run creation to reconciliation,
+capped at int32. It is neither CPU time nor exact execution duration. A terminal event
+alone never proves child exit. A successful original finalizer wins idempotently if it
+records the terminal event first.
+
+## Supervisor acceptance commands
+
+Ten new cases: six host lifecycle cases, three real-Postgres authority/recovery cases,
+and one container-memory case with a companion artifact resource proof. No Docker is
+used by the host or PG fixtures. Every missing runtime, EPERM, checksum mismatch, network
+failure or missing fixture setting fails; no such outcome qualifies the runtime.
 
 ```sh
-BP_TEST_WORKERD_BINARY=/absolute/path/to/workerd \
-  BP_WORKERD_BINARY_SHA256=f31da6d248028d698806aa93d1b3aec28bbd4b4b7ddc31e967408ab6406fa5aa \
-  bun test ./tests/acceptance/workerd-lifecycle.ts
-bun tests/acceptance/workerd-image.ts agent-backplane-workerd:1.20260918.1 --lifecycle
+# Host prototype only, using the qualified amd64 binary. Requires local socket permission.
+export BP_TEST_WORKERD_BINARY=/absolute/path/to/workerd
+export BP_WORKERD_BINARY_SHA256=f31da6d248028d698806aa93d1b3aec28bbd4b4b7ddc31e967408ab6406fa5aa
+bun test ./tests/acceptance/workerd-lifecycle.ts
+
+# Start a separate prototype for the PG cases in one terminal; stop this captured process afterward.
+BP_COMPUTE_TOKEN=fixture-secret BP_TEST_API_ADDRESS=127.0.0.1:18081 BP_TEST_SUPERVISOR_PORT=18080 \
+  bun tests/acceptance/workerd-prototype.ts
+# In another terminal, using that prototype:
+BP_COMPUTE_URL=http://127.0.0.1:18080 BP_COMPUTE_TOKEN=fixture-secret \
+  BP_WORKERD_RUNTIME_ID=workerd-binary-sha256:$BP_WORKERD_BINARY_SHA256 BP_TEST_API_PORT=18081 \
+  bun run test ./tests/acceptance/workerd-authority.ts ./tests/acceptance/workerd-identity.ts
+
+# Actual new artifact; root builds with the reviewed Bun pin first. Includes cgroup memory proof.
+bun tests/acceptance/workerd-image.ts ROOT_BUILT_SUPERVISOR_IMAGE --lifecycle
+# Owns a 512 MiB / one-CPU container, fresh PostgreSQL and temporary API listeners.
+python3 tests/acceptance/workerd-gate.py ROOT_BUILT_SUPERVISOR_IMAGE
 ```
 
-The host fixture runs six lifecycle cases. The artifact fixture verifies identity under
-one-CPU load, child termination, aggregate memory recovery, and container restart after
-an injected lost exit observation. Full server authority and orphan-Run recovery are
-qualified separately before release. Socket, network, image or fixture failures fail the gate.
+The lifecycle fixture checks captured children disappear and prints disconnect-reap timing
+and the actual child OOM score. Its exit-observation fault injection uses a real killed
+child plus a deliberately unresolved exit promise; it proves fatal-parent logic, not
+kernel-uninterruptible process behavior or Docker restart. The artifact memory fixture
+checks child absence, no zombies, subsequent healthy invocation and cgroup memory returning
+within 64 MiB of baseline. The PG memory fixture checks terminal failure and token revocation.
+The artifact fixture also records two-second identity under its one-CPU limit and
+restart recovery after an injected lost exit observation in the owned control mount.
+The original helper is restored before asserting healthy recovery. These are executable
+fixtures awaiting root execution, not completed qualification.
+
+Preparation imports bundles in a child with empty bindings and no outbound access. The compatibility date is `2026-01-01`; both server and loader hash the identical trusted Check source into the deployment tuple. Children receive no disk, loader, raw network or API bindings. Egress permits only Workspace paths at `http://server:3000` and exact declared HTTPS URLs over workerd's public-only network.
