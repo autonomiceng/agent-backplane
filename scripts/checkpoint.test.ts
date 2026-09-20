@@ -500,6 +500,12 @@ cp.storage_admin=config
 try: cp.inspect_storage(stack,True)
 except RuntimeError as error: assert 'blob_binding_inspection_budget_invalid' in str(error)
 else: raise AssertionError('invalid helper budget became a forensic checkpoint')
+for refusal in ['blob_binding_busy','blob_binding_lease_lost','blob_binding_stop_all_servers','blob_binding_operator_failed','docker command failed (exit 137)']:
+ def fence(*args): raise RuntimeError(refusal)
+ cp.storage_admin=fence
+ try: cp.inspect_storage(stack,True)
+ except RuntimeError as error: assert str(error)==refusal
+ else: raise AssertionError('fence or infrastructure failure became forensic')
 stack.services['server']['environment']['BP_STARTUP_VERIFY_TIMEOUT']='0'
 try: cp.inspect_storage(stack,True)
 except ValueError as error: assert 'BP_STARTUP_VERIFY_TIMEOUT' in str(error)
@@ -542,8 +548,15 @@ proof=cp.credentials_digest(stack,name,salt)
 assert proof!=cp.credentials_digest(stack,name,cp.os.urandom(32).hex())
 assert proof==cp.credentials_digest(stack,name,salt)
 snapshot={'systemId':'1','postgres':'180006','schema':32,'pgmq':'1','timeline':1,'heads':[]}
-(p/'manifest.json').write_text(json.dumps({'version':1,'name':name,'targetLsn':'0/1','segment':'0'*24,
+(p/'manifest.json').write_text(json.dumps({'version':1,'completedAt':'2026-09-20T00:00:00Z','name':name,'targetLsn':'0/1','segment':'0'*24,
  'before':snapshot,'after':snapshot,'images':stack.images,'volumes':list(stack.stores),'artifacts':{},'credentials':{'kdf':'pbkdf2-hmac-sha256','iterations':600000,'salt':salt,'digest':proof}}))
+valid_manifest=(p/'manifest.json').read_text()
+invalid=json.loads(valid_manifest); invalid['completedAt']='2026-02-30T00:00:00Z'
+(p/'manifest.json').write_text(json.dumps(invalid))
+try: cp.verify(p,stack)
+except ValueError as error: assert 'invalid checkpoint completion time' in str(error)
+else: raise AssertionError('invalid completion time accepted')
+(p/'manifest.json').write_text(valid_manifest)
 stack.services['blob-bootstrap']['environment']['BP_RUSTFS_ROOT_PASSWORD']='different-root-secret'
 try: cp.verify(p,stack)
 except ValueError as error: assert 'captured RustFS root and scoped credentials' in str(error)
@@ -570,7 +583,14 @@ doc['credentials']['iterations']=600000; doc['credentials']['salt']='not-a-salt'
 try: cp.verify(p,stack)
 except ValueError as error: assert 'captured RustFS root and scoped credentials' in str(error)
 else: raise AssertionError('invalid commitment admitted')
-cp.verify=lambda *args:{'name':'capture'}
+cp.verify=lambda *args:{'name':p.name}
+stack.backups=p.parent.parent
+# A renamed/misplaced source must refuse before any target mutation.
+try: cp.restore(stack,p)
+except ValueError as error: assert 'preserve the checkpoint name' in str(error)
+else: raise AssertionError('misplaced checkpoint accepted')
+source=p/'backups'/'capture'; source.mkdir(parents=True)
+stack.backups=p; cp.verify=lambda *args:{'name':'capture'}
 stack.dc=lambda *args:''
 stack.volume=lambda name:name
 stack.project='owned-project'
@@ -586,7 +606,7 @@ def helper(script,*args,**kwargs):
  result=subprocess.run(['sh','-ec',script,'sh',str(p)],capture_output=True)
  if result.returncode: raise RuntimeError('nonempty target')
 stack.helper=helper
-try: cp.restore(stack,p)
+try: cp.restore(stack,source)
 except RuntimeError as error: assert 'nonempty target' in str(error)
 else: raise AssertionError('nonempty restore admitted')
 assert (p/'.existing').read_text()=='preserve'

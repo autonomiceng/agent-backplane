@@ -524,6 +524,13 @@ def verify(source, stack):
         raise ValueError('invalid WAL segment')
     if not re.fullmatch(r'(?:bp_[a-f0-9]{32}|[0-9]{8}T[0-9]{12}Z)', doc['name']) or not re.fullmatch(r'[0-9A-F]+/[0-9A-F]+', doc['targetLsn']):
         raise ValueError('invalid restore target')
+    completed = doc.get('completedAt')
+    if (not isinstance(completed, str) or not re.fullmatch(r'[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?(?:Z|\+00:00)', completed)):
+        raise ValueError('invalid checkpoint completion time')
+    try:
+        datetime.fromisoformat(completed.replace('Z', '+00:00'))
+    except ValueError:
+        raise ValueError('invalid checkpoint completion time') from None
     required = {'postgres/base.tar', 'postgres/pg_wal.tar', 'postgres/backup_manifest', 'server-data.tar', 'wal/' + doc['segment']}
     if not re.fullmatch(r'bp_[a-f0-9]{32}', doc['name']):
         required.add('server-image.tar')
@@ -613,10 +620,11 @@ def inspect_storage(stack, offline=False):
         return storage_evidence(stack, json.loads(storage_admin(stack, 'inspect', '--fenced')))
     except (RuntimeError, ValueError, KeyError) as error:
         token = str(error).removeprefix('storage initialization refused: ')
-        if token in {'blob_binding_inspection_timeout', 'blob_binding_inspection_budget_invalid',
-                     'blob_binding_operator_config_required', 'blob_binding_operator_credential_invalid', 'blob_binding_store_timeout'}:
-            raise
-        if offline and stack.backend == 'filesystem':
+        forensic = {'blob_binding_marker_missing', 'blob_binding_marker_mismatch',
+                    'blob_binding_content_mismatch', 'blob_binding_inventory_mismatch',
+                    'blob_binding_intent_mismatch', 'blob_binding_ambiguous',
+                    'blob_binding_intent_missing', 'blob_binding_store_inventory_invalid'}
+        if offline and stack.backend == 'filesystem' and token in forensic:
             return {'backend': 'filesystem', 'inspection': 'failed', 'servable': False}
         raise
 
@@ -667,6 +675,8 @@ def prepare_restored_storage(stack, checkpoint, retain_unreferenced=False, captu
 def restore(stack, source, retain_unreferenced=False):
     source = source.resolve()
     doc = verify(source, stack)
+    if source.parent != stack.backups / 'backups' or source.name != doc['name']:
+        raise ValueError('preserve the checkpoint name under the recovery repository backups directory')
     if stack.dc('ps', '-aq'):
         raise ValueError('remove target containers before restore; leave the source fenced')
     stack.check_mount_config()
@@ -739,8 +749,11 @@ def restore(stack, source, retain_unreferenced=False):
         time.sleep(1)
     else:
         raise RuntimeError('restored server did not expose its recovery API')
-    stack.helper('chown "$1:$2" /backup/backups; chmod a+rx /backup/backups', str(os.getuid()), str(os.getgid()))
-    publish_health(stack.backups / 'backups', doc)
+    try:
+        stack.helper('chown "$1:$2" /backup/backups; chmod a+rx /backup/backups', str(os.getuid()), str(os.getgid()))
+        publish_health(stack.backups / 'backups', doc)
+    except (RuntimeError, ValueError, OSError, KeyError):
+        print('Restored data is gated, but the health receipt could not be published. Repair repository permissions/free space, then take a new fenced Checkpoint; do not repeat restore into these volumes.', file=sys.stderr)
     print('Restore complete. Workspaces remain gated. Release them through the User API, then start the remaining profiles.')
 
 
