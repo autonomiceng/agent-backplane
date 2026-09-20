@@ -44,16 +44,17 @@ test("helpers inherit server and PostgreSQL references including the internal ga
   expect(services["blob-bootstrap"].environment.BP_BLOB_BOOTSTRAP_IMAGE).toBe("server-local");
 });
 
-test("blob declarations follow overrides and compute retains its configured digest contract", async () => {
+test("blob declarations follow overrides and compute separates image reference from binary identity", async () => {
   const defaults = await config(["BP_RUSTFS_IMAGE=", "BP_BLOB_BOOTSTRAP_IMAGE="], ["blobs"]);
   expect(defaults.rustfs.image).toMatch(/^rustfs\/rustfs:1\.0\.0@sha256:[a-f0-9]{64}$/);
   expect(defaults["blob-bootstrap"].environment.BP_RUSTFS_IMAGE).toBe(defaults.rustfs.image);
-  const services = await config(["BP_RUSTFS_IMAGE=rustfs-local", "BP_BLOB_BOOTSTRAP_IMAGE=helper-experiment", "BP_WORKERD_REPOSITORY=workerd",
-    `BP_WORKERD_DIGEST=${"c".repeat(64)}`, "BP_COMPUTE_TOKEN=fixture"], ["blobs", "compute"]);
+  const services = await config(["BP_RUSTFS_IMAGE=rustfs-local", "BP_BLOB_BOOTSTRAP_IMAGE=helper-experiment", "BP_WORKERD_IMAGE=workerd-local",
+    `BP_WORKERD_BINARY_SHA256=${"c".repeat(64)}`, "BP_COMPUTE_TOKEN=fixture"], ["blobs", "compute"]);
   expect(services.rustfs.image).toBe("rustfs-local");
   expect(services["blob-bootstrap"].environment.BP_RUSTFS_IMAGE).toBe("rustfs-local");
   expect(services["blob-bootstrap"].image).toBe("helper-experiment");
   expect(services["blob-image-check"].image).toBe("helper-experiment");
-  expect(services.workerd.image).toBe(`workerd@sha256:${services.server.environment.BP_WORKERD_DIGEST}`);
+  expect(services.workerd.image).toBe("workerd-local");
+  expect(services.server.environment.BP_WORKERD_RUNTIME_ID).toBe(`workerd-binary-sha256:${"c".repeat(64)}`);
   expect(services.workerd.pull_policy).toBe("never");
 });
