@@ -39,10 +39,12 @@ def qualify_storage(services):
     rustfs = services['rustfs']
     if rustfs['image'].split('@')[-1] != RUSTFS_DIGEST or rustfs.get('command') != ['/data']:
         raise ValueError('S3 checkpoints require the shipped pinned single-volume RustFS')
-    if set(rustfs.get('environment', {})) - {'RUSTFS_ACCESS_KEY', 'RUSTFS_SECRET_KEY', 'RUSTFS_ADDRESS', 'RUSTFS_CONSOLE_ENABLE', 'RUSTFS_OBS_LOG_DIRECTORY', 'RUSTFS_OBS_LOG_STDOUT_ENABLED'}:
+    if set(rustfs.get('environment', {})) - {'RUSTFS_ACCESS_KEY', 'RUSTFS_SECRET_KEY', 'RUSTFS_ADDRESS', 'RUSTFS_CONSOLE_ENABLE', 'RUSTFS_CONSOLE_ADDRESS', 'RUSTFS_OBS_LOG_DIRECTORY', 'RUSTFS_OBS_LOG_STDOUT_ENABLED'}:
         raise ValueError('custom RustFS environment is unsupported')
     if rustfs.get('entrypoint') or rustfs.get('environment', {}).get('RUSTFS_ADDRESS') != ':9000':
         raise ValueError('custom RustFS launch configuration is unsupported')
+    if rustfs.get('environment', {}).get('RUSTFS_CONSOLE_ADDRESS', ':9001') != ':9001':
+        raise ValueError('custom RustFS console address is unsupported')
     mounts = rustfs.get('volumes', [])
     if len(mounts) != 1 or any(mounts[0].get(k) != v for k, v in dict(type='volume', source='rustfs-data', target='/data').items()) or mounts[0].get('read_only'):
         raise ValueError('custom RustFS volume layout is unsupported')
