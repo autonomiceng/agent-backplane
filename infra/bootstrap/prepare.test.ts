@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { prepare, type Runner } from "./prepare.ts";
@@ -79,5 +79,70 @@ test("prepare refuses persisted internal image overrides before launch or env ch
       expect(await readFile(path, "utf8")).toBe(source);
     }
     expect(calls).toBe(0);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("prepare normalizes status state once, preserves secrets, creates safe modes, and rejects unsafe paths", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "bp-prepare-status-"));
+  const path = join(directory, ".env"), state = join(directory, "host state"), capability = join(directory, "capability");
+  const runner: Runner = async args => {
+    if (args[0] === "context") return "unix:///var/run/docker.sock";
+    if (args[0] === "volume") return "";
+    return args.some(arg => arg.includes("curl")) ? JSON.stringify({ enrollment: { state: "claimed" } }) : "";
+  };
+  const oldMask = process.umask(0o077);
+  try {
+    await mkdir(join(state, "status"), { recursive: true, mode: 0o750 });
+    await chmod(join(state, "status"), 0o750);
+    await writeFile(path, "UNMANAGED_SECRET=keep-me\nBP_STATUS_DIR='host state'\n");
+    const args = ["--env-file", path, "--backup-dir", directory, "--capability-file", capability];
+    await prepare(args, {}, runner);
+    const first = await readFile(path, "utf8");
+    await prepare(args, {}, runner);
+    expect(await readFile(path, "utf8")).toBe(first);
+    expect(first).toContain("UNMANAGED_SECRET=keep-me");
+    expect(first.match(/^BP_STATUS_DIR=/gm)?.length).toBe(1);
+    expect(first).toContain(`BP_STATUS_DIR='${state}'`);
+    expect((await lstat(join(state, "console"))).mode & 0o777).toBe(0o755);
+    expect((await lstat(join(state, "status"))).mode & 0o777).toBe(0o750);
+
+    const unsafe = join(directory, "unsafe.env");
+    await writeFile(unsafe, "BP_STATUS_DIR=/\n");
+    await expect(prepare(["--env-file", unsafe, "--backup-dir", directory,
+      "--capability-file", capability], {}, runner)).rejects.toMatchObject({ error: "unsafe_status_directory" });
+    const linked = join(directory, "linked"), target = join(directory, "target");
+    await mkdir(target);
+    await symlink(target, linked);
+    await writeFile(unsafe, `BP_STATUS_DIR=${linked}\n`);
+    await expect(prepare(["--env-file", unsafe, "--backup-dir", directory,
+      "--capability-file", capability], {}, runner)).rejects.toMatchObject({ error: "status_record_failed" });
+  } finally { process.umask(oldMask); await rm(directory, { recursive: true, force: true }); }
+});
+
+test("prepare records bootstrap unavailable before launch and healthy only after readiness custody", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "bp-prepare-record-"));
+  const path = join(directory, ".env"), capability = join(directory, "capability"), records: string[][] = [];
+  const args = ["--env-file", path, "--backup-dir", directory, "--capability-file", capability];
+  const record = async (recordArgs: string[]) => {
+    if (recordArgs.at(-1) === "healthy") expect(await readFile(capability, "utf8")).toMatch(/^[a-f0-9]{64}\n$/);
+    records.push(recordArgs);
+  };
+  const runner: Runner = async composeArgs => {
+    if (composeArgs[0] === "context") return "unix:///var/run/docker.sock";
+    if (composeArgs[0] === "volume") return "";
+    if (composeArgs.some(arg => arg.includes("curl"))) return JSON.stringify({ enrollment: { state: "pending" } });
+    if (composeArgs.at(-1) === "/data/enrollment/capability") return `${"a".repeat(64)}\n`;
+    return "";
+  };
+  try {
+    await prepare(args, {}, runner, record);
+    expect(records.filter(call => call.includes("--state")).map(call => call.at(-1))).toEqual(["unavailable", "healthy"]);
+    records.length = 0;
+    await expect(prepare(args, {}, async composeArgs => {
+      const result = await runner(composeArgs, {});
+      if (composeArgs.includes("up")) throw new Error("launch failed");
+      return result;
+    }, record)).rejects.toThrow("launch failed");
+    expect(records.filter(call => call.includes("--state")).map(call => call.at(-1))).toEqual(["unavailable"]);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });

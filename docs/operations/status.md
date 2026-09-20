@@ -1,9 +1,17 @@
 # Public status observations
 
 `scripts/status_observer.py` assembles the Backplane version 1 public status
-allowlist from bounded host observations. It writes `status.json`; this change does
-not mount or serve that file, install a timer, or invoke the observer from
-preparation. Those publication and lifecycle steps require separate integration.
+allowlist from bounded host observations. It atomically writes the public file at
+`<BP_STATUS_DIR>/console/status.json`. Standalone edge and internal gateway
+deployments mount only that `console` leaf at `/srv/status`, read-only. The private
+task directory is not mounted, and the edge receives no Docker socket.
+
+The edge serves unauthenticated `GET` and `HEAD /status.json` with
+`Content-Type: application/json` and `Cache-Control: no-store`. It strips
+authorization, proxy authorization, cookies, validators, and range headers before
+file handling. Other methods return an empty 405 with `Allow: GET, HEAD`; a missing
+or empty public directory returns an empty 404. The existing application routes and
+authentication policy remain unchanged.
 
 Run the observer as the installation owner, with Python 3.11+, Docker CLI with
 Compose, and access to the selected local Docker daemon. It uses only the Python
@@ -35,14 +43,56 @@ an internal gateway with Files on RustFS and Functions enabled adds:
 
 Use `compose.edge.yaml` with `--profile edge` for standalone Caddy. Never select
 both edge and gateway. Relative Compose files resolve from the selected checkout.
-If omitted, the env file defaults to `<checkout>/.env`, the project to
-`agent-backplane`, the Compose selection to `compose.yaml`, and the state directory
-to `<checkout>/data`. These defaults select core only. The observer never discovers
+If omitted for a manual observation, the env file defaults to `<checkout>/.env`,
+the project to `agent-backplane`, the Compose selection to `compose.yaml`, and the
+state directory to `<checkout>/data`. These defaults select core only. The observer never discovers
 optional overlays from repository presence. `infra/bootstrap/prepare.ts` currently
 does not persist its Compose file/profile selection, so an installed optional stack
 must repeat the exact preparation selection here. Every active profile must be passed
 with `--profile`; an env-only `COMPOSE_PROFILES` selection does not establish observer
 custody and leaves the affected mode unknown.
+
+`BP_STATUS_DIR` is host state and is independent of the server's container
+`BP_DATA_DIR=/data`. Preparation defaults it to `./data`, resolves relative values
+beside the selected env file, persists the absolute value without replacing other
+settings, and creates a private status parent plus a mode `0755` public `console`
+leaf. It records bootstrap unavailable before deployment mutation and changes that
+task to healthy only after `up --wait`, authenticated readiness, and enrollment
+capability custody all succeed. Environment generation alone never records success.
+
+## Install periodic observation
+
+Timer installation is an explicit, separate opt-in. Repeat every Compose file and
+active profile used for the deployment:
+
+```sh
+python3 scripts/install_status_timer.py --install \
+  --checkout "$PWD" \
+  --env-file "$PWD/.env" \
+  --compose-project agent-backplane \
+  --compose-file compose.yaml \
+  --compose-file compose.blobs.yaml --profile blobs \
+  --compose-file compose.compute.yaml --profile compute \
+  --compose-file compose.edge.yaml --profile edge
+```
+
+Use `compose.gateway.yaml --profile gateway` instead of the edge pair for an
+internal gateway. The installer evaluates that exact selection with a bounded
+Compose configuration command in a closed environment. For edge or gateway
+selections, it requires exactly one read-only bind at `/srv/status`, requires its
+source leaf to be `console`, derives the state directory from its parent, and refuses
+a conflicting `--state-dir`. Core-only selection uses an explicit `--state-dir` or
+defaults to `<checkout>/data`.
+
+The generated user service freezes canonical checkout, env-file, project, Compose
+files, profiles, and state directory in its command. It has a 120-second start limit
+for the observer's 90-second collection and cleanup budget. The timer starts after
+10 seconds and schedules the next run 30 seconds after completion, so observations
+do not overlap. Unit arguments escape systemd specifier and environment expansion.
+Existing unit files are never overwritten. A pre-activation partial write removes
+only files created by that attempt; an activation failure retains both units for
+inspection and explicit disablement. The user manager must remain active and have
+Docker access; enable lingering separately if observation must continue after logout.
 
 Native Compose resolves variables from the selected env file. The observer removes
 inherited `BP_*`, `COMPOSE_*`, and unrelated shell variables before invoking Compose;
@@ -52,7 +102,7 @@ An unavailable checkout, env file, or explicitly selected Compose file refuses b
 publication. Diagnose complete Compose output only through a protected operator shell;
 it can contain credentials.
 
-The public file is `<state-dir>/console/status.json`. The lock and future bootstrap
+The public file is `<state-dir>/console/status.json`. The lock and bootstrap
 execution record live under `<state-dir>/status`, outside the public directory.
 Destination directories and existing destination files must be owned by the observer uid. Group-
 or world-writable destination directories, destination symlinks, hard-linked output
