@@ -8,6 +8,7 @@ import secrets
 import socket
 import signal
 import subprocess
+import sys
 import time
 import urllib.request
 import uuid
@@ -101,7 +102,13 @@ finally:
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     if container is not None:
-        observed = docker('inspect', '--format', '{{index .Config.Labels "io.backplane.runtime-proof"}}', container)
-        if observed != owner:
-            raise RuntimeError('refusing unowned cleanup')
-        docker('rm', '--force', container)
+        primary_error = sys.exc_info()[1]
+        try:
+            observed = docker('inspect', '--format', '{{index .Config.Labels "io.backplane.runtime-proof"}}', container)
+            if observed != owner:
+                raise RuntimeError('refusing unowned cleanup')
+            docker('rm', '--force', container)
+        except Exception:
+            print('Owned runtime cleanup failed; inspect captured container ' + container, file=sys.stderr, flush=True)
+            if primary_error is None:
+                raise

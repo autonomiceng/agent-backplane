@@ -98,8 +98,8 @@ when a terminal audit event exists. Expired-token sweeping cannot lose recovery 
 
 An expiry index keeps selection independent of completed invocation history. Recovery
 becomes eligible ten seconds after the invocation's configured timeout elapses,
-allowing the original gateway to record its outcome. With the default 30-second
-timeout, eligibility begins about 40 seconds after invocation start. Scheduling and
+allowing the original gateway to record its outcome. With the Compose default 10-second
+timeout, eligibility begins about 20 seconds after invocation start. Scheduling and
 contention can add delay. This affects terminal audit recording; authority still
 expires at the configured timeout.
 A keyset cursor advances past each attempted row so a contended Workspace cannot starve
