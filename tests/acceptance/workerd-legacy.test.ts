@@ -31,7 +31,8 @@ test("migration 33 preserves legacy history, refuses legacy execution and activa
     });
     const original = await pool<Record<string, unknown>[]>`SELECT * FROM control.deployments WHERE workspace_id = ${workspaceId} AND id = ${id}`;
     const history = await pool`SELECT * FROM audit.events WHERE workspace_id = ${workspaceId} AND kind LIKE 'function.%' ORDER BY position`;
-    expect(await migrate(sqlMigrationRunner(admin), await loadMigrations(new URL("../../db/migrations", import.meta.url).pathname))).toEqual([33]);
+    const migrations = await loadMigrations(new URL("../../db/migrations", import.meta.url).pathname);
+    expect(await migrate(sqlMigrationRunner(admin), migrations)).toEqual(migrations.filter(m => m.version > 32).map(m => m.version));
     // An INSERT exercises the CHECK; changing the original row would hit its immutability trigger first.
     for (const candidate of [runtimeDigest, "not-a-digest"]) {
       const inserted = withRunContext(pool, { workspaceId, principalId, runId }, async tx => {

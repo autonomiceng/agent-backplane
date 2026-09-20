@@ -6,6 +6,7 @@ import { withRunContext } from "../runs/with-run-context.ts";
 import { queryDeployment } from "./deployment-query.ts";
 import type { Manifest } from "./deployment-config.ts";
 import type { ComputeLauncher } from "./compute-launcher.ts";
+import { reconcileInvocations } from "./reconcile-invocations.ts";
 import { finishInvocation } from "./finish-invocation.ts";
 import { InvocationError, readInvocationBytes, type invokeFunctionInput } from "./invoke-function-input.ts";
 export async function invokeFunction(pool: Pool, caller: RunContext, name: string, body: typeof invokeFunctionInput.static, launcher: ComputeLauncher, signal: AbortSignal) {
@@ -69,6 +70,7 @@ export async function invokeFunction(pool: Pool, caller: RunContext, name: strin
     throw failure;
   } finally {
     clearTimeout(timer); controller.abort(); signal.removeEventListener("abort", abort);
-    await finishInvocation(pool, invocation.runId, kind, Math.min(2147483647, Math.ceil(performance.now() - started)), httpStatus);
+    try { await finishInvocation(pool, invocation.runId, kind, Math.min(2147483647, Math.ceil(performance.now() - started)), httpStatus); }
+    finally { void reconcileInvocations(pool).catch(() => console.error("invocation_reconcile_failed")); }
   }
 }
