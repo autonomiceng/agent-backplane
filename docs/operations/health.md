@@ -16,6 +16,33 @@ problems. Overall status is never `unknown`. `/metrics` uses the same token and
 observations and returns Prometheus gauges even while operational health is
 degraded. Keep these operator routes off public ingress.
 
+`capabilities.files` and `capabilities.functions` carry `state`, `observedAt` and
+`backend`. `healthy` requires a successful probe; `unavailable` means a failed or
+timed-out probe. Missing probe dependencies report `unknown`. Unconfigured compute
+reports `disabled` and does not degrade operations. `files_unknown`,
+`files_unavailable`, `functions_unknown` and `functions_unavailable` degrade the
+aggregate status. These observations leave `/health/ready` unchanged.
+
+Files is enabled by default through filesystem storage. Its read-only probe reads
+the current database binding phase/backend and the selected store's identity
+marker. Success proves that the selected store is reachable and its marker matches
+the ready binding. It does not inventory or hash blob content, test writeability,
+or create Workspace data. Startup storage verification remains separate.
+Functions calls the launcher's bounded private identity verification, which proves
+runtime identity and control-surface compatibility. It does not invoke a function
+or prove that every function's code works. Runtime version is omitted because the
+identity interface does not measure a version.
+
+Each capability has a two-second response deadline and a cache lasting at most
+five seconds from the original probe start. `observedAt` retains that start time.
+A timed-out I/O flight keeps its slot until it settles; requests observe its
+unavailable result without launching more I/O. S3 marker fetches receive the
+abort signal as well as their native ten-second bound. No private storage paths,
+buckets, URLs, configured images, credentials or error details enter capability
+observations. Prometheus exposes `bp_capability_state{capability,state}` and
+`bp_capability_observed_timestamp_seconds{capability}`. These endpoints remain
+operator-gated; no public host observer is implemented.
+
 Each signal carries its value, observation time and status. `ok` is within the
 threshold; `warn` is a threshold breach; `stale` is old data or an elapsed deadline;
 `unknown` means the observation failed and makes overall health `degraded`.

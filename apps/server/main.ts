@@ -1,5 +1,6 @@
 // Process entry. The only file that reads the environment and opens resources.
 // Refuses to listen on an incompatible cluster (ADR-0014); readiness keeps answering after start for outages.
+import { capabilityProbe } from "./platform/capability-probe.ts";
 import { join } from "node:path";
 import { diskSampler } from "./platform/disk-sampler.ts";
 import { scheduledPurge, readPurgeInterval } from "./retention/scheduled-purge.ts";
@@ -49,7 +50,7 @@ const enrollment = createEnrollment(pool, config);
 await enrollment.prepare();
 const auth = createAuth(pool, config);
 const migrationProjection = createMigrationProjection(pool, config.dataDir, console, Bun.which("git", { PATH: Bun.env.PATH ?? "" }));
-const app = createApp({ production: Bun.env.NODE_ENV === "production", enrollment, pool, expectedSchemaVersion, auth, authUrl: config.publicOrigin, insecureOrigin: config.insecureOrigin, migrationProjection, compute, blobStore, operations: readOperationsConfig(Bun.env) }).listen(config.port);
+const app = createApp({ production: Bun.env.NODE_ENV === "production", enrollment, pool, expectedSchemaVersion, auth, authUrl: config.publicOrigin, insecureOrigin: config.insecureOrigin, migrationProjection, compute, blobStore, capabilitySampler: capabilityProbe(pool, blobStore, compute), operations: readOperationsConfig(Bun.env) }).listen(config.port);
 const stopDisk = diskSampler(pool, Bun.env.BP_BLOB_BACKEND === "s3" ? undefined : join(config.dataDir, "blobs"));
 const stopPurge = scheduledPurge(pool, purgeInterval, blobStore);
 console.log(`agent-backplane listening on :${config.port}`);

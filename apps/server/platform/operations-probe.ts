@@ -1,4 +1,5 @@
 // Request-driven observations borrow one connection and leave its session settings unchanged.
+import { unknownCapabilities, type CapabilitySampler } from "./capability-types.ts";
 import type { Enrollment } from "../auth/enrollment.ts";
 import { opendir, open, lstat, realpath } from "node:fs/promises";
 import { constants } from "node:fs";
@@ -60,7 +61,7 @@ async function backupManifest(dir: string | undefined, systemId: string | undefi
   }
   return latest;
 }
-export function operationsProbe(pool: Pool, config: OperationsConfig, enrollment?: Enrollment) {
+export function operationsProbe(pool: Pool, config: OperationsConfig, enrollment?: Enrollment, capabilities?: CapabilitySampler) {
   const snapshotValid=(value: unknown): value is NonNullable<Facts["snapshot"]> => getSchemaValidator(snapshotSchema,{normalize:false})?.Check(value) === true;
   const databaseValid=(value: unknown): value is NonNullable<Facts["database"]> => getSchemaValidator(databaseSchema,{normalize:false})?.Check(value) === true;
   let cache: { snapshot: Facts["snapshot"]; database: Facts["database"]; backup: Facts["backup"]; telemetry: Telemetry | null; started: number; clockAt: number } | undefined;
@@ -103,6 +104,9 @@ export function operationsProbe(pool: Pool, config: OperationsConfig, enrollment
     inFlight=response;
     return response;
   };
-  return async () => ({ ...await sample(), enrollment: await enrollment?.observe() ?? { state: "unknown", capabilityFile: null, observedAt: null },
+  return async () => {
+    const [observation, capabilityObservation] = await Promise.all([sample(), capabilities?.().catch(() => unknownCapabilities()) ?? unknownCapabilities()]);
+    return ({ ...observation, capabilities: capabilityObservation, enrollment: await enrollment?.observe() ?? { state: "unknown", capabilityFile: null, observedAt: null },
     signup: enrollment?.signup ?? { configured: "closed", effective: "closed" }, publicSignup: enrollment?.publicSignup ?? false } satisfies Partial<Facts> & { started: number; clockAt: number });
+  };
 }

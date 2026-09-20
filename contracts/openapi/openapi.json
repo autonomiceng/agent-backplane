@@ -16753,6 +16753,93 @@
                       ],
                       "type": "object"
                     },
+                    "capabilities": {
+                      "properties": {
+                        "files": {
+                          "properties": {
+                            "backend": {
+                              "enum": [
+                                "filesystem",
+                                "s3",
+                                "workerd"
+                              ],
+                              "nullable": true,
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "observedAt": {
+                              "format": "date-time",
+                              "nullable": true,
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "state": {
+                              "enum": [
+                                "healthy",
+                                "unavailable",
+                                "unknown",
+                                "disabled"
+                              ],
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "state",
+                            "observedAt",
+                            "backend"
+                          ],
+                          "type": "object"
+                        },
+                        "functions": {
+                          "properties": {
+                            "backend": {
+                              "enum": [
+                                "filesystem",
+                                "s3",
+                                "workerd"
+                              ],
+                              "nullable": true,
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "observedAt": {
+                              "format": "date-time",
+                              "nullable": true,
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "state": {
+                              "enum": [
+                                "healthy",
+                                "unavailable",
+                                "unknown",
+                                "disabled"
+                              ],
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "state",
+                            "observedAt",
+                            "backend"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "files",
+                        "functions"
+                      ],
+                      "type": "object"
+                    },
                     "codes": {
                       "items": {
                         "type": "string"
@@ -18246,6 +18333,7 @@
                     }
                   },
                   "required": [
+                    "capabilities",
                     "enrollment",
                     "signup",
                     "version",
@@ -18705,6 +18793,93 @@
                             "ageSeconds",
                             "archiveLagSeconds",
                             "latestPendingWal"
+                          ],
+                          "type": "object"
+                        },
+                        "capabilities": {
+                          "properties": {
+                            "files": {
+                              "properties": {
+                                "backend": {
+                                  "enum": [
+                                    "filesystem",
+                                    "s3",
+                                    "workerd"
+                                  ],
+                                  "nullable": true,
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
+                                "observedAt": {
+                                  "format": "date-time",
+                                  "nullable": true,
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
+                                "state": {
+                                  "enum": [
+                                    "healthy",
+                                    "unavailable",
+                                    "unknown",
+                                    "disabled"
+                                  ],
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "state",
+                                "observedAt",
+                                "backend"
+                              ],
+                              "type": "object"
+                            },
+                            "functions": {
+                              "properties": {
+                                "backend": {
+                                  "enum": [
+                                    "filesystem",
+                                    "s3",
+                                    "workerd"
+                                  ],
+                                  "nullable": true,
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
+                                "observedAt": {
+                                  "format": "date-time",
+                                  "nullable": true,
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
+                                "state": {
+                                  "enum": [
+                                    "healthy",
+                                    "unavailable",
+                                    "unknown",
+                                    "disabled"
+                                  ],
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "state",
+                                "observedAt",
+                                "backend"
+                              ],
+                              "type": "object"
+                            }
+                          },
+                          "required": [
+                            "files",
+                            "functions"
                           ],
                           "type": "object"
                         },
@@ -20201,6 +20376,7 @@
                         }
                       },
                       "required": [
+                        "capabilities",
                         "enrollment",
                         "signup",
                         "version",

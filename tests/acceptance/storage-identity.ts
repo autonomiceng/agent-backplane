@@ -1,3 +1,4 @@
+import { capabilityProbe } from "../../apps/server/platform/capability-probe.ts";
 // Root-run real RustFS/PostgreSQL identity gate. Every resource belongs to this invocation.
 import assert from "node:assert/strict";
 import { createHash, createHmac } from "node:crypto";
@@ -61,6 +62,8 @@ try {
   const winner = raced[0]?.status === "fulfilled" ? a : b, loser = winner === a ? b : a;
   const marker = await shared.readMarker();
   const release = await verifyStorageBinding(winner, shared); await release();
+  assert.equal((await capabilityProbe(winner, shared)()).files.state, "healthy");
+  assert.equal((await capabilityProbe(loser, shared)()).files.state, "unavailable");
   await assert.rejects(adoptStorage(loser, shared, initialize));
   assert.deepEqual(await shared.readMarker(), marker, "loser changed the store owner");
 

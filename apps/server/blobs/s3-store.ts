@@ -28,8 +28,8 @@ export function s3Store(options: ConstructorParameters<typeof S3Client>[0]): Bin
   return {
     backend: "s3",
     readMarker: () => transfer(storeMarker, "GET"),
-    async markerOrAbsent() {
-      const response = await fetch(client.presign(storeMarker, { method: "GET", expiresIn: 60 }), { signal: AbortSignal.timeout(10000), redirect: "error" });
+    async markerOrAbsent(signal) {
+      const response = await fetch(client.presign(storeMarker, { method: "GET", expiresIn: 60 }), { signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10000)]) : AbortSignal.timeout(10000), redirect: "error" });
       if (response.status === 404) { await response.body?.cancel(); return null; }
       if (!response.ok) { await response.body?.cancel(); throw new Error("blob_unavailable"); }
       const result = await bufferBlob(response.body);
