@@ -1,6 +1,27 @@
 // Terminal attempts commit credential deletion even when audit contention requires another attempt.
+import type { ReservedSQL } from "bun";
 import type { Pool } from "../platform/pool.ts";
+export const finalizationBudgetMs = 5000;
 export async function finishInvocation(pool: Pool, runId: string, kind: "function.complete" | "function.fail" | "function.timeout", durationMs: number, status: number | null): Promise<void> {
+  const controller = new AbortController();
+  let lease: ReservedSQL | undefined, closing: Promise<void> | undefined;
+  const close = () => { if (lease) closing ??= lease.close().catch(() => {}); };
+  controller.signal.addEventListener("abort", close, { once: true });
+  const timer = setTimeout(() => controller.abort(Error("invocation_finalize_failed")), finalizationBudgetMs);
+  try {
+    lease = await pool.reserve({ signal: controller.signal });
+    if (controller.signal.aborted) { close(); controller.signal.throwIfAborted(); }
+    await finishInvocationOnConnection(lease, runId, kind, durationMs, status);
+  } catch {
+    throw Error("invocation_finalize_failed");
+  } finally {
+    clearTimeout(timer); controller.signal.removeEventListener("abort", close);
+    await closing; lease?.release();
+  }
+}
+
+// The reconciliation pass owns this connection and its overall deadline.
+export async function finishInvocationOnConnection(pool: ReservedSQL, runId: string, kind: "function.complete" | "function.fail" | "function.timeout", durationMs: number, status: number | null): Promise<void> {
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const complete = await pool.begin(async (tx) => {

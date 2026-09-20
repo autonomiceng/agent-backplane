@@ -2,6 +2,7 @@
 import { enrollmentState, signupSchema } from "../auth/enrollment-input.ts";
 import type { EnrollmentObservation } from "../auth/enrollment.ts";
 import { t } from "elysia";
+import { capabilitiesSchema, unknownCapabilities, type Capabilities } from "./capability-types.ts";
 import { poolLimit } from "./pool.ts";
 export const statuses = ["ok", "warn", "unknown", "stale", "degraded"] as const;
 const statusSchema = t.Union([t.Literal("ok"),t.Literal("warn"),t.Literal("unknown"),t.Literal("stale"),t.Literal("degraded")]);
@@ -21,7 +22,7 @@ export const databaseSchema = t.Object({ observedAt: t.String(), systemId: decim
 const point = t.Object({ name: t.String(), lsn: t.String(), timeline: t.Number() });
 const signal = <T extends import("elysia").TSchema>(value: T) => t.Object({ value: t.Nullable(value), observedAt: t.Nullable(t.String()), status: statusSchema, codes: t.Array(t.String()) });
 const queueSignals = { counts: signal(counts), oldestReadyAgeSeconds: signal(t.Number()), expiredLeases: signal(decimal), oldestExpiredLeaseAgeSeconds: signal(t.Number()) };
-export const operationsSchema = t.Object({ enrollment: t.Object({ state: enrollmentState, capabilityFile: t.Nullable(t.String()), observedAt: t.Nullable(t.String({ format: "date-time" })) }), signup: signupSchema, version: t.Literal(1), observedAt: t.Nullable(t.String()), status: t.Union([t.Literal("ok"),t.Literal("degraded")]), codes: t.Array(t.String()),
+export const operationsSchema = t.Object({ capabilities: capabilitiesSchema, enrollment: t.Object({ state: enrollmentState, capabilityFile: t.Nullable(t.String()), observedAt: t.Nullable(t.String({ format: "date-time" })) }), signup: signupSchema, version: t.Literal(1), observedAt: t.Nullable(t.String()), status: t.Union([t.Literal("ok"),t.Literal("degraded")]), codes: t.Array(t.String()),
   coverage: t.Object({ workspaceCount: t.Nullable(decimal), listedWorkspaces: t.Number(), omittedQueues: t.Nullable(decimal) }),
   disk: t.Object({ databaseBytes: signal(t.Number()), blobBytes: signal(t.Number()), growthBytesPerSecond: signal(t.Number()) }),
   events: t.Object({ newestAgeSeconds: signal(t.Number()) }),
@@ -42,7 +43,7 @@ export function readOperationsConfig(env: Record<string,string | undefined>) {
     ready: number("READY_WARN_SECONDS",300), transaction: number("TRANSACTION_WARN_SECONDS",30), utilization: number("UTILIZATION_WARN_RATIO",0.8), sample: number("SAMPLE_MAX_AGE_SECONDS",15) } };
 }
 export type Telemetry = { databaseBytes: number; blobBytes: number | null; growth: number | null; diskAt: string | null; newestEvent: string | null; lastPurge: string | null };
-export type Facts = { pool?: { inUse: number; waiting: number } | null; telemetry?: Telemetry | null; enrollment?: EnrollmentObservation; signup?: { configured: "closed" | "open"; effective: "closed" | "open" }; publicSignup?: boolean; snapshot: typeof snapshotSchema.static | null; database: typeof databaseSchema.static | null;
+export type Facts = { capabilities?: Capabilities; pool?: { inUse: number; waiting: number } | null; telemetry?: Telemetry | null; enrollment?: EnrollmentObservation; signup?: { configured: "closed" | "open"; effective: "closed" | "open" }; publicSignup?: boolean; snapshot: typeof snapshotSchema.static | null; database: typeof databaseSchema.static | null;
   backup: { completedAt: string; restorePoint: typeof point.static } | null; elapsed: number;
   admission: { inUse: number; waiters: number; limit: number; rejectedLastMinute: number }; streams: Record<string,number> };
 export function decideOperations(facts: Facts, databaseNow: number, config: OperationsConfig) {
@@ -102,8 +103,12 @@ export function decideOperations(facts: Facts, databaseNow: number, config: Oper
   if (telemetry?.diskAt && databaseNow-Date.parse(telemetry.diskAt)>=th.diskSample*1000) all.push({ status: "degraded", codes: ["disk_sample_stale"] });
   const events = { newestAgeSeconds: age(telemetry?.newestEvent,observedAt,th.eventAge,"audit_event_old","warn") };
   const retention = { lastPurgeTimestampSeconds: sig(telemetry ? (telemetry.lastPurge ? Date.parse(telemetry.lastPurge)/1000 : 0) : null,observedAt,"retention_unavailable") };
+  const capabilities = facts.capabilities ?? unknownCapabilities();
+  for (const [name, observation] of Object.entries(capabilities)) {
+    if (observation.state === "unknown" || observation.state === "unavailable") all.push({ status: "degraded", codes: [`${name}_${observation.state}`] });
+  }
   const worst=all.reduce<typeof statuses[number]>((a,b)=>statuses.indexOf(a)>statuses.indexOf(b.status) ? a : b.status,"ok");
-  return { document:{ enrollment, signup: facts.signup ?? { configured: "closed", effective: "closed" }, version:1,observedAt,status: worst === "ok" ? "ok" : "degraded",codes:[...new Set(all.flatMap(s=>s.codes))],
+  return { document:{ capabilities, enrollment, signup: facts.signup ?? { configured: "closed", effective: "closed" }, version:1,observedAt,status: worst === "ok" ? "ok" : "degraded",codes:[...new Set(all.flatMap(s=>s.codes))],
     coverage:{ workspaceCount:s?.workspaceCount ?? null,listedWorkspaces:s?.workspaces.length ?? 0,omittedQueues:s ? String(BigInt(s.queueCount)-BigInt(s.queues.length)) : null },
     database,global,queues,streams,admission,quotas,backup,restoreGate,disk,events,retention } satisfies typeof operationsSchema.static, metricQueues };
 }

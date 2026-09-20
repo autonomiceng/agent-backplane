@@ -9,7 +9,7 @@ export const storeMarker = ".backplane-store";
 export type BindingStore = BlobStore & {
   backend: "filesystem" | "s3";
   readMarker(): Promise<Uint8Array>;
-  markerOrAbsent(): Promise<Uint8Array | null>;
+  markerOrAbsent(signal?: AbortSignal): Promise<Uint8Array | null>;
   publishMarker(bytes: Uint8Array): Promise<void>;
   readStored(workspace: string, ref: BlobRef): Promise<Uint8Array>;
   inventory(allowAbsent?: boolean): AsyncIterable<StoredObject>;

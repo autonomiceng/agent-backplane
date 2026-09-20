@@ -10,6 +10,7 @@ import { Elysia } from "elysia";
 import { adminUrl, migratedDatabase } from "../testing/postgres.ts";
 import { advanceDeliveryClock, recoveryFixture, testApp } from "../testing/session.ts";
 import { PrincipalAdmission } from "./principal-admission.ts";
+import { capabilityProbe } from "./capability-probe.ts";
 import { operationsProbe } from "./operations-probe.ts";
 import { operationsRoute } from "./operations-route.ts";
 import { readOperationsConfig } from "./operations.ts";
@@ -30,7 +31,9 @@ test("Stale backup and undetected expired leases appear healthy", async () => {
     await writeFile(manifest,JSON.stringify({name:`bp_${"a".repeat(32)}`,before:snapshot,after:snapshot,targetLsn:"0/1",segment:"000000010000000000000001"}));
     const old=new Date(identity.now.getTime()-90000*1000); await utimes(manifest,old,old);
     const config=readOperationsConfig({BP_OPERATIONS_TOKEN:"operator-secret",BP_BACKUP_DIR:dir,BP_OPERATIONS_EXPIRED_LEASE_MAX_AGE_SECONDS:"5"});
-    const app=()=>new Elysia().use(operationsRoute(pool,config,new PrincipalAdmission(),new Map()));
+    let samples = 0;
+    const capabilities = capabilityProbe(pool);
+    const app=()=>new Elysia().use(operationsRoute(pool,config,new PrincipalAdmission(),new Map(),undefined,async () => { samples++; return capabilities(); }));
     const request=(a:ReturnType<typeof app>,path:string,token="operator-secret")=>a.handle(new Request(`http://localhost${path}`,{headers:token ? {authorization:`Bearer ${token}`} : {}}));
     const state=async()=>({ deliveries:await admin`SELECT id,state,lease_expires_at FROM queue.deliveries ORDER BY id`,head:await admin`SELECT last_position FROM audit.cursor WHERE workspace_id=${fixture.workspaceId}` });
     const before=await state(), first=app();
@@ -38,7 +41,11 @@ test("Stale backup and undetected expired leases appear healthy", async () => {
     expect((await request(first,"/metrics","wrong")).status).toBe(401);
     const disabled=new Elysia().use(operationsRoute(pool,readOperationsConfig({}),new PrincipalAdmission(),new Map()));
     expect((await request(disabled,"/metrics")).status).toBe(503);
+    expect(samples).toBe(0);
     const response=await request(first,"/health/operations"), body=await response.json();
+    expect(body.capabilities.files.state).toBe("unknown");
+    expect(body.capabilities.functions.state).toBe("disabled");
+    expect(body.codes).toContain("files_unknown");
     expect(response.status).toBe(503); expect(body.backup.ageSeconds.status).toBe("stale");
     expect(body.codes).toContain("backup_stale"); expect(body.codes).not.toContain("queue_expiry_stale");
     expect(body.queues[0].counts.value.ready).toBe("1");
@@ -76,6 +83,8 @@ test("fresh install operations reports empty queues and initial disk growth as k
     const app = new Elysia().use(operationsRoute(pool, readOperationsConfig({ BP_OPERATIONS_TOKEN: "test" }), new PrincipalAdmission(), new Map()));
     const response = await app.handle(new Request("http://localhost/health/operations", { headers: { authorization: "Bearer test" } }));
     const body = await response.json();
+    expect(body.capabilities.functions.state).toBe("unknown");
+    expect(body.codes).toContain("functions_unknown");
     expect(body.coverage.workspaceCount).toBe("0");
     expect(body.global.queues.counts.status).toBe("ok");
     expect(body.events.newestAgeSeconds).toMatchObject({ value: 0, status: "ok" });
@@ -89,6 +98,7 @@ test("fresh install operations reports empty queues and initial disk growth as k
   } finally { await pool.close(); }
 });
 
+// The real publisher fsyncs the manifest, receipt and directory on shared CI storage.
 test("public checkpoint receipt reports only its database and rejects malformed or unsafe paths", async () => {
   const url=await migratedDatabase(), pool=createPool(url), admin=new SQL({url:adminUrl(url),max:1});
   const dir=await mkdtemp(join(tmpdir(),"bp-checkpoint-health-")), name=`bp_${"b".repeat(32)}`, health=join(dir,"health.json");
@@ -132,7 +142,7 @@ publish_checkpoint(dest,doc)
     await rm(health);
     expect(await observe()).toEqual({completedAt:receipt.completedAt,restorePoint:receipt.restorePoint});
   } finally { await pool.close(); await admin.close(); await rm(dir,{recursive:true,force:true}); }
-});
+}, 30000);
 
 test("reconciliation deadline releases its database lease and root readiness failures have stable errors", async () => {
   const url=adminUrl(await migratedDatabase()), admin=new SQL({url,max:1});

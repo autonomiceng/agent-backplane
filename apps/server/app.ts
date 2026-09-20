@@ -1,5 +1,6 @@
 // Composes every primitive into one Elysia app. Opens nothing; main.ts and tests supply resources.
 // The exported type is what Eden and the OpenAPI export consume.
+import type { CapabilitySampler } from "./platform/capability-types.ts";
 import type { Enrollment } from "./auth/enrollment.ts";
 import { enrollmentRoute } from "./auth/enrollment-route.ts";
 import { stripForwardedHeaders } from "./platform/forwarded-headers.ts";
@@ -59,6 +60,7 @@ export type AppDeps = {
   compute?: ComputeLauncher | undefined;
   blobStore?: BlobStore;
   operations?: OperationsConfig;
+  capabilitySampler?: CapabilitySampler;
   insecureOrigin?: boolean;
 };
 
@@ -68,7 +70,7 @@ export function createApp(deps: AppDeps) {
   // Grouped sub-apps keep each Elysia type chain shallow enough for TypeScript; order within and across groups is unchanged.
   const platform = new Elysia()
     .use(principalAdmission(admission))
-    .use(operationsRoute(pool, deps.operations, admission, streams, deps.enrollment))
+    .use(operationsRoute(pool, deps.operations, admission, streams, deps.enrollment, deps.capabilitySampler))
     .use(openapiPlugin())
     .use(healthRoute(pool, deps.expectedSchemaVersion, deps.enrollment, deps.insecureOrigin, deps.operations?.token))
     .use(enrollmentRoute(deps.enrollment, authUrl))

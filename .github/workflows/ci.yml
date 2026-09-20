@@ -25,6 +25,6 @@ jobs:
       - run: bun tests/acceptance/storage-identity.ts
       - run: docker build -f infra/compose/server.Dockerfile .
       - run: docker build --platform linux/amd64 -f infra/compute/image/Dockerfile -t agent-backplane-workerd:1.20260918.1 infra/compute/image
-      - run: bun tests/acceptance/workerd-image.ts agent-backplane-workerd:1.20260918.1
+      - run: bun tests/acceptance/workerd-image.ts agent-backplane-workerd:1.20260918.1 --lifecycle
       - run: python3 scripts/backup-drill.py --offline
       - run: python3 scripts/backup-drill.py --s3
