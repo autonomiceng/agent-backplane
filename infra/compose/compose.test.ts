@@ -119,7 +119,7 @@ test("every merged service uses journald without a Docker file cache or Alloy de
 });
 
 
-test("bare Compose requires a full reference and trusts effective image overrides", async () => {
+test("bare Compose defaults to the local recipe and preserves explicit image selection", async () => {
   const digest = "a".repeat(64);
   const settings = ["BP_COMPUTE_TOKEN=fixture", "BP_WORKERD_IMAGE=fixture:local", `BP_WORKERD_BINARY_SHA256=${digest}`];
   const tagged = await config(["compose.compute.yaml"], "compute", settings);
@@ -135,5 +135,14 @@ test("bare Compose requires a full reference and trusts effective image override
   const edited = await config(["compose.compute.yaml"], "compute", ["BP_COMPUTE_TOKEN=fixture", "BP_WORKERD_IMAGE=fixture:edited"]);
   expect(edited.services.workerd.image).toBe("fixture:edited");
   expect(edited.services.workerd.environment.BP_WORKERD_HOST_IMAGE_ID).toBe("");
-  for (const image of [[], ["BP_WORKERD_IMAGE="]]) await config(["compose.compute.yaml"], "compute", ["BP_COMPUTE_TOKEN=fixture", ...image], "BP_WORKERD_IMAGE");
+  const local = await config(["compose.compute.yaml"], "compute", ["BP_COMPUTE_TOKEN=fixture"]);
+  const empty = await config(["compose.compute.yaml"], "compute", ["BP_COMPUTE_TOKEN=fixture", "BP_WORKERD_IMAGE="]);
+  expect(local.services.workerd.image).toBe("agent-backplane-workerd:1.20260918.1");
+  expect(empty.services.workerd.image).toBe(local.services.workerd.image);
+  expect(local.services.workerd.environment.BP_WORKERD_IMAGE).toBe(local.services.workerd.image);
+  expect(empty.services.workerd.environment.BP_WORKERD_IMAGE).toBe(local.services.workerd.image);
+  expect(local.services.workerd.environment.BP_WORKERD_HOST_IMAGE_ID).toBe("");
+  expect(local.services.workerd.pull_policy).toBe("never");
+  expect(local.services.workerd.build).toBeUndefined();
+  expect(tagged.services.workerd.build).toBeUndefined();
 });

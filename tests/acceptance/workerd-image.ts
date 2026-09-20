@@ -5,7 +5,7 @@ import { mkdtemp, mkdir, chmod, copyFile, appendFile, rm } from "node:fs/promise
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { privateRead } from "../../packages/cli/runtime/credential-file.ts";
-import { persistWorkerdEvidence } from "../../infra/bootstrap/workerd-image.ts";
+import { persistWorkerdEvidence, verifyWorkerdImage } from "../../infra/bootstrap/workerd-image.ts";
 import { readControlSurfaceHash, type RuntimeEvidence } from "../../apps/server/compute/runtime-identity.ts";
 import { createComputeLauncher } from "../../apps/server/compute/compute-launcher.ts";
 import { compatibilityDate, configHash, sha256, type Manifest } from "../../apps/server/compute/deployment-config.ts";
@@ -67,7 +67,8 @@ try {
     await copyFile(`${root}/apps/server/compute/workerd/${file}`, join(controlDirectory, file));
     await chmod(join(controlDirectory, file), 0o644);
   }
-  const evidence = await persistWorkerdEvidence(directory, { reference: image, imageId: identity, binarySha256: binary, architecture, observedAt: new Date().toISOString() });
+  const verified = await verifyWorkerdImage({ BP_WORKERD_IMAGE: identity, BP_WORKERD_BINARY_SHA256: binary }, {}, args => docker(...args));
+  const evidence = await persistWorkerdEvidence(directory, { ...verified, reference: image });
   const recorded = JSON.parse(await privateRead(evidence) ?? "null");
   assert.equal(recorded.selectedReference, image);
   assert.equal(recorded.hostObservedImageId, identity);

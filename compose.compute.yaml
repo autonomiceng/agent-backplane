@@ -11,7 +11,7 @@ services:
       BP_COMPUTE_TIMEOUT_MS: ${BP_COMPUTE_TIMEOUT_MS:-10000}
       BP_WORKERD_RUNTIME_ID: workerd-binary-sha256:${BP_WORKERD_BINARY_SHA256:-f31da6d248028d698806aa93d1b3aec28bbd4b4b7ddc31e967408ab6406fa5aa}
   workerd:
-    image: ${BP_WORKERD_EFFECTIVE_IMAGE:-${BP_WORKERD_IMAGE:?set a full local workerd image reference}}
+    image: ${BP_WORKERD_EFFECTIVE_IMAGE:-${BP_WORKERD_IMAGE:-agent-backplane-workerd:1.20260918.1}}
     pull_policy: never
     profiles: [compute]
     entrypoint: ["/bin/sh", "/compute/start.sh"]
@@ -21,7 +21,7 @@ services:
     environment:
       BP_COMPUTE_TOKEN: ${BP_COMPUTE_TOKEN:?required}
       BP_COMPUTE_TIMEOUT_MS: ${BP_COMPUTE_TIMEOUT_MS:-10000}
-      BP_WORKERD_IMAGE: ${BP_WORKERD_IMAGE:?set a full local workerd image reference}
+      BP_WORKERD_IMAGE: ${BP_WORKERD_IMAGE:-agent-backplane-workerd:1.20260918.1}
       BP_WORKERD_HOST_IMAGE_ID: ${BP_WORKERD_HOST_IMAGE_ID:-}
       BP_WORKERD_BINARY_SHA256: ${BP_WORKERD_BINARY_SHA256:-f31da6d248028d698806aa93d1b3aec28bbd4b4b7ddc31e967408ab6406fa5aa}
       BP_WORKERD_DIGEST: ${BP_WORKERD_DIGEST:-}
