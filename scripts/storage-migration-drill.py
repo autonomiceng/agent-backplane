@@ -10,7 +10,7 @@ import tempfile
 from types import SimpleNamespace
 import urllib.request
 import uuid
-from checkpoint import ROOT, Stack, command, backup, restore, verify
+from checkpoint import ROOT, Stack, command, backup, verify
 
 
 def drill():
@@ -149,7 +149,9 @@ def drill():
         del os.environ['COMPOSE_FILE']
         recovery.compose += [arg for name in target_files for arg in ('-f', name)]
         volumes.extend(recovery.volume(name) for name in recovery.stores)
-        restore(recovery, copied)
+        command(['python3', str(ROOT / 'scripts/checkpoint.py'), 'restore', '--env-file', str(recovery_env),
+                 str(copied), '--fenced', '--migration-budget', '7200'],
+                env={**os.environ, 'COMPOSE_FILE': os.pathsep.join(target_files), 'COMPOSE_PROFILES': 'blobs'})
         if recovery.pg(f"SELECT phase FROM control.blob_storage_migration WHERE id='{str(uuid.UUID(doc['migration']['id']))}'") != 'complete':
             raise ValueError('captured pending intent was not exactly reconciled')
         user = login(); status = request(base + '/restore', actor=user)
@@ -168,7 +170,7 @@ def drill():
             raise ValueError('restored SQL differs')
         if recovery.pg("SELECT json_agg(b ORDER BY id) FROM control.blobs b") != metadata:
             raise ValueError('restored metadata/provenance differs')
-        print(json.dumps(dict(scenario=6, result='pass', checkpoint=doc['name'], retry='stopped pending target resumed with same container and binding', restored='SQL, two Principals, Files, provenance, retained inventory')))
+        print(json.dumps(dict(scenario=6, result='pass', restoreBudgetSeconds=7200, checkpoint=doc['name'], retry='stopped pending target resumed with same container and binding', restored='SQL, two Principals, Files, provenance, retained inventory')))
         success = True
     finally:
         # Failed drills retain their fresh resources and bytes for root diagnosis.
