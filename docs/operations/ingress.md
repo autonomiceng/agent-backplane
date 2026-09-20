@@ -105,8 +105,8 @@ a filesystem deployment requires an explicit storage migration first. An explici
 
 Standalone mode derives `https://rustfs.<BP_PUBLIC_DOMAIN or localhost>` with
 `BP_HTTPS_PORT` when non-default. Optional `BP_RUSTFS_HOST` overrides the native
-DNS hostname. Local mode also serves HTTP on `BP_HTTP_PORT`; an explicit
-`BP_RUSTFS_URL` must match one of those listeners. Public mode requires HTTPS.
+DNS hostname. The local HTTP hostname on `BP_HTTP_PORT` is reserved and always
+returns 404. `BP_RUSTFS_URL` must select the HTTPS listener in every mode.
 Point the console hostname at Caddy and use the same local CA trust procedure as
 Backplane. Only Caddy publishes console ports; RustFS stays on `blob-internal`,
 off the Platform Network. Core plus edge remains valid without blobs.

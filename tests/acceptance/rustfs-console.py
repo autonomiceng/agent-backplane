@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import secrets
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -24,6 +25,7 @@ label = 'io.backplane.console-proof'
 containers = []
 network = None
 child_env = {key: value for key, value in os.environ.items() if not key.startswith(('BP_', 'COMPOSE_'))}
+tls_context = None
 child_env.update(RUSTFS_ACCESS_KEY=secrets.token_hex(10), RUSTFS_SECRET_KEY=secrets.token_hex(20))
 
 
@@ -46,13 +48,16 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def request(origin, path='/rustfs/console/', headers=None, redirects=True):
-    opener = urllib.request.build_opener() if redirects else urllib.request.build_opener(NoRedirect())
+    handlers = [urllib.request.HTTPSHandler(context=tls_context)]
+    if not redirects:
+        handlers.append(NoRedirect())
+    opener = urllib.request.build_opener(*handlers)
     try:
         response = opener.open(urllib.request.Request(origin + path, headers=headers or {}), timeout=5)
     except urllib.error.HTTPError as error:
         response = error
     with response:
-        return response.status, response.read(1024 * 1024)
+        return response.status, response.read(1024 * 1024), response.headers
 
 
 def signed_get(origin, path):
@@ -126,11 +131,19 @@ with tempfile.TemporaryDirectory(prefix='bp-console-proof-') as temporary:
         docker('start', rustfs)
         # A controlled ingress fixture asserts an allowed or denied original client.
         # The gateway trusts only this container's exact peer address.
+        certificate, key = root / 'localhost.crt', root / 'localhost.key'
+        subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
+                        '-subj', '/CN=localhost', '-addext', 'subjectAltName=DNS:localhost',
+                        '-keyout', str(key), '-out', str(certificate)],
+                       check=True, capture_output=True, timeout=30)
+        key.chmod(0o600)
+        tls_context = ssl.create_default_context(cafile=str(certificate))
         peer_file = root / 'Caddyfile'
         peer_file.write_text('''{
  auto_https off
 }
-:80 {
+https://localhost:443 {
+ tls /tls/localhost.crt /tls/localhost.key
  route {
   @denied header X-Proof-Deny true
   handle @denied {
@@ -146,12 +159,13 @@ with tempfile.TemporaryDirectory(prefix='bp-console-proof-') as temporary:
  }
 }
 ''')
-        peer = create('--publish', '127.0.0.1::80', '--tmpfs', '/data', '--tmpfs', '/config',
+        peer = create('--publish', '127.0.0.1::443', '--tmpfs', '/data', '--tmpfs', '/config',
+                      '--mount', f'type=bind,src={root},dst=/tls,readonly',
                       '--mount', f'type=bind,src={peer_file},dst=/etc/caddy/Caddyfile,readonly', CADDY)
         docker('start', peer)
-        address = docker('port', peer, '80').splitlines()[0]
-        origin = 'http://localhost:' + address.rsplit(':', 1)[1]
-        authority = origin.removeprefix('http://')
+        address = docker('port', peer, '443').splitlines()[0]
+        origin = 'https://localhost:' + address.rsplit(':', 1)[1]
+        authority = urllib.parse.urlsplit(origin).netloc
         peer_ip = docker('inspect', '--format', '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}', peer)
         common = ['--publish', '127.0.0.1::80', '--tmpfs', '/data', '--tmpfs', '/config',
                   '--mount', f'type=bind,src={ROOT}/infra/compose/Caddyfile,dst=/etc/caddy/Caddyfile,readonly',
@@ -165,7 +179,7 @@ with tempfile.TemporaryDirectory(prefix='bp-console-proof-') as temporary:
         deadline = time.monotonic() + 40
         while True:
             try:
-                status, body = request(origin)
+                status, body, _ = request(origin)
                 assert status == 200 and b'<html' in body.lower()
                 break
             except (OSError, AssertionError):
@@ -177,7 +191,8 @@ with tempfile.TemporaryDirectory(prefix='bp-console-proof-') as temporary:
         assert request(origin, '/rustfs/admin/v3/accountinfo')[0] == 403
         assert signed_get(origin, '/rustfs/admin/v3/accountinfo')[0] == 200, 'signed admin account info failed'
         assert signed_get(origin, '/?list-type=2')[0] == 200, 'signed S3 root list failed'
-        assert request(origin, '/', {'Accept': 'text/html'})[0] == 200
+        landing, _, headers = request(origin, '/', {'Accept': 'text/html'}, redirects=False)
+        assert landing == 302 and headers['Location'] == '/rustfs/console/'
         local = create('--publish', '127.0.0.1::80', '--tmpfs', '/data', '--tmpfs', '/config',
                        '--mount', f'type=bind,src={ROOT}/infra/compose/Caddyfile,dst=/etc/caddy/Caddyfile,readonly',
                        '--env', 'BP_ACCESS_MODE=local', '--env', 'BP_EDGE_HOST=backplane.localhost',
@@ -210,12 +225,12 @@ with tempfile.TemporaryDirectory(prefix='bp-console-proof-') as temporary:
         # Optional host-only browser proof; the portable CI gate above needs no browser.
         browser_script = os.environ.get('BP_CONSOLE_PROOF_BROWSER')
         if browser_script:
-            result = subprocess.run(['node', browser_script], env={**child_env, 'CONSOLE_ORIGIN': origin},
+            result = subprocess.run(['node', browser_script], env={**child_env, 'CONSOLE_ORIGIN': origin, 'CONSOLE_TLS_CERT': str(certificate)},
                                     capture_output=True, text=True, timeout=60)
             if result.returncode:
                 raise RuntimeError('owned native console browser login failed')
             print(json.dumps({'browserLogin': 'pass'}))
-        print(json.dumps({'gate': 'rustfs-console', 'nativeHtml': 'pass', 'nativeAuthRequired': 'pass',
+        print(json.dumps({'gate': 'rustfs-console', 'nativeHtml': 'pass', 'tlsCertificateVerified': True, 'landingRedirect': 302, 'nativeAuthRequired': 'pass',
                           'localHttpConsole': '404', 'signedAdminAccountInfo': 200, 'signedS3RootList': 200, 'caddyConfigurationsValidated': len(configurations),
                           'trustedClientAllowDeny': 'pass', 'untrustedForwardedSpoofDenied': 'pass', 'disabled': '404'}))
     finally:

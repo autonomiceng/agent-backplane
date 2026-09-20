@@ -119,6 +119,7 @@
 		tls {
 			issuer acme
 		}
+		header Strict-Transport-Security "max-age=31536000"
 		import access-log
 		import rustfs-routes
 	}
