@@ -338,7 +338,7 @@ test("fresh full and minimal save native Compose selections, including independe
     await prepare([...args, "--mode", "minimal", "--profile", ""], {}, runner, record);
     expect(await readFile(path, "utf8")).toContain("COMPOSE_PROFILES=''");
     expect(await readFile(path, "utf8")).toContain("BP_BLOB_BACKEND='filesystem'");
-    expect(calls.some(call => call[0] === "build" || call[0] === "run")).toBe(false);
+    expect(calls.some(call => call[0] === "build" || call[0] === "create")).toBe(false);
   });
 });
 
