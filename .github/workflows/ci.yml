@@ -19,8 +19,8 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run check
       # Tests start embedded PostgreSQL; no service container is needed.
-      # Docker acceptance scripts require a prepared deployment and run outside CI.
+      # Deployment acceptance runs outside CI; the isolated runtime artifact probe runs below.
       - run: bun run test
       - run: docker build -f infra/compose/server.Dockerfile .
-      - run: docker build --platform linux/amd64 -f infra/compute/image/Dockerfile -t agent-backplane-workerd:1.20260918.1 .
-      - run: python3 tests/acceptance/workerd-image.py agent-backplane-workerd:1.20260918.1
+      - run: docker build --platform linux/amd64 -f infra/compute/image/Dockerfile -t agent-backplane-workerd:1.20260918.1 infra/compute/image
+      - run: bun tests/acceptance/workerd-image.ts agent-backplane-workerd:1.20260918.1

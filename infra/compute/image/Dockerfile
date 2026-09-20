@@ -1,6 +1,6 @@
+# syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
 # Official Cloudflare binaries, independently checked against npm's SHA-512 integrity.
 # Keep this input version synchronized with README.md and the acceptance probe.
-ARG TARGETARCH
 FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251 AS base
 
 FROM base AS binary-amd64
@@ -19,9 +19,14 @@ FROM binary-${TARGETARCH} AS artifact
 FROM base AS runtime
 COPY --from=artifact /artifact/workerd /usr/bin/workerd
 ADD --chmod=0444 --checksum=sha256:0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594 https://raw.githubusercontent.com/cloudflare/workerd/679c09e5eea0af8a04062e1875e99c75af532e3b/LICENSE /usr/share/licenses/workerd/LICENSE
+ADD --chmod=0444 --checksum=sha256:f66dff1bdf8f96060b8177976f8b7d9254bc89bc4db933d769f7384d28480bc9 https://curl.se/ca/cacert-2026-08-13.pem /etc/ssl/certs/ca-certificates.crt
+ADD --chmod=0444 --checksum=sha256:fab3dd6bdab226f1c08630b1dd917e11fcb4ec5e1e020e2c16f83a0a13863e85 https://www.mozilla.org/media/MPL/2.0/index.815ca599c9df.txt /usr/share/licenses/ca-certificates/MPL-2.0
+# Remote ADD also sets newly created parent permissions with this frontend.
+RUN chmod 0755 /usr/share/licenses /usr/share/licenses/workerd /usr/share/licenses/ca-certificates /etc/ssl /etc/ssl/certs
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 LABEL org.opencontainers.image.source="https://github.com/autonomiceng/agent-backplane" \
       org.opencontainers.image.version="1.20260918.1" \
-      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.licenses="Apache-2.0 AND MPL-2.0" \
       io.backplane.workerd.source="https://github.com/cloudflare/workerd/tree/679c09e5eea0af8a04062e1875e99c75af532e3b"
 USER 65534:65534
 ENTRYPOINT ["/usr/bin/workerd"]

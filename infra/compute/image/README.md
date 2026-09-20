@@ -7,12 +7,12 @@ not an official Cloudflare container image.
 
 ```sh
 docker build --platform linux/amd64 -f infra/compute/image/Dockerfile \
-  -t agent-backplane-workerd:1.20260918.1 .
+  -t agent-backplane-workerd:1.20260918.1 infra/compute/image
 docker run --rm --network none --read-only --cap-drop ALL \
   --security-opt no-new-privileges:true agent-backplane-workerd:1.20260918.1 --version
 ```
 
-The base is pinned by OCI index digest. Each architecture has a fixed official npm
+The Dockerfile frontend and base are pinned by OCI index digest. Each architecture has a fixed official npm
 archive checksum and an independent extracted-binary checksum. Docker verifies the
 archive before extraction; the build verifies the binary before copying it into the
 runtime image. Builds require BuildKit support for `ADD --checksum`. A checksum failure
@@ -32,10 +32,15 @@ the existing repository/digest deployment contract. Publishing and qualifying an
 artifact, or introducing a verified local-image identity contract, remain release gates.
 Arm64 input integrity does not establish arm64 runtime qualification.
 
-Run `python3 tests/acceptance/workerd-image.py agent-backplane-workerd:1.20260918.1`
-to check the binary version, Worker Loader/Check RPC, control authentication, invalid-source
-rejection and a null-ID invocation in an owned container. This uses synthetic authority
+Run `bun tests/acceptance/workerd-image.ts agent-backplane-workerd:1.20260918.1`
+to check binary and license hashes, source identity, the non-root default, Worker Loader/Check RPC,
+control authentication, invalid-source rejection, HTTPS trust and a null-ID invocation in an owned container. This uses synthetic authority
 props and does not prove server-issued credentials or cross-Workspace isolation.
+
+The image includes the [curl conversion of Mozilla CA roots](https://curl.se/docs/caextract.html),
+revision 2026-08-13, checksum-pinned under MPL 2.0. `SSL_CERT_FILE` points workerd at that
+file; the artifact probe performs a declared HTTPS request to verify trust. Updating the
+root bundle is an explicit reviewed artifact update.
 
 The image runs as UID/GID 65534. Keep the Compose read-only filesystem, dropped capabilities,
 resource limits and authenticated private control endpoint. A non-root container does not
