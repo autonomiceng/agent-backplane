@@ -4,6 +4,8 @@ import { parseArgs } from "node:util";
 import { randomBytes } from "node:crypto";
 import { lstat, open, rename, rm, stat } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { isIP } from "node:net";
+import { normalizeOrigin } from "../../apps/server/platform/config.ts";
 import { privateRead, privateWrite, privateLock } from "../../packages/cli/runtime/credential-file.ts";
 import { CliError, type Environment } from "../../packages/cli/runtime/credentials.ts";
 import { resolveAccess } from "../compose/validate-edge.ts";
@@ -24,6 +26,47 @@ const help = `Usage: bun infra/bootstrap/prepare.ts --capability-file PATH [opti
 Omitted selectors reuse recorded COMPOSE_PROJECT_NAME, COMPOSE_FILE and COMPOSE_PROFILES.
 Fresh installations default to core only. Existing selections and backends cannot be changed here.
 `;
+
+// These values enter Caddy tokens and expressions. Accept literals, never Caddy syntax.
+export function resolveRustfsConsole(env: Environment, profiles: string[], access: ReturnType<typeof resolveAccess>) {
+  const enabled = env.BP_RUSTFS_CONSOLE ?? "false";
+  if (enabled !== "true" && enabled !== "false") throw new CliError("rustfs_console_invalid", 1);
+  if (enabled === "true" && (!profiles.includes("blobs") || !profiles.some(p => p === "edge" || p === "gateway")))
+    throw new CliError("rustfs_console_requires_blobs_and_ingress", 1);
+  if (enabled === "true" && env.BP_BLOB_BACKEND && env.BP_BLOB_BACKEND !== "s3") throw new CliError("rustfs_console_storage_conflict", 1);
+  const dns = (host: string) => host.length <= 253 && host.split(".").every(label => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(label));
+  const host = (env.BP_RUSTFS_HOST ?? `rustfs.${env.BP_PUBLIC_DOMAIN || "localhost"}`).toLowerCase();
+  if (!dns(host) || isIP(host)) throw new CliError("rustfs_host_invalid", 1);
+  if (access.mode === "public" && (!host.includes(".") || host.endsWith(".localhost"))) throw new CliError("rustfs_host_invalid", 1);
+  if (enabled === "true" && access.mode === "proxy" && !env.BP_RUSTFS_URL) throw new CliError("rustfs_url_required", 1);
+  let origin: string;
+  try { origin = normalizeOrigin(env.BP_RUSTFS_URL ?? `https://${host}:${env.BP_HTTPS_PORT || "443"}`); }
+  catch { throw new CliError("rustfs_url_invalid", 1); }
+  const url = new URL(origin), browser = new URL(access.origin);
+  if ((!dns(url.hostname) && !isIP(url.hostname.replace(/^\[|\]$/g, ""))) || url.port === "0"
+    || ((enabled === "true" || access.mode !== "local") && url.protocol !== "https:")) throw new CliError("rustfs_url_invalid", 1);
+  if (profiles.includes("edge")) {
+    const port = url.protocol === "https:" ? env.BP_HTTPS_PORT || "443" : env.BP_HTTP_PORT || "80";
+    if (url.hostname !== host || Number(url.port || (url.protocol === "https:" ? "443" : "80")) !== Number(port))
+      throw new CliError("rustfs_url_listener_conflict", 1);
+  }
+  // Gateway routing sees authority, not scheme. Native aliases must not capture Backplane.
+  if (url.host === browser.host || host === browser.hostname || host === access.host
+    || ["localhost", "127.0.0.1"].includes(host))
+    throw new CliError("rustfs_origin_conflict", 1);
+  const allow = env.BP_RUSTFS_CONSOLE_ALLOW ?? "127.0.0.1/8 ::1", peers = env.BP_TRUSTED_PROXIES ?? "";
+  for (const [value, exact] of [[allow, false], [peers, true]] as const) {
+    if ((!value.trim() && !exact) || /[^a-fA-F0-9:./ ]/.test(value)) throw new CliError(exact ? "trusted_proxies_invalid" : "operator_allow_invalid", 1);
+    for (const literal of value.split(" ").filter(Boolean)) {
+      const [ip = "", mask, extra] = literal.split("/"), family = isIP(ip), bits = family === 4 ? 32 : 128;
+      if (!family || extra !== undefined || (mask !== undefined && (!/^(0|[1-9][0-9]*)$/.test(mask) || Number(mask) > bits || (!exact && Number(mask) === 0) || (exact && Number(mask) !== bits))))
+        throw new CliError(exact ? "trusted_proxies_invalid" : "operator_allow_invalid", 1);
+    }
+  }
+  if (enabled === "true" && access.mode === "proxy" && !peers.trim()) throw new CliError("trusted_proxies_required", 1);
+  return { enabled, host, origin, authority: url.host, urlHost: url.hostname.replace(/^\[|\]$/g, "") };
+}
+
 export async function prepare(argv: string[], env: Environment, run: Runner = docker, recordStatus: StatusRecorder = statusRecorder): Promise<string> {
   const { values } = parseArgs({ args: argv, allowPositionals: false, options: {
     "access-mode": { type: "string" }, "public-url": { type: "string" }, "backup-dir": { type: "string" }, "env-file": { type: "string" },
@@ -38,7 +81,7 @@ export async function prepare(argv: string[], env: Environment, run: Runner = do
   try {
     let source = await privateRead(path, true);
     const originalSource = source, entries: Record<string, string> = {}, lines = (source ?? "").split("\n");
-    const managed = new Set([...core, ...blobs, "BP_COMPUTE_TOKEN", "BP_PUBLIC_URL", "BP_PUBLIC_DOMAIN", "BP_SCHEME", "BP_TLS_ISSUER", "BP_EDGE_CA", "BP_PUBLIC_HOST", "BP_EDGE_BIND_HOST", "BP_ACCESS_MODE", "BP_AUTH_URL", "BP_PORT", "BP_BIND_HOST", "BP_HTTP_PORT", "BP_HTTPS_PORT", "BP_BACKUP_DIR", "BP_POSTGRES_IMAGE", "BP_SERVER_IMAGE", "BP_CADDY_IMAGE", "BP_RUSTFS_IMAGE", "BP_BLOB_BOOTSTRAP_IMAGE", "BP_WORKERD_REPOSITORY", "BP_WORKERD_DIGEST", "BP_WORKERD_IMAGE", "BP_WORKERD_BINARY_SHA256", "BP_DATA_DIR", "BP_STATUS_DIR", "BP_PLATFORM_NETWORK", "BP_VOLUME_PREFIX", "BP_BACKUP_KEEP"]);
+    const managed = new Set([...core, ...blobs, "BP_COMPUTE_TOKEN", "BP_PUBLIC_URL", "BP_PUBLIC_DOMAIN", "BP_SCHEME", "BP_TLS_ISSUER", "BP_EDGE_CA", "BP_PUBLIC_HOST", "BP_EDGE_BIND_HOST", "BP_ACCESS_MODE", "BP_AUTH_URL", "BP_PORT", "BP_BIND_HOST", "BP_HTTP_PORT", "BP_HTTPS_PORT", "BP_BACKUP_DIR", "BP_POSTGRES_IMAGE", "BP_SERVER_IMAGE", "BP_CADDY_IMAGE", "BP_RUSTFS_IMAGE", "BP_BLOB_BOOTSTRAP_IMAGE", "BP_WORKERD_REPOSITORY", "BP_WORKERD_DIGEST", "BP_WORKERD_IMAGE", "BP_WORKERD_BINARY_SHA256", "BP_DATA_DIR", "BP_STATUS_DIR", "BP_PLATFORM_NETWORK", "BP_VOLUME_PREFIX", "BP_BACKUP_KEEP", "BP_RUSTFS_CONSOLE", "BP_RUSTFS_HOST", "BP_RUSTFS_URL", "BP_RUSTFS_URL_HOST", "BP_RUSTFS_AUTHORITY", "BP_RUSTFS_CONSOLE_ALLOW", "BP_TRUSTED_PROXIES"]);
     for (const key of [...selectors, "COMPOSE_PATH_SEPARATOR", "COMPOSE_ENV_FILES", "BP_BLOB_BACKEND"]) managed.add(key);
     const assignments = new Map<string, number>();
     for (const [index, line] of lines.entries()) {
@@ -94,6 +137,11 @@ export async function prepare(argv: string[], env: Environment, run: Runner = do
     if (profiles.includes("gateway") && access.mode !== "proxy") throw new CliError("gateway_requires_proxy_mode", 1);
     for (const [key, value] of [["BP_ACCESS_MODE", access.mode], ["BP_PUBLIC_URL", url]]) {
       if (key && value && entries[key] === undefined) save(key, value);
+    }
+    const rustfsConsole = resolveRustfsConsole(entries, profiles, access);
+    // Refresh derived routing fields when the selected URL changes; never replace user settings.
+    for (const [key, value] of [["BP_RUSTFS_URL_HOST", rustfsConsole.urlHost], ["BP_RUSTFS_AUTHORITY", rustfsConsole.authority]]) {
+      if (key && value && entries[key] !== value) save(key, value);
     }
     if (!entries.BP_BACKUP_DIR || !(await stat(entries.BP_BACKUP_DIR).catch(() => undefined))?.isDirectory()) throw new CliError("backup_directory_required", 1);
     const child = Object.fromEntries(Object.entries(env).filter(([k]) => !k.startsWith("BP_") && !k.startsWith("COMPOSE_")));
@@ -169,7 +217,7 @@ export async function prepare(argv: string[], env: Environment, run: Runner = do
       if (existing === undefined) await privateWrite(capabilityPath, capability);
     } else if (readiness.enrollment.state !== "claimed") throw new CliError("enrollment_recovery_required", 2);
     await recordStatus([...statusRecord, "--state", "healthy"]);
-    return `bp bootstrap --url '${url}' --email USER_EMAIL --capability-file '${capabilityPath.replaceAll("'", "'\\''")}'\n`;
+    return (rustfsConsole.enabled === "true" ? `RustFS console: ${rustfsConsole.origin}/rustfs/console/\n` : "") + `bp bootstrap --url '${url}' --email USER_EMAIL --capability-file '${capabilityPath.replaceAll("'", "'\\''")}'\n`;
   } finally { await unlock(); }
 }
 async function docker(args: string[], env: Environment): Promise<string> {
