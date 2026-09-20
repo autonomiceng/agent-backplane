@@ -35,8 +35,14 @@ def main():
         else:
             task_record(args.state_dir, args.checkout.resolve(), args.env_file.resolve(),
                         args.started, args.state)
-    except (OSError, UnicodeError, Unavailable, ValueError):
-        print('status record update failed', file=sys.stderr)
+    except Unavailable:
+        print('status_path_unsafe', file=sys.stderr)
+        return 1
+    except (OSError, UnicodeError):
+        print('status_path_unavailable', file=sys.stderr)
+        return 1
+    except ValueError:
+        print('status_record_invalid', file=sys.stderr)
         return 1
     return 0
 

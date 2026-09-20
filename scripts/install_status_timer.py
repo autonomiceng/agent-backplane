@@ -3,11 +3,13 @@
 
 import argparse
 import os
+import shutil
+import stat
 import sys
 from pathlib import Path
 
 from status_config import configuration, environment, selection
-from status_io import Unavailable, directory, regular, run
+from status_io import Unavailable, directory, read_json, regular, run
 
 NAME = 'agent-backplane-status'
 
@@ -20,14 +22,54 @@ def quote(value):
     return '"' + value.replace('\\', '\\\\').replace('"', '\\"').replace('%', '%%').replace('$', '$$') + '"'
 
 
+def docker_authority(root, runner):
+    selected_env = environment()
+    if selected_env.get('DOCKER_HOST') and selected_env.get('DOCKER_CONTEXT'):
+        raise Unavailable()
+    executable = shutil.which('docker', path=selected_env.get('PATH'))
+    if not executable:
+        raise Unavailable()
+    executable = os.path.abspath(executable)
+    contexts = read_json(runner([executable, 'context', 'inspect'], timeout=4, limit=65536,
+                               cwd=root, env=selected_env))
+    try:
+        endpoint = contexts[0]['Endpoints']['docker']['Host']
+    except (KeyError, IndexError, TypeError):
+        raise Unavailable() from None
+    if (not isinstance(endpoint, str) or not endpoint.startswith('unix:///')
+            or selected_env.get('DOCKER_HOST') not in (None, endpoint)):
+        raise Unavailable()
+    security = read_json(runner([executable, 'info', '--format', '{{json .SecurityOptions}}'],
+                                timeout=4, limit=65536, cwd=root, env=selected_env))
+    if not isinstance(security, list) or any('rootless' in str(item) for item in security):
+        raise Unavailable()
+    home = selected_env.get('HOME') or str(Path.home())
+    docker_config = Path(selected_env.get('DOCKER_CONFIG') or os.path.join(home, '.docker'))
+    if not docker_config.is_absolute():
+        docker_config = root / docker_config
+    docker_config = os.path.abspath(docker_config)
+    return executable, endpoint, docker_config, selected_env
+
+
+def prepared_state(state_dir):
+    for path, public in ((state_dir / 'status', False), (state_dir / 'console', True)):
+        info = os.stat(path, follow_symlinks=False)
+        mode = stat.S_IMODE(info.st_mode)
+        unsafe_mode = mode != 0o755 if public else bool(mode & 0o022)
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or unsafe_mode:
+            raise Unavailable()
+
+
 def installation(root, env_file, project, compose_files, profiles, state_dir=None, runner=run):
     root, env_file, project, compose_files, profiles = selection(
         root, env_file, project, compose_files, profiles)
     if 'edge' in profiles and 'gateway' in profiles:
         raise Unavailable()
+    executable, endpoint, docker_config, selected_env = docker_authority(root, runner)
     config = configuration(
         root, env_file, project, compose_files, profiles,
-        lambda argv, **options: runner(argv, cwd=root, env=environment(), **options))
+        lambda argv, **options: runner([executable, *argv[1:]], cwd=root,
+                                      env=selected_env, **options))
     selected_state = Path(os.path.abspath(state_dir)) if state_dir else None
     if {'edge', 'gateway'} & set(profiles):
         edge = config['services'].get('edge')
@@ -47,11 +89,16 @@ def installation(root, env_file, project, compose_files, profiles, state_dir=Non
         if selected_state is not None and selected_state != effective_state:
             raise Unavailable()
     else:
-        effective_state = selected_state or root / 'data'
-    return root, env_file, project, compose_files, profiles, effective_state
+        if selected_state is None:
+            raise Unavailable()
+        effective_state = selected_state
+    prepared_state(effective_state)
+    return (root, env_file, project, compose_files, profiles, endpoint,
+            executable, docker_config, effective_state)
 
 
-def units(root, env_file, project, compose_files, profiles, state_dir):
+def units(root, env_file, project, compose_files, profiles, endpoint,
+          executable, docker_config, state_dir):
     argv = [sys.executable, root / 'scripts/status_observer.py', '--checkout', root,
             '--env-file', env_file, '--project-name', project]
     for path in compose_files:
@@ -66,6 +113,10 @@ Description=Agent Backplane public status observation
 [Service]
 Type=oneshot
 ExecStart={command}
+Environment={quote('DOCKER_HOST=' + endpoint).replace('$$', '$')}
+Environment={quote('DOCKER_CONFIG=' + docker_config).replace('$$', '$')}
+Environment={quote('PATH=' + str(Path(executable).parent)).replace('$$', '$')}
+UnsetEnvironment=DOCKER_CONTEXT DOCKER_TLS DOCKER_TLS_VERIFY DOCKER_CERT_PATH
 TimeoutStartSec=120
 UMask=0022
 NoNewPrivileges=true
@@ -89,10 +140,10 @@ WantedBy=timers.target
 
 def install(root, env_file, project, compose_files, profiles, state_dir, unit_dir, runner=run):
     selected = installation(root, env_file, project, compose_files, profiles, state_dir, runner)
-    root, env_file, project, compose_files, profiles, state_dir = selected
+    root, env_file, project, compose_files, profiles, _, _, _, state_dir = selected
     if not (root / 'scripts/status_observer.py').is_file():
         raise Unavailable()
-    contents = units(root, env_file, project, compose_files, profiles, state_dir)
+    contents = units(*selected)
     with directory(unit_dir, 0o700) as fd:
         for name in contents:
             regular(fd, name)
@@ -135,12 +186,15 @@ def main():
     config = Path(os.environ.get('XDG_CONFIG_HOME', ''))
     if not config.is_absolute():
         config = Path.home() / '.config'
+    unit_dir = config / 'systemd/user'
     try:
         install(args.checkout, args.env_file, args.compose_project, args.compose_file,
-                args.profile, args.state_dir, config / 'systemd/user')
+                args.profile, args.state_dir, unit_dir)
     except (OSError, UnicodeError, Unavailable):
-        print('status timer installation failed; generated units may remain; disable the timer '
-              'and inspect the user units before retrying', file=sys.stderr)
+        service = unit_dir / (NAME + '.service')
+        timer = unit_dir / (NAME + '.timer')
+        print(f'status timer installation failed; run systemctl --user disable --now {NAME}.timer, '
+              f'then remove {service} and {timer} before retrying', file=sys.stderr)
         return 1
     print('Status timer enabled. An active user manager with Docker access is required; '
           'enable lingering separately for observation after logout.')

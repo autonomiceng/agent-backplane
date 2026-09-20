@@ -52,6 +52,7 @@
 			header Content-Type application/json
 			header Cache-Control "no-store"
 			header -ETag
+			header -Accept-Ranges
 			header -Last-Modified
 			@status_method not method GET HEAD
 			header @status_method Allow "GET, HEAD"

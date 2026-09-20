@@ -90,6 +90,7 @@ with tempfile.TemporaryDirectory(prefix='bp-status-proof-') as temporary:
                            '--label', 'io.backplane.status-proof=' + owner,
                            '--label', 'com.docker.compose.project=' + project,
                            '--label', 'com.docker.compose.service=edge',
+                           '--label', 'com.docker.compose.oneoff=false',
                            '--network', project + '_default', '--publish', '127.0.0.1::80',
                            '--tmpfs', '/data:rw,mode=1777', '--tmpfs', '/config:rw,mode=1777',
                            '--health-cmd', 'wget -qO- http://127.0.0.1/health || exit 1', '--health-interval', '1s',
@@ -119,9 +120,18 @@ with tempfile.TemporaryDirectory(prefix='bp-status-proof-') as temporary:
                 if time.monotonic() > deadline:
                     raise
                 time.sleep(.1)
-        _, selected_env, selected_project, files, profiles, selected_state = selected_gateway
+        deadline = time.monotonic() + 15
+        while docker('inspect', '--format', '{{.State.Health.Status}}', container) != 'healthy':
+            if time.monotonic() > deadline:
+                raise RuntimeError('owned Caddy healthcheck did not become healthy')
+            time.sleep(.2)
+        _, selected_env, selected_project, files, profiles, _, _, _, selected_state = selected_gateway
         document = observe(ROOT, selected_env, selected_project, files, profiles, selected_state)
         assert document is not None
+        caddy = next(component for component in document['components'] if component['id'] == 'caddy')
+        assert caddy['state'] == 'healthy', 'selected Caddy health was not observed'
+        assert caddy.get('observedVersion') == '2.11.4', 'selected Caddy runtime version was not observed'
+        assert caddy.get('observedImageId', '').startswith('sha256:'), 'selected Caddy image was not observed'
         original = (state / 'console/status.json').read_bytes()
         assert sentinel.encode() not in original and len(original) <= 65536
         assert (state / 'console/status.json').stat().st_mode & 0o777 == 0o644
@@ -131,7 +141,7 @@ with tempfile.TemporaryDirectory(prefix='bp-status-proof-') as temporary:
         assert status == 200 and body == original
         assert response_headers.get('content-type') == 'application/json'
         assert response_headers.get('cache-control') == 'no-store'
-        assert 'etag' not in response_headers and 'last-modified' not in response_headers
+        assert not {'etag', 'last-modified', 'accept-ranges'} & response_headers.keys()
         assert request('HEAD', headers)[0::2] == (200, b'')
         assert request('POST')[0] == 405
         # Reorder valid envelope fields to prove an atomic replacement is served immediately.

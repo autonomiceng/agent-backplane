@@ -121,10 +121,39 @@ async function docker(args: string[], env: Environment): Promise<string> {
   if (await child.exited !== 0) throw new CliError("compose_command_failed", 2);
   return stdout;
 }
-async function statusRecorder(args: string[]): Promise<void> {
-  const child = Bun.spawn(["python3", resolve(import.meta.dir, "../../scripts/record_status.py"), ...args], { stdout: "ignore", stderr: "ignore" });
+export async function statusRecorder(args: string[], searchPath = process.env.PATH ?? "/usr/bin:/bin"): Promise<void> {
+  const python = Bun.which("python3", { PATH: searchPath });
+  if (!python) throw new CliError("status_python_required", 1);
+  let child;
+  try {
+    child = Bun.spawn([python, "-E", resolve(import.meta.dir, "../../scripts/record_status.py"), ...args], {
+      env: { PATH: searchPath }, stdout: "ignore", stderr: "pipe",
+    });
+  } catch { throw new CliError("status_python_required", 1); }
   const timeout = setTimeout(() => child.kill(), 10_000);
-  try { if (await child.exited !== 0) throw new CliError("status_record_failed", 2); }
+  try {
+    const diagnostic = (async () => {
+      const reader = child.stderr.getReader(), chunks: Uint8Array[] = [];
+      let size = 0;
+      while (true) {
+        const result = await reader.read();
+        if (result.done) break;
+        size += result.value.length;
+        if (size > 128) { child.kill(); return "status_record_failed"; }
+        chunks.push(result.value);
+      }
+      try {
+        const bytes = new Uint8Array(size);
+        let offset = 0;
+        for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
+        const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes).trim();
+        return ["status_path_unsafe", "status_path_unavailable", "status_record_invalid"].includes(text)
+          ? text : "status_record_failed";
+      } catch { return "status_record_failed"; }
+    })();
+    const code = await child.exited, reason = await diagnostic;
+    if (code !== 0) throw new CliError(code === 127 ? "status_python_required" : reason, 2);
+  }
   finally { clearTimeout(timeout); }
 }
 if (import.meta.main) try { process.stdout.write(await prepare(process.argv.slice(2), process.env)); }

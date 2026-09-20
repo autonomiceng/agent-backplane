@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { chmod, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { prepare, type Runner } from "./prepare.ts";
+import { prepare, statusRecorder, type Runner } from "./prepare.ts";
 
 test("prepare launches root compose without the core profile", async () => {
   const directory = await mkdtemp(join(tmpdir(), "bp-prepare-compose-"));
@@ -115,8 +115,21 @@ test("prepare normalizes status state once, preserves secrets, creates safe mode
     await symlink(target, linked);
     await writeFile(unsafe, `BP_STATUS_DIR=${linked}\n`);
     await expect(prepare(["--env-file", unsafe, "--backup-dir", directory,
-      "--capability-file", capability], {}, runner)).rejects.toMatchObject({ error: "status_record_failed" });
+      "--capability-file", capability], {}, runner)).rejects.toMatchObject({ error: "status_path_unavailable" });
   } finally { process.umask(oldMask); await rm(directory, { recursive: true, force: true }); }
+});
+
+test("status recorder exposes only stable diagnostics and reports a missing Python runtime", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "bp-status-recorder-"));
+  const linked = join(directory, "linked"), target = join(directory, "target");
+  try {
+    await mkdir(target);
+    await symlink(target, linked);
+    await expect(statusRecorder(["--state-dir", linked, "--prepare"]))
+      .rejects.toMatchObject({ error: "status_path_unavailable" });
+    await expect(statusRecorder(["--state-dir", target, "--prepare"], ""))
+      .rejects.toMatchObject({ error: "status_python_required" });
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
 test("prepare records bootstrap unavailable before launch and healthy only after readiness custody", async () => {

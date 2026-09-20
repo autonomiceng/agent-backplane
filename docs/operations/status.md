@@ -13,10 +13,10 @@ file handling. Other methods return an empty 405 with `Allow: GET, HEAD`; a miss
 or empty public directory returns an empty 404. The existing application routes and
 authentication policy remain unchanged.
 
-Run the observer as the installation owner, with Python 3.11+, Docker CLI with
-Compose, and access to the selected local Docker daemon. It uses only the Python
-standard library and existing container tools. Docker access remains host-root
-equivalent authority.
+Preparation and observation require Python 3.11+. Run the observer as the
+installation owner, with Docker CLI and Compose access to the selected local Docker
+daemon. It uses only the Python standard library and existing container tools.
+Docker access remains host-root equivalent authority.
 
 ## Select one installation
 
@@ -59,6 +59,10 @@ settings, and creates a private status parent plus a mode `0755` public `console
 leaf. It records bootstrap unavailable before deployment mutation and changes that
 task to healthy only after `up --wait`, authenticated readiness, and enrollment
 capability custody all succeed. Environment generation alone never records success.
+Changing `BP_STATUS_DIR` requires re-running preparation before Compose so Docker
+cannot create the bind source as root. Timer installation requires an existing
+owner-controlled `status` directory with no group/world write and an owned mode
+`0755` `console` leaf; it never changes ownership or repairs modes.
 
 ## Install periodic observation
 
@@ -81,18 +85,25 @@ internal gateway. The installer evaluates that exact selection with a bounded
 Compose configuration command in a closed environment. For edge or gateway
 selections, it requires exactly one read-only bind at `/srv/status`, requires its
 source leaf to be `console`, derives the state directory from its parent, and refuses
-a conflicting `--state-dir`. Core-only selection uses an explicit `--state-dir` or
-defaults to `<checkout>/data`.
+a conflicting `--state-dir`. Core-only selection requires an explicit `--state-dir`.
 
 The generated user service freezes canonical checkout, env-file, project, Compose
-files, profiles, and state directory in its command. It has a 120-second start limit
-for the observer's 90-second collection and cleanup budget. The timer starts after
-10 seconds and schedules the next run 30 seconds after completion, so observations
-do not overlap. Unit arguments escape systemd specifier and environment expansion.
+files, profiles, state directory, rootful local Docker endpoint, Docker configuration
+directory, and Docker executable search directory. It explicitly removes inherited
+Docker context and TLS selectors. It has a 120-second start limit for the observer's
+90-second collection and cleanup budget. If the user manager has already passed its
+10-second startup point, enabling the timer starts the first observation immediately;
+a newly started manager waits until that point. Later runs start 30 seconds after each
+completion, so observations do not overlap. Unit arguments escape systemd specifier
+and environment expansion.
+
 Existing unit files are never overwritten. A pre-activation partial write removes
-only files created by that attempt; an activation failure retains both units for
-inspection and explicit disablement. The user manager must remain active and have
-Docker access; enable lingering separately if observation must continue after logout.
+only files created by that attempt. An activation failure retains both units. Run
+`systemctl --user disable --now agent-backplane-status.timer`, then remove both
+`~/.config/systemd/user/agent-backplane-status.service` and
+`~/.config/systemd/user/agent-backplane-status.timer` before retrying. The user
+manager must remain active and have Docker access; enable lingering separately if
+observation must continue after logout.
 
 Native Compose resolves variables from the selected env file. The observer removes
 inherited `BP_*`, `COMPOSE_*`, and unrelated shell variables before invoking Compose;
@@ -204,16 +215,15 @@ component probes produce their current outcome. No prior healthy result is cache
 
 ## Verification limits
 
-The Python tests use fake Docker boundaries and real local process/filesystem failure
-tests. They do not qualify PostgreSQL, Caddy, RustFS, workerd, the Bun operations helper,
-or a complete effective Compose installation. Before publication integration is released,
-run the observer against core, blobs, compute, standalone edge, and internal gateway
-selections. Verify every shipped runtime version parser, disabled and absent states,
-operations-token privacy, task timestamps, frozen-file expiry, rootless/remote refusal,
-and atomic publication. The later gateway route must independently prove unauthenticated
-GET/HEAD behavior, credential stripping, JSON/no-store headers, method rejection, and
-missing-file behavior.
+The publication acceptance gate renders six effective Compose selections: core,
+blobs, compute, standalone edge, internal gateway, and blobs plus compute plus
+gateway. It verifies generated-unit syntax and exercises one actual unprivileged
+Caddy with GET, HEAD, 405, missing-file, credential/validator/range stripping,
+JSON/no-store response policy, bounded publication, and atomic replacement.
 
-The pinned workerd binary was checked directly and prints `workerd 2026-09-18`.
-The observer must still be exercised against the selected running container during
-installation acceptance; a direct binary check does not prove the whole collector.
+The Python suites cover fake Docker boundaries plus real local process and filesystem
+failure paths. Actual-host qualification remains pending for the server, PostgreSQL,
+RustFS, and workerd version/probe parsers, capability projection and token privacy,
+task timestamps, frozen-file expiry, and rootless/remote refusal. The pinned workerd
+binary was checked directly and prints `workerd 2026-09-18`; that does not qualify
+the selected running container or the complete collector.
