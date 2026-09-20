@@ -288,7 +288,10 @@ def drill(offline=False, s3=False):
         finally:
             primary_error = sys.exc_info()[1]
             if primary_error is not None:
-                failure_diagnostics(project)
+                try:
+                    failure_diagnostics(project)
+                except Exception:
+                    pass  # Diagnostic output must not prevent owned-resource cleanup.
             cleanup_error = None
             for label, args in [('compose down', compose + ['down', '--remove-orphans']),
                                 *((f'volume rm {volume}', ['docker', 'volume', 'rm', volume]) for volume in owned_volumes),

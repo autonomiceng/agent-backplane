@@ -348,10 +348,10 @@ def start_existing_services(stack, services):
     budget = startup_timeout(stack)
     deadline = time.monotonic() + budget
     def remaining():
-        budget = deadline - time.monotonic()
-        if budget <= 0:
+        left = deadline - time.monotonic()
+        if left <= 0:
             raise TimeoutError()
-        return budget
+        return left
     def run(args):
         result = subprocess.run(args, capture_output=True, text=True, check=True,
                                 timeout=remaining(), cwd=ROOT)
