@@ -21,7 +21,15 @@ Docker access remains host-root equivalent authority.
 ## Select one installation
 
 Selection includes the canonical checkout, env file, Compose project, ordered
-Compose files, and active profiles. For a core-only installation:
+Compose files, and active profiles. Preparation persists the native
+`COMPOSE_PROJECT_NAME`, `COMPOSE_FILE`, and `COMPOSE_PROFILES` keys in the selected
+env file. A manual observation can reuse that selection and `BP_STATUS_DIR`:
+
+```sh
+python3 scripts/status_observer.py --checkout "$PWD" --env-file "$PWD/.env"
+```
+
+For an explicitly selected core-only installation:
 
 ```sh
 python3 scripts/status_observer.py \
@@ -29,11 +37,13 @@ python3 scripts/status_observer.py \
   --env-file "$PWD/.env" \
   --project-name agent-backplane \
   --compose-file compose.yaml \
+  --profile '' \
   --state-dir "$PWD/data"
 ```
 
 Repeat `--compose-file` and `--profile` for every installed overlay. For example,
-an internal gateway with Files on RustFS and Functions enabled adds:
+an internal gateway with Files on RustFS and Functions enabled replaces
+`--profile ''` with:
 
 ```sh
   --compose-file compose.blobs.yaml --profile blobs \
@@ -43,14 +53,17 @@ an internal gateway with Files on RustFS and Functions enabled adds:
 
 Use `compose.edge.yaml` with `--profile edge` for standalone Caddy. Never select
 both edge and gateway. Relative Compose files resolve from the selected checkout.
-If omitted for a manual observation, the env file defaults to `<checkout>/.env`,
-the project to `agent-backplane`, the Compose selection to `compose.yaml`, and the
-state directory to `<checkout>/data`. These defaults select core only. The observer never discovers
-optional overlays from repository presence. `infra/bootstrap/prepare.ts` currently
-does not persist its Compose file/profile selection, so an installed optional stack
-must repeat the exact preparation selection here. Every active profile must be passed
-with `--profile`; an env-only `COMPOSE_PROFILES` selection does not establish observer
-custody and leaves the affected mode unknown.
+Saved relative Compose paths resolve beside the env file. Preparation requires the
+checkout's root `compose.yaml` first, followed by the ordered overlays. Explicit
+selectors must agree with recorded values. A saved empty `COMPOSE_PROFILES` selects
+no optional profiles; `--profile ''` makes that selection explicit. Existing
+observer invocations and timer units with explicit files and no profile flags
+retain their original empty-profile meaning.
+
+The env file defaults to `<checkout>/.env`. With no recorded settings or explicit
+selectors, the project defaults to `agent-backplane`, the Compose selection to
+`compose.yaml` with no optional profiles, and the state directory to `<checkout>/data`.
+The observer never discovers optional overlays from repository presence.
 
 `BP_STATUS_DIR` is host state and is independent of the server's container
 `BP_DATA_DIR=/data`. Preparation defaults it to `./data`, resolves relative values
@@ -66,8 +79,10 @@ owner-controlled `status` directory with no group/world write and an owned mode
 
 ## Install periodic observation
 
-Timer installation is an explicit, separate opt-in. Repeat every Compose file and
-active profile used for the deployment:
+Timer installation is an explicit, separate opt-in. Supply the project and every
+Compose file used for the deployment. Omitted `--profile` flags reuse the saved
+profiles; explicit flags select the complete set and must agree with the env file.
+Without saved profiles, omission selects none. For example:
 
 ```sh
 python3 scripts/install_status_timer.py --install \
@@ -138,7 +153,7 @@ omitted because they are not stable Backplane task IDs in the v1 public contract
 | `files` | The original `capabilities.files` state and `observedAt` from the private operations response | Omitted |
 | `functions` | The original `capabilities.functions` identity-probe state and `observedAt`; independent of workerd process state | Omitted |
 | `migrate`, `data-init`, `blob-bootstrap` | Compose container start/finish/exit record | Omitted |
-| `bootstrap` | Private execution record bound to the canonical checkout and env-file paths | Omitted |
+| `bootstrap` | Private execution record bound to the canonical checkout, env file, project, ordered Compose files and profile set; mismatched or older records without selection remain unknown | Omitted |
 
 The operations request runs inside the inspected server container. Its bearer token is
 read from that container's environment and is never placed in a host subprocess argument,
