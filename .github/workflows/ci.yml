@@ -31,3 +31,4 @@ jobs:
       - run: python3 tests/acceptance/workerd-gate.py agent-backplane-workerd:1.20260918.1
       - run: python3 scripts/backup-drill.py --offline
       - run: python3 scripts/backup-drill.py --s3
+      - run: python3 scripts/storage-migration-drill.py
