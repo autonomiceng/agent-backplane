@@ -29,6 +29,8 @@ test("failed blob and marker reads leave absent store directories untouched", as
     await expect(store.open(crypto.randomUUID(), crypto.randomUUID())).rejects.toThrow();
     await expect(store.readMarker()).rejects.toThrow();
     await expect(Array.fromAsync(store.inventory())).rejects.toThrow();
+    await store.remove(crypto.randomUUID(), { id: crypto.randomUUID(), staging: false });
+    expect(await store.scanPage(crypto.randomUUID())).toEqual([]);
     expect(await readdir(root)).toEqual([]);
   } finally { await rm(root, { recursive: true, force: true }); }
 });

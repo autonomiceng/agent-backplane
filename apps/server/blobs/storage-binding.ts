@@ -31,7 +31,9 @@ export async function verifyStorageBinding(pool: Pool, store: BindingStore, onLe
       if (binding.phase !== "ready") refuse("not_ready");
       if (![binding.database_id, binding.store_id, binding.generation].every(value => blobUuid.test(value))) refuse("invalid");
       if (binding.backend !== store.backend) refuse("backend_mismatch");
-      if (!bindingBytes(binding).equals(await store.readMarker())) refuse("marker_mismatch");
+      const marker = await store.markerOrAbsent();
+      if (!marker) return refuse("marker_missing");
+      if (!bindingBytes(binding).equals(marker)) refuse("marker_mismatch");
       await storageInventory(tx, store);
     });
     await lease.assertOwned();

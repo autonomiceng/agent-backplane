@@ -88,12 +88,12 @@ export function filesystemStore(dataDir: string): BindingStore {
       return read(await path(workspace, { id, staging: false }, false), BLOB_LIMIT);
     },
     async remove(workspace, ref) {
-      const target = await path(workspace, ref);
-      try { if (!(await lstat(target)).isFile()) throw new Error("blob_unavailable"); await unlink(target); await sync(dirname(target)); }
+      try { const target = await path(workspace, ref, false); if (!(await lstat(target)).isFile()) throw new Error("blob_unavailable"); await unlink(target); await sync(dirname(target)); }
       catch (error) { if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error; }
     },
     async scanPage(workspace) {
-      await path(workspace, { id: workspace, staging: false });
+      try { await path(workspace, { id: workspace, staging: false }, false); }
+      catch (error) { if (error instanceof Error && "code" in error && error.code === "ENOENT") return []; throw error; }
       const dir = scans.get(workspace) ?? await opendir(join(root, workspace)); scans.set(workspace, dir);
       const refs: BlobRef[] = [];
       try {

@@ -20,14 +20,9 @@ async function fixture() {
   };
   try {
     const [schema] = await admin`SELECT to_regclass('control.blob_storage_binding') AS binding`;
-    if (!schema.binding) {
-      // Allows testing the exact proposed migration before the orchestrator applies protected files.
-      const path = Bun.env.BP_TEST_STORAGE_BINDING_SQL;
-      if (!path) throw new Error("binding migration required; set BP_TEST_STORAGE_BINDING_SQL to the proposed SQL");
-      await admin.unsafe(await Bun.file(path).text());
-    }
+    if (!schema.binding) throw new Error("migration 000032 not applied");
     const [retention] = await admin`SELECT to_regclass('control.blob_storage_retained') AS retained`;
-    if (!retention.retained && Bun.env.BP_TEST_STORAGE_ADOPTION_SQL) await admin.unsafe(await Bun.file(Bun.env.BP_TEST_STORAGE_ADOPTION_SQL).text());
+    if (!retention.retained) throw new Error("migration 000032 not applied");
     const f = await principalFixture(pool, { blobStore: store }, cleanup => cleanups.push(cleanup));
     const key = await issueKey(f.app, f.cookie, f.workspaceId, f.principalId), runId = await createRun(f.app, key, f.workspaceId);
     const identity = { database: crypto.randomUUID(), store: crypto.randomUUID(), generation: crypto.randomUUID() };
@@ -148,7 +143,7 @@ test("missing markers, unsafe files, staging leftovers and failed reads preserve
   try {
     const blob = await f.put(); await f.bind();
     await rm(f.markerPath);
-    await expect(verifyStorageBinding(f.pool, f.store)).rejects.toThrow("blob_binding_unavailable");
+    await expect(verifyStorageBinding(f.pool, f.store)).rejects.toThrow("blob_binding_marker_missing");
     const path = join(f.dataDir, "blobs", f.workspaceId, blob.id);
     await symlink(path, f.markerPath);
     await expect(verifyStorageBinding(f.pool, f.store)).rejects.toThrow("blob_binding_unavailable");

@@ -14,10 +14,10 @@ export async function sweepBlobs(tx: RunTransaction, emit: EmitAudit, workspace:
     for (const ref of refs) {
       if (performance.now() >= deadline) { pending = true; break; }
       try {
-        const [row] = await tx`SELECT id FROM control.blobs WHERE workspace_id=${workspace} AND id=${ref.id}`;
-        if (!ref.staging && row) continue;
-        const [retained] = await tx`SELECT id FROM control.blob_storage_retained WHERE workspace_id=${workspace} AND id=${ref.id} AND staging=${ref.staging}`;
-        if (retained) continue;
+        const [evidence] = await tx`SELECT
+          EXISTS(SELECT FROM control.blobs WHERE workspace_id=${workspace} AND id=${ref.id}) AS referenced,
+          EXISTS(SELECT FROM control.blob_storage_retained WHERE workspace_id=${workspace} AND id=${ref.id} AND staging=${ref.staging}) AS retained`;
+        if ((!ref.staging && evidence.referenced) || evidence.retained) continue;
         await store.remove(workspace, ref); removed++;
       } catch { pending = true; }
     }
