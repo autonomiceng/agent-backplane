@@ -170,6 +170,9 @@ try {
     const until = performance.now() + 15000;
     while (performance.now() < until) {
       try {
+        // Automatic OOM recovery can finish after the caller first reads the old port.
+        // Resolve the mapping from the captured container on every recovery attempt.
+        address = (await docker("port", container, "8080")).split("\n")[0];
         const response = await fetch(`http://${address}/identity`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.any([interrupted.signal, AbortSignal.timeout(1000)]), redirect: "error" });
         await response.body?.cancel();
         if (response.status === 204 && response.headers.get("x-backplane-control") === controlHash) return;
@@ -269,7 +272,8 @@ try {
       .catch(error => { if (error instanceof Error && error.name === "TimeoutError") throw error; return null; });
     const outcome = await pending;
     assert(outcome === null || outcome.status === 502 && outcome.reason === "function_failed", "memory fixture timed out or returned an ordinary response");
-    address = (await docker("port", container, "8080")).split("\n")[0];
+    console.log(JSON.stringify({ gate: "memory-recovery-start", outcome,
+      restartCount: await docker("inspect", "--format", "{{.RestartCount}}", container) }));
     await waitIdentity(controlHash);
     if (outcome === null) assert(Number(await docker("inspect", "--format", "{{.RestartCount}}", container)) > memoryRestartsBefore, "connection failure has no container-restart evidence");
     const recovered = await request("/invoke", { manifest: value, props, input: null });
