@@ -75,7 +75,7 @@ export default {
           env: {}, globalOutbound: ctx.exports.Egress({ props: { workspaceId: m.workspaceId, urls: m.outboundUrls } }),
         }));
         const child = await worker.getEntrypoint(null, { props }).fetch(new Request("https://function.invalid/invoke", {
-          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input),
+          method: "POST", redirect: "manual", headers: { "content-type": "application/json" }, body: JSON.stringify(input),
         }));
         const headers = new Headers(child.headers);
         headers.delete("x-backplane-error");

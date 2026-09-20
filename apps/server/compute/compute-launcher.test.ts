@@ -113,3 +113,30 @@ test("private HTTP, loopback and HTTPS preserve the configured authority and pat
     }
   } finally { transport.mockRestore(); }
 });
+
+test("dispatch forwards only the remaining budget and distinguishes typed failures and transport 413 from function responses", async () => {
+  const m: Omit<Manifest, "configHash"> = { version: 1, workspaceId: "w", functionName: "f", id: "id",
+    bundle: "export default {}", bundleSha256: sha256("export default {}"), entryPoint: "default", compatibilityDate,
+    outboundUrls: [], keyRef: { workspaceId: "w", principalId: "p" }, runtimeDigest: evidence.runtimeDigest };
+  const invocation = { manifest: { ...m, configHash: configHash(m) }, props: { token: "temporary", runId: "r", workspaceId: "w" }, input: null };
+  let next = new Response(null, { status: 503, headers: { "x-backplane-error": "compute_unavailable" } });
+  const transport = spyOn(globalThis, "fetch").mockImplementation(Object.assign(async (_url: URL | RequestInfo, options?: RequestInit) => {
+    expect(new Headers(options?.headers).get("x-backplane-budget-ms")).toBe("321");
+    return next;
+  }, { preconnect: globalThis.fetch.preconnect }));
+  try {
+    const launcher = createComputeLauncher({ url: "http://127.0.0.1:8080", token: "control", runtimeDigest: evidence.runtimeDigest, timeoutMs: "300000" });
+    if (!launcher?.invoke) throw Error("missing launcher");
+    const invoke = () => launcher.invoke!(invocation, AbortSignal.timeout(1000), evidence, 321.9);
+    await expect(invoke()).rejects.toMatchObject({ reason: "compute_unavailable" });
+    next = new Response(null, { status: 502, headers: { "x-backplane-error": "function_failed" } });
+    await expect(invoke()).rejects.toMatchObject({ reason: "function_failed" });
+    next = new Response(null, { status: 504, headers: { "x-backplane-error": "function_timeout" } });
+    await expect(invoke()).rejects.toMatchObject({ reason: "function_timeout" });
+    next = new Response("Request body too large", { status: 413 });
+    await expect(invoke()).rejects.toMatchObject({ reason: "function_failed" });
+    next = Response.json({ ordinary: true }, { status: 413, headers: { "x-backplane-response": "proxied" } });
+    const ordinary = await invoke();
+    expect(ordinary.status).toBe(413); expect(await ordinary.json()).toEqual({ ordinary: true });
+  } finally { transport.mockRestore(); }
+});

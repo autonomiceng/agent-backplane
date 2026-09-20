@@ -1,5 +1,6 @@
 import { capabilityProbe } from "../../apps/server/platform/capability-probe.ts";
-// Explicit PG gate against a separately owned runtime. No Docker or installed-stack mutations here.
+// Explicit PG gate against the actual supervisor prototype or newly built Bun/workerd artifact.
+// The old workerd-only artifact cannot satisfy the five-file control identity. No Docker mutations here.
 import { afterAll, expect, test } from "bun:test";
 import { createComputeLauncher } from "../../apps/server/compute/compute-launcher.ts";
 import { createPool } from "../../apps/server/platform/pool.ts";
@@ -9,8 +10,8 @@ import { createRun, issueKey, principalFixture, testApp } from "../../apps/serve
 test("effective runtime identity preserves deployer authority and refuses a wrong expectation before registration", async () => {
   const compute = createComputeLauncher({ url: Bun.env.BP_COMPUTE_URL, token: Bun.env.BP_COMPUTE_TOKEN, runtimeDigest: Bun.env.BP_WORKERD_RUNTIME_ID });
   if (!compute) throw Error("owned runtime BP_COMPUTE_URL, BP_COMPUTE_TOKEN and BP_WORKERD_RUNTIME_ID required");
-  const evidence = await compute.verify(AbortSignal.timeout(5000));
-  if (!evidence) throw Error("owned runtime identity verification failed");
+  const evidence = await compute.verify(AbortSignal.timeout(2000));
+  if (!evidence) throw Error("actual supervisor identity verification failed");
   const { artifact } = evidence;
   const pool = createPool(await migratedDatabase());
   let listener: Bun.Server<undefined> | undefined;
