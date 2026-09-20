@@ -44,7 +44,7 @@ test("home omits accessible Workspaces or sends Principals and Approvals links t
     await client.previous();
     expect(renderDashboardHome(client)).toBe(first);
     expect(first).toContain("BP_CREDENTIALS_FILE");
-    expect(first).toContain("bp mcp");
+    expect(first).toContain("mcpServers.backplane");
     expect(first).toContain("/skills/backplane/SKILL.md");
   } finally { client?.dispose(); await pool.close(); }
 });

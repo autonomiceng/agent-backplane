@@ -4,11 +4,15 @@ import { DashboardShell } from "./components/dashboard-shell.tsx";
 import { RunTimeline } from "./screens/run-timeline.tsx";
 import { ApprovalInbox } from "./screens/approval-inbox.tsx";
 import { SignIn } from "./screens/sign-in.tsx";
+import { DashboardHome } from "./screens/dashboard-home.tsx";
 import { Principals } from "./screens/principals.tsx";
 
 export function Routes({ url }: { url: URL }): ReactNode {
   if (url.pathname === "/dashboard/sign-in") {
     return <SignIn returnTo={url.searchParams.get("returnTo")} />;
+  }
+  if (url.pathname === "/dashboard" || url.pathname === "/dashboard/") {
+    return <DashboardShell><DashboardHome /></DashboardShell>;
   }
   const approvalMatch = /^\/dashboard\/workspaces\/([^/]+)\/approvals\/?$/.exec(url.pathname);
   const approvalWorkspaceId = approvalMatch?.[1]?.toLowerCase();
@@ -31,7 +35,7 @@ export function Routes({ url }: { url: URL }): ReactNode {
     <DashboardShell>
       {workspaceId && runId
         ? <RunTimeline key={`${workspaceId}:${runId}`} workspaceId={workspaceId} runId={runId} />
-        : <p>Open a Run timeline link.</p>}
+        : <p>Page not found. <a href="/dashboard/">Go to Workspaces</a>.</p>}
     </DashboardShell>
   );
 }

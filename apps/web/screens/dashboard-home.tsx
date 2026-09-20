@@ -29,7 +29,7 @@ export function DashboardHomeView({ state, actions }: { state: DashboardHomeStat
       <button onClick={() => { void actions.refresh(); }}>Try again</button>
     </>}
     {state.status === "ready" && <>
-      <p>A Workspace keeps its schemas, Queues, and audit history together. Choose Principals to inspect agent keys or Approvals to decide pending requests.</p>
+      <p>A Workspace keeps its schemas, Queues, and audit history together. Choose Principals to manage the identities and keys your agents use. Choose Approvals to review pending requests.</p>
       <button onClick={() => { void actions.refresh(); }}>Refresh Workspaces</button>
       {state.workspaces.length === 0
         ? <p>{state.page === 0 ? "No Workspaces are available to your account. Ask the person who runs this Backplane to check your Organization access and Workspace setup." : "No more Workspaces. Refresh to see your current access."}</p>
@@ -49,9 +49,9 @@ export function DashboardHomeView({ state, actions }: { state: DashboardHomeStat
     </>}
     <section aria-labelledby="connect-agent">
       <h2 id="connect-agent">Connect an agent</h2>
-      <p>Each agent uses a Principal with its own key in a Workspace. If you completed bootstrap, add the emitted <code>mcpServers.backplane</code> configuration to your Harness. It runs <code>bp mcp</code> locally using your private credential file.</p>
+      <p>Each agent uses a Principal with its own key in a Workspace. After setup, add the printed <code>mcpServers.backplane</code> settings to your agent application. They connect it to Backplane using the private credential file saved during setup.</p>
       <p>For the CLI, set <code>BP_CREDENTIALS_FILE</code> to that file. Existing key-based setups use <code>BP_URL</code>, <code>BP_KEY</code>, and <code>BP_WORKSPACE_ID</code>.</p>
-      <p><a href="https://github.com/autonomiceng/agent-backplane/blob/main/infra/bootstrap/README.md">Bootstrap and credential setup</a>{" · "}
+      <p><a href="https://github.com/autonomiceng/agent-backplane/blob/main/infra/bootstrap/README.md">Set up agent access</a>{" · "}
         <a href="https://github.com/autonomiceng/agent-backplane/blob/main/skills/backplane/SKILL.md">Agent CLI guide</a></p>
       <p>Open a Run timeline link from your agent to inspect that Run’s activity.</p>
     </section>
