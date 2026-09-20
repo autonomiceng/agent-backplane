@@ -21,7 +21,7 @@ The local HTTPS listener covers `localhost`, `127.0.0.1`, and `backplane.localho
 
 For public mode, put `BP_ACCESS_MODE=public`, `BP_PUBLIC_DOMAIN=example.com`, and `BP_BIND_HOST=0.0.0.0` in the selected environment file, then run preparation with `--profile edge`. Point `backplane.example.com` at this host and allow inbound ports 80 and 443. A loopback bind is also supported if a separate TCP forwarder makes those ports publicly reachable; a loopback bind alone cannot obtain public certificates. HTTP redirects to the configured HTTPS address; `/health` stays available over HTTP for health checks. HTTPS tells browsers to require HTTPS on future visits.
 
-For Platform Edge, use `BP_ACCESS_MODE=proxy` and the exact external `BP_PUBLIC_URL`. Preparation starts core without a standalone Caddy. Platform Edge forwards to `bp-server:3000` on `BP_PLATFORM_NETWORK` (default `platform`). The gateway owns certificate issuance, HTTP redirects and operator-route exclusions. Keep the standalone edge profile off when another gateway owns ports 80 and 443.
+For Platform Edge, use `BP_ACCESS_MODE=proxy` and the exact external `BP_PUBLIC_URL`. Add `--profile gateway` to preparation. Platform Edge forwards to the internal Caddy at `bp-gateway:80` on `BP_PLATFORM_NETWORK` (default `platform`). Platform Edge owns certificate issuance and any HTTP-to-HTTPS redirects. The internal gateway listens only on HTTP port 80 and retains operator-route exclusions. Keep the standalone edge profile off when another gateway owns ports 80 and 443.
 
 Preparation preserves existing secrets and rejects conflicting mode/origin settings before starting services. Set one mode directly; the previous scheme, issuer and edge override settings are unsupported. No configuration or data migration runs. Existing volume names and backup contents remain unchanged. On a host with several deployments, choose distinct `BP_VOLUME_PREFIX` and `BP_PLATFORM_NETWORK` values so the `bp-server` and `bp-gateway` aliases resolve uniquely.
 
@@ -68,3 +68,22 @@ bun tests/acceptance/access-modes.ts
 These three probes cover local dual protocols, verified hostname/localhost/IP certificates, and public HTTP redirects with the health exception. Public certificate issuance and renewal require reachable public DNS and cannot be proven by this isolated probe.
 
 The existing application ingress acceptance uses a disposable, enrolled local core plus edge deployment with a configured HTTPS address. Supply its matching environment and project, `BP_EDGE_CA_CERT`, `BP_USER_EMAIL`, `BP_USER_PASSWORD`, and `BP_OPERATIONS_TOKEN`, then run `bun tests/acceptance/public-ingress.ts`. It checks cookie/CSRF policy, operator exclusions, actual loopback bindings and SSE lifetime/resume through Caddy. Missing prerequisites fail. For direct application checks against temporary PostgreSQL, run `bun run test apps/server/platform/forwarded-headers.test.ts`.
+
+## Internal gateway behind Platform Edge
+
+Set `BP_ACCESS_MODE=proxy` and `BP_PUBLIC_URL` to the browser’s HTTPS origin.
+For the default prepared installation, run from the Backplane checkout:
+
+```sh
+docker compose --env-file .env --project-name agent-backplane \
+  -f compose.yaml -f compose.gateway.yaml --profile gateway up -d --wait
+```
+
+If preparation used `--env-file PATH` or `--compose-project NAME`, replace `.env`
+and `agent-backplane` with those same values. Keep those options on subsequent
+Compose commands so the public URL, volume prefix and network come from the
+prepared deployment.
+The gateway uses `bp-gateway:80` on the shared Platform Network and publishes no host ports.
+Platform Edge routes Backplane requests through that gateway. Do not combine this overlay
+with the standalone `edge` profile. Existing direct server access remains for internal telemetry.
+The advanced deployment with an operator-owned proxy can still target the server directly.
