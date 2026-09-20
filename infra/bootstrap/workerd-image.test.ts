@@ -12,7 +12,16 @@ const hashes = `${defaultWorkerdBinary}  /usr/bin/workerd\n${supervisorBinary}  
 function dockerFixture() {
   const images = new Map([[entries.BP_WORKERD_IMAGE, imageId]]);
   const state = { inspectedImageId: imageId, builds: 0, architecture: "amd64", hashes, workerdVersion: "workerd 2026-09-18", bunVersion: "1.4.2", missingBun: false };
-  const run: Runner = async args => {
+  const containers = new Map<string, string[]>();
+  const run: Runner = async (args, _env, timeoutMs) => {
+    expect(timeoutMs).toBe(args[0] === "build" ? 900_000 : 10_000);
+    if (args[0] === "rm") { expect(containers.delete(args.at(-1) ?? "")).toBe(true); return ""; }
+    if (args[0] === "create") {
+      const id = "a".repeat(64);
+      containers.set(id, args);
+      return id;
+    }
+    if (args[0] === "start") args = containers.get(args.at(-1) ?? "") ?? [];
     if (args[0] === "info") return state.architecture;
     if (args[0] === "build") {
       const context = resolve(import.meta.dir, "../compute/image");
@@ -29,7 +38,7 @@ function dockerFixture() {
       state.inspectedImageId = id;
       return `${id} ${state.architecture}`;
     }
-    if (args[0] !== "run") throw Error("unexpected Docker command");
+    if (args[0] !== "create") throw Error("unexpected Docker command");
     const entrypoint = args.indexOf("--entrypoint"), id = args[entrypoint + 2];
     if (id !== state.inspectedImageId) throw Error("unverified launch image");
     expect(args[args.indexOf("--pull") + 1]).toBe("never");
@@ -42,7 +51,7 @@ function dockerFixture() {
     if (args.at(-1) !== "--version") throw Error("unexpected executable arguments");
     return args[entrypoint + 1] === "/usr/bin/workerd" ? state.workerdVersion : state.bunVersion;
   };
-  return { images, state, run };
+  return { images, state, run, containers };
 }
 
 test("missing and blank overrides build the pinned default independently of a server override; arm64 refuses", async () => {
@@ -99,8 +108,8 @@ test("verification and private launch evidence preserve the resolved image acros
   const { images, run } = dockerFixture();
   const secondId = "sha256:" + "d".repeat(64);
   try {
-    const first = await verifyWorkerdImage(entries, { BP_COMPUTE_TOKEN: "never-record" }, async (args, env) => {
-      const result = await run(args, env);
+    const first = await verifyWorkerdImage(entries, { BP_COMPUTE_TOKEN: "never-record" }, async (args, env, timeoutMs) => {
+      const result = await run(args, env, timeoutMs);
       if (args[0] === "image") images.set(entries.BP_WORKERD_IMAGE, secondId);
       return result;
     });
@@ -119,4 +128,18 @@ test("verification and private launch evidence preserve the resolved image acros
     expect((await readdir(join(directory, "compute"))).every(name => name.endsWith(".json"))).toBe(true);
     expect(await readdir(join(directory, "compute"))).toHaveLength(2);
   } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("a verifier deadline removes only its created container and refuses launch", async () => {
+  for (const executable of ["sha256sum", "/usr/bin/workerd", "/usr/bin/bun"]) {
+    const { run, containers } = dockerFixture();
+    await expect(verifyWorkerdImage(entries, {}, async (args, env, timeoutMs) => {
+      if (args[0] === "start" && containers.get(args.at(-1) ?? "")?.includes(executable)) {
+        expect(timeoutMs).toBe(10_000);
+        throw new Error("injected verifier deadline");
+      }
+      return run(args, env, timeoutMs);
+    })).rejects.toThrow("injected verifier deadline");
+    expect(containers.size).toBe(0);
+  }
 });
