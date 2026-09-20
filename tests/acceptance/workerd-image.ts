@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { privateRead } from "../../packages/cli/runtime/credential-file.ts";
 import { persistWorkerdEvidence } from "../../infra/bootstrap/workerd-image.ts";
-import { readControlSurfaceHash } from "../../apps/server/compute/runtime-identity.ts";
+import { readControlSurfaceHash, type RuntimeEvidence } from "../../apps/server/compute/runtime-identity.ts";
 import { createComputeLauncher } from "../../apps/server/compute/compute-launcher.ts";
 import { compatibilityDate, configHash, sha256, type Manifest } from "../../apps/server/compute/deployment-config.ts";
 
@@ -92,9 +92,14 @@ try {
   assert.equal(await docker("image", "inspect", "--format", '{{index .Config.Labels "io.backplane.workerd.source"}}', identity),
     "https://github.com/cloudflare/workerd/tree/679c09e5eea0af8a04062e1875e99c75af532e3b");
   let address = (await docker("port", container, "8080")).split("\n")[0];
-  async function request(path: string, body: unknown, authorization: string = token) {
+  const launcher = createComputeLauncher({ url: `http://${address}`, token, runtimeDigest });
+  assert(launcher);
+  let operationEvidence: RuntimeEvidence | undefined;
+  async function request(path: string, body: unknown, authorization: string = token, evidence = operationEvidence) {
+    assert(evidence, "verify runtime before dispatch");
     const response = await fetch(`http://${address}${path}`, { method: "POST", redirect: "error", signal: AbortSignal.timeout(5000),
-      headers: { authorization: `Bearer ${authorization}`, "content-type": "application/json" }, body: JSON.stringify(body) });
+      headers: { authorization: `Bearer ${authorization}`, "content-type": "application/json",
+        "x-backplane-runtime": evidence.runtimeDigest, "x-backplane-control": evidence.controlHash, "x-backplane-artifact": JSON.stringify(evidence.artifact) }, body: JSON.stringify(body) });
     const bytes = await response.arrayBuffer();
     assert(bytes.byteLength <= 65536, "artifact response too large");
     return { status: response.status, body: new TextDecoder().decode(bytes) };
@@ -104,7 +109,10 @@ try {
   const deadline = performance.now() + 15_000;
   while (true) {
     let response;
-    try { response = await request("/prepare", value); } catch {
+    try {
+      operationEvidence = await launcher.verify(AbortSignal.timeout(1000)) ?? undefined;
+      response = await request("/prepare", value);
+    } catch {
       assert.equal(await docker("inspect", "--format", "{{.State.Running}}", container), "true", "runtime exited during startup");
       assert(performance.now() < deadline, "runtime artifact startup deadline exceeded");
       await Bun.sleep(100); continue;
@@ -117,13 +125,12 @@ try {
   const response = await request("/invoke", { manifest: value, props, input: { fixture: "artifact" } });
   assert.equal(response.status, 200);
   assert.deepEqual(JSON.parse(response.body), { input: { fixture: "artifact" }, workspaceId: value.workspaceId });
-  const launcher = createComputeLauncher({ url: `http://${address}`, token, runtimeDigest });
-  assert(launcher);
-  assert.deepEqual(await launcher.verify(AbortSignal.timeout(5000)), { source: "host-declared", reference: image, hostObservedImageId: identity });
+  assert(operationEvidence);
+  assert.deepEqual(operationEvidence.artifact, { source: "host-declared", reference: image, hostObservedImageId: identity });
   const wrong = createComputeLauncher({ url: `http://${address}`, token, runtimeDigest: `workerd-binary-sha256:${"0".repeat(64)}` });
   assert(wrong);
   assert.equal(await wrong.verify(AbortSignal.timeout(5000)), null);
-  assert.deepEqual(await wrong.prepare(value, AbortSignal.timeout(5000)), { ok: false, reason: "compute_unavailable" });
+  assert.deepEqual(await wrong.prepare(value, AbortSignal.timeout(5000), operationEvidence), { ok: false, reason: "compute_unavailable" });
   assert.equal((await request("/prepare", manifest(value.bundle, `workerd-binary-sha256:${"0".repeat(64)}`))).status, 503);
   assert.equal((await request("/invoke", { manifest: manifest(value.bundle, digest), props, input: null })).status, 503, "legacy identity must be refused");
   const refused = await command(["exec", "--env", `BP_WORKERD_BINARY_SHA256=${"0".repeat(64)}`, container, "/bin/sh", "/compute/start.sh"]);
@@ -156,12 +163,15 @@ try {
   }
   const controlHash = await readControlSurfaceHash();
   await waitIdentity(controlHash);
-  assert.deepEqual(await bare.verify(AbortSignal.timeout(5000)), { source: "host-declared", reference: image, hostObservedImageId: null });
-  assert.deepEqual(await bare.prepare(value, AbortSignal.timeout(5000)), { ok: true, value: { source: "host-declared", reference: image, hostObservedImageId: null } });
-  const withFacts = { ...value, artifact: { source: "host-declared", reference: image, hostObservedImageId: identity } };
-  const withoutFacts = { ...value, artifact: { source: "host-declared", reference: image, hostObservedImageId: null } };
-  assert.equal(configHash(withFacts), configHash(withoutFacts), "artifact evidence must not change deployment configuration");
-  assert.equal(configHash(withoutFacts), value.configHash);
+  // The binary/control are unchanged, but the replacement no longer declares an image ID.
+  assert.deepEqual(await bare.prepare(value, AbortSignal.timeout(5000), operationEvidence), { ok: false, reason: "compute_unavailable" });
+  assert(bare.invoke);
+  await assert.rejects(bare.invoke({ manifest: value, props, input: null }, AbortSignal.timeout(5000), operationEvidence), /compute_unavailable/);
+  const bareEvidence = await bare.verify(AbortSignal.timeout(5000));
+  assert(bareEvidence);
+  assert.deepEqual(bareEvidence.artifact, { source: "host-declared", reference: image, hostObservedImageId: null });
+  assert.deepEqual(await bare.prepare(value, AbortSignal.timeout(5000), bareEvidence), { ok: true, value: { source: "host-declared", reference: image, hostObservedImageId: null } });
+
   await appendFile(join(controlDirectory, "loader.js"), "\n// control identity drift fixture\n");
   await docker("restart", container);
   // Docker may allocate a different ephemeral published port on restart.
@@ -169,15 +179,18 @@ try {
   bare = createComputeLauncher({ url: `http://${address}`, token, runtimeDigest });
   assert(bare);
   await waitIdentity(await readControlSurfaceHash(pathToFileURL(controlDirectory + "/")));
+  assert.deepEqual(await bare.prepare(value, AbortSignal.timeout(5000), bareEvidence), { ok: false, reason: "compute_unavailable" });
+  assert(bare.invoke);
+  await assert.rejects(bare.invoke({ manifest: value, props, input: null }, AbortSignal.timeout(5000), bareEvidence), /compute_unavailable/);
   assert.equal(await bare.verify(AbortSignal.timeout(5000)), null, "changed loader must be refused");
-  assert.deepEqual(await bare.prepare(value, AbortSignal.timeout(5000)), { ok: false, reason: "compute_unavailable" });
   await copyFile(`${root}/apps/server/compute/workerd/loader.js`, join(controlDirectory, "loader.js"));
   await docker("restart", container);
   address = (await docker("port", container, "8080")).split("\n")[0];
   bare = createComputeLauncher({ url: `http://${address}`, token, runtimeDigest });
   assert(bare);
   await waitIdentity(controlHash);
-  assert((await bare.prepare(value, AbortSignal.timeout(5000))).ok, "restored control surface must accept the original deployment without redeploy");
+  assert.deepEqual(await bare.verify(AbortSignal.timeout(5000)), bareEvidence);
+  assert((await bare.prepare(value, AbortSignal.timeout(5000), bareEvidence)).ok, "restored control surface must accept the original deployment without redeploy");
   console.log(JSON.stringify({ configuredReference: image, imageId: identity, binarySha256: digest, architecture, runtimeDigest, controlHash, result: identityOnly ? "runtime identity and mismatch refusal passed; attribution requires PG gate" : "artifact identity, restrictions and protocol passed; full runtime qualification remains separate" }));
 } catch (error) {
   failed = true;

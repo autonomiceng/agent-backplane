@@ -15,7 +15,7 @@ test("deployment and activation attribute the wrong Principal, Run or User", asy
     const runId = await createRun(fixture.app, key, workspaceId);
     const activationRun = await createRun(fixture.app, key, workspaceId);
     const prepared: Manifest[] = [];
-    const compute: ComputeLauncher = { async verify() { return { source: "host-declared", reference: "fixture:local", hostObservedImageId: null }; }, runtimeDigest: "workerd-binary-sha256:" + "a".repeat(64), async prepare(manifest) { prepared.push(manifest); return { ok: true, value: { source: "host-declared", reference: "fixture:local", hostObservedImageId: null } }; } };
+    const compute: ComputeLauncher = { async verify() { return { runtimeDigest: "workerd-binary-sha256:" + "a".repeat(64), controlHash: "b".repeat(64), artifact: { source: "host-declared", reference: "fixture:local", hostObservedImageId: null } }; }, runtimeDigest: "workerd-binary-sha256:" + "a".repeat(64), async prepare(manifest) { prepared.push(manifest); return { ok: true, value: { source: "host-declared", reference: "fixture:local", hostObservedImageId: null } }; } };
     const app = await testApp(pool, { compute });
     const base = `http://localhost/api/v1/workspaces/${workspaceId}`;
     const path = `${base}/functions/example/deployments`;

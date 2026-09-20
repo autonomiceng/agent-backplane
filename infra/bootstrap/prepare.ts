@@ -28,6 +28,7 @@ export async function prepare(argv: string[], env: Environment, run: Runner = do
     for (const line of (source ?? "").split("\n")) {
       if (!line.trim() || line.trimStart().startsWith("#")) continue;
       const name = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)/.exec(line)?.[1];
+      if (name === "BP_WORKERD_EFFECTIVE_IMAGE") throw new CliError("workerd_effective_image_persisted", 1);
       if (!name || !managed.has(name)) continue;
       const match = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line);
       if (match?.[1] && match[2] === "" && entries[match[1]] === undefined) continue;

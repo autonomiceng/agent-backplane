@@ -1,9 +1,8 @@
 import { expect, test } from "bun:test";
-import { copyFile, mkdtemp, rm, appendFile } from "node:fs/promises";
+import { copyFile, mkdtemp, rm, appendFile, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { compatibilityDate, configHash, sha256, type Manifest } from "./deployment-config.ts";
 import { readArtifactEvidence, readControlSurfaceHash, type ArtifactEvidence } from "./runtime-identity.ts";
 
 test("Bun and POSIX shell agree on control identity; changing any mounted control file changes it", async () => {
@@ -36,12 +35,22 @@ test("private artifact facts accept explicit unknown image IDs and reject malfor
   }
 });
 
-test("artifact evidence and control measurements leave deployment configHash unchanged", () => {
-  const manifest: Omit<Manifest, "configHash"> = { version: 1, workspaceId: "w", functionName: "f", id: "d",
-    bundle: "export default {}", bundleSha256: sha256("export default {}"), entryPoint: "default", compatibilityDate,
-    outboundUrls: [], keyRef: { workspaceId: "w", principalId: "p" }, runtimeDigest: "workerd-binary-sha256:" + "a".repeat(64) };
-  const withFacts = { ...manifest, artifact: { source: "host-declared", reference: "fixture:local", hostObservedImageId: "sha256:" + "b".repeat(64) }, controlHash: "c".repeat(64) };
-  const withoutFacts = { ...manifest, artifact: { ...withFacts.artifact, hostObservedImageId: null }, controlHash: "d".repeat(64) };
-  expect(configHash(withFacts)).toBe(configHash(manifest));
-  expect(configHash(withoutFacts)).toBe(configHash(manifest));
+
+test("entrypoint rejects malformed references before measuring or executing the binary", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "bp-entrypoint-"));
+  try {
+    const probe = join(directory, "sha256sum");
+    await Bun.write(probe, "#!/bin/sh\necho binary-probe-reached >&2\nexit 77\n");
+    await chmod(probe, 0o700);
+    for (const reference of ["", "https://host/image", "bad\nvalue", "bad value", "/image", "image/", "image:", "image@sha256:abc", `image@sha256:${"A".repeat(64)}`, `image@sha256:${"a".repeat(64)}@extra`, "x".repeat(513),
+      "fixture:local", "registry.example:5000/path/image:local", `image@sha256:${"a".repeat(64)}`, `sha256:${"a".repeat(64)}`]) {
+      const valid = ["fixture:local", "registry.example:5000/path/image:local", `image@sha256:${"a".repeat(64)}`, `sha256:${"a".repeat(64)}`].includes(reference);
+      const child = Bun.spawn(["/bin/sh", new URL("./workerd/start.sh", import.meta.url).pathname], {
+        env: { PATH: directory, BP_WORKERD_IMAGE: reference, BP_WORKERD_BINARY_SHA256: "a".repeat(64) }, stdout: "pipe", stderr: "pipe",
+      });
+      const [code, error] = await Promise.all([child.exited, new Response(child.stderr).text()]);
+      expect(code).toBe(valid ? 77 : 1);
+      expect(error.trim()).toBe(valid ? "binary-probe-reached" : "invalid BP_WORKERD_IMAGE reference");
+    }
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });

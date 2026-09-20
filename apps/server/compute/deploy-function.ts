@@ -15,8 +15,8 @@ export async function deployFunction(pool: Pool, context: Extract<RunContext, { 
   if (!bundle.length || bundle.toString("utf8") !== input.bundle) return computeFailure("bundle_invalid");
   const outboundUrls = normalizeUrls(input.outboundUrls);
   if (!outboundUrls) return computeFailure("invalid_input");
-  const artifact = await launcher?.verify(AbortSignal.timeout(2000));
-  if (!launcher || !artifact) return computeFailure("compute_unavailable");
+  const evidence = await launcher?.verify(AbortSignal.timeout(2000));
+  if (!launcher || !evidence) return computeFailure("compute_unavailable");
   const { runtimeDigest } = launcher;
   const id = input.id.toLowerCase();
   const hash = configHash({ version: 1, ...context, functionName: name, id, bundle: input.bundle,
@@ -39,7 +39,7 @@ export async function deployFunction(pool: Pool, context: Extract<RunContext, { 
     await tx`INSERT INTO control.deployments (workspace_id, function_name, id, bundle, entry_point,
       compatibility_date, outbound_urls, config_hash, runtime_digest) VALUES (${context.workspaceId}, ${name}, ${id}, ${bundle},
       ${input.entryPoint}, ${compatibilityDate}, ${tx.array(outboundUrls, "TEXT")}, ${Buffer.from(hash, "hex")}, ${runtimeDigest})`;
-    await emit("function.deploy", [name, id], 1, { bundleSha256: sha256(input.bundle), configHash: hash, runtimeDigest, artifact });
+    await emit("function.deploy", [name, id], 1, { bundleSha256: sha256(input.bundle), configHash: hash, runtimeDigest, artifact: evidence.artifact });
     const deployment = await queryDeployment(tx, context.workspaceId, id);
     if (!deployment) throw new Error("deployment_missing_after_insert");
     return computeSuccess({ created: true, metadata: deployment.metadata });

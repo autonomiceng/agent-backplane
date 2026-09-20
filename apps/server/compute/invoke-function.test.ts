@@ -38,7 +38,7 @@ async function fixture() {
       if (!script) throw new Error("unknown test deployment");
       return script(value, request.signal);
     };
-    const compute: ComputeLauncher = { async verify() { return { source: "host-declared", reference: "fixture:local", hostObservedImageId: null }; }, runtimeDigest: "workerd-binary-sha256:" + "a".repeat(64),
+    const compute: ComputeLauncher = { async verify() { return { runtimeDigest: "workerd-binary-sha256:" + "a".repeat(64), controlHash: "b".repeat(64), artifact: { source: "host-declared", reference: "fixture:local", hostObservedImageId: null } }; }, runtimeDigest: "workerd-binary-sha256:" + "a".repeat(64),
       async prepare() { return { ok: true, value: { source: "host-declared", reference: "fixture:local", hostObservedImageId: null } }; },
       invoke(value, signal) { return endpoint(new Request("http://workerd.invalid/invoke", {
         method: "POST", headers: { authorization: `Bearer ${transportToken}`, "content-type": "application/json" },

@@ -119,7 +119,7 @@ test("every merged service uses journald without a Docker file cache or Alloy de
 });
 
 
-test("compute requires a full reference and never persists bootstrap's effective image selection", async () => {
+test("bare Compose requires a full reference and trusts effective image overrides", async () => {
   const digest = "a".repeat(64);
   const settings = ["BP_COMPUTE_TOKEN=fixture", "BP_WORKERD_IMAGE=fixture:local", `BP_WORKERD_BINARY_SHA256=${digest}`];
   const tagged = await config(["compose.compute.yaml"], "compute", settings);
@@ -130,6 +130,7 @@ test("compute requires a full reference and never persists bootstrap's effective
   expect(tagged.services.server.environment.BP_WORKERD_RUNTIME_ID).toBe(`workerd-binary-sha256:${digest}`);
   const pinned = await config(["compose.compute.yaml"], "compute", [...settings, `BP_WORKERD_EFFECTIVE_IMAGE=sha256:${digest}`, `BP_WORKERD_HOST_IMAGE_ID=sha256:${digest}`]);
   expect(pinned.services.workerd.image).toBe(`sha256:${digest}`);
+  expect(pinned.services.workerd.environment.BP_WORKERD_IMAGE).toBe("fixture:local");
   expect(pinned.services.workerd.environment.BP_WORKERD_HOST_IMAGE_ID).toBe(`sha256:${digest}`);
   const edited = await config(["compose.compute.yaml"], "compute", ["BP_COMPUTE_TOKEN=fixture", "BP_WORKERD_IMAGE=fixture:edited"]);
   expect(edited.services.workerd.image).toBe("fixture:edited");

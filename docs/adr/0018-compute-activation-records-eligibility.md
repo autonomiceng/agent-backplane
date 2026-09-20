@@ -22,18 +22,32 @@ The trusted entrypoint separately measures `loader.js`, `config.capnp` and `star
 The server compares that control-surface hash with its checkout on private identity
 verification. Changed control files require a workerd restart, without a new deployment
 when the binary is unchanged. Verification is bounded per compute operation; an
-unavailable runtime does not prevent the core listener from starting.
+unavailable runtime does not prevent the core listener from starting. The verified
+binary/control/artifact observation accompanies each authenticated prepare/invoke
+request; the loader compares it with its own measurements and declarations before
+loading code. A changed observation refuses that request without another identity
+round trip. This comparison is not a signature or a unique runtime-instance identity.
+The immutable configuration hash still excludes control and artifact facts.
+
+Control URLs require HTTPS except for the trusted Compose authority
+`http://workerd:8080` and explicit loopback HTTP (localhost, IPv4 127/8, IPv6 ::1).
+Other cleartext endpoints, URL credentials, queries and fragments are refused before
+sending the control token. Path prefixes remain supported; redirects are refused.
 
 Image facts are distinct host-declared artifact evidence. Bootstrap privately records
 the selected reference, resolved local image config ID, binary hash, architecture and
 observation time as a launch decision. The private control endpoint carries the
 selected reference and an optional host-observed image ID into deploy, activate and
-invoke Audit Events. Valid evidence does not change eligibility or `configHash`;
+invoke Audit Events. Those facts are Workspace-readable audit evidence, absent from
+public status and deployment responses. Host launch records are operator-owned and
+never automatically pruned. Valid evidence does not change eligibility or `configHash`;
 malformed evidence is refused. Principal and Run authority are unchanged. No container
 claims to measure its own image ID, and no Docker socket is exposed.
 
 An explicit Compose deployment may resolve a moving tag again. Bootstrap's effective
-image override lives only in its child environment; the evidence record never selects
+image override lives only in its child environment, and bootstrap refuses persisted
+overrides. Bare Compose cannot enforce this restriction; its operator owns the accuracy
+of the selected reference and declarations. The evidence record never selects
 future images. Direct Compose reports a null image ID unless the trusted operator
 supplies a declaration. Use an immutable reference for repeatability. There is no
 shipped image default until runtime qualification, publication and B-DEFAULT approval.

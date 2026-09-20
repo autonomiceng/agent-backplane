@@ -1,6 +1,7 @@
 // Private identity protocol. Artifact facts are operator declarations, separate from measured code.
 import { createHash } from "node:crypto";
 export type ArtifactEvidence = { source: "host-declared"; reference: string; hostObservedImageId: string | null };
+export type RuntimeEvidence = { runtimeDigest: string; controlHash: string; artifact: ArtifactEvidence };
 export function validImageReference(value: unknown): value is string {
   return typeof value === "string" && value.length <= 512
     && /^[A-Za-z0-9][A-Za-z0-9._:/-]*(?:@sha256:[0-9a-f]{64})?$/.test(value)

@@ -1,5 +1,5 @@
 // Preparation precedes the committed eligibility transition; cached isolates never authorize execution.
-import { computeSuccess, rollbackCompute, type ComputeResult } from "./compute-error.ts";
+import { computeFailure, computeSuccess, rollbackCompute, type ComputeResult } from "./compute-error.ts";
 import type { deploymentResponse } from "./compute-input.ts";
 import type { Pool } from "../platform/pool.ts";
 import type { RunContext } from "../runs/run-context.ts";
@@ -8,7 +8,9 @@ import { approvalMember } from "../auth/decision-session.ts";
 import { prepareDeployment, type ComputeLauncher } from "./compute-launcher.ts";
 import { liveFunctionKey, queryDeployment } from "./deployment-query.ts";
 import type { Manifest } from "./deployment-config.ts";
-export function activateFunction(pool: Pool, context: RunContext, name: string, id: string, expectedActiveId: string | null, launcher: ComputeLauncher): Promise<ComputeResult<typeof deploymentResponse.static>> {
+export async function activateFunction(pool: Pool, context: RunContext, name: string, id: string, expectedActiveId: string | null, launcher: ComputeLauncher): Promise<ComputeResult<typeof deploymentResponse.static>> {
+  const evidence = await launcher.verify(AbortSignal.timeout(2000));
+  if (!evidence) return computeFailure("compute_unavailable");
   return withRunContext(pool, context, async (tx, emit) => {
     if ("userId" in context) {
       try { await approvalMember(tx, context); }
@@ -32,7 +34,7 @@ export function activateFunction(pool: Pool, context: RunContext, name: string, 
       bundleSha256: metadata.bundleSha256, entryPoint: metadata.entryPoint, compatibilityDate: metadata.compatibilityDate,
       outboundUrls: metadata.outboundUrls, keyRef: { workspaceId: context.workspaceId, principalId: metadata.principalId },
       runtimeDigest: metadata.runtimeDigest, configHash: metadata.configHash };
-    const preparation = await prepareDeployment(launcher, prepared);
+    const preparation = await prepareDeployment(launcher, prepared, evidence);
     if (!preparation.ok) return rollbackCompute(tx, preparation.reason);
     if (metadata.status === "active") return computeSuccess(metadata);
     if (active) await tx`UPDATE control.deployments SET status = 'retired' WHERE workspace_id = ${context.workspaceId} AND id = ${active.id}`;
