@@ -33,7 +33,7 @@ export async function adoptionFixture() {
       }
     };
     const legacy = async () => {
-      const runtime = createPool(url);
+      const runtime = createPool(url, 1);
       try {
         const f = await principalFixture(runtime, { blobStore: store }, cleanup => cleanups.push(cleanup));
         const key = await issueKey(f.app, f.cookie, f.workspaceId, f.principalId), runId = await createRun(f.app, key, f.workspaceId);
@@ -49,7 +49,8 @@ export async function adoptionFixture() {
       }
     };
     const verify = async (selected = store) => {
-      const runtime = createPool(url);
+      // This fixture borrows one lease; avoid unrelated pool connection handshakes at its fence.
+      const runtime = createPool(url, 1);
       try { const release = await verifyStorageBinding(runtime, selected); await release(); }
       finally { await runtime.close(); await waitForStoppedRuntime(); }
     };
