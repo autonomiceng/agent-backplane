@@ -24,7 +24,8 @@ with tempfile.TemporaryDirectory() as root:
   expect(out).not.toContain("secret-not-in-manifest"); expect(out).not.toContain("BP_AUTH_SECRET");
   const doc=JSON.parse(out); expect(doc.images.server.id).toBe("sha256:pin");
   expect(doc.artifacts["server-data.tar"].sha256).toBe(new Bun.CryptoHasher("sha256").update("checkpoint").digest("hex"));
-});
+// Publication calls sync -f on the real shared filesystem, which can exceed Bun's default five seconds under CI I/O load.
+}, 30000);
 test("restore refuses a target containing a hidden file",async()=>{
   expect(await python(`import tempfile, subprocess
 from pathlib import Path
@@ -256,12 +257,14 @@ test("capture preserves its original error if source restart also fails", async 
   await python(`import io
 from contextlib import redirect_stderr
 from types import SimpleNamespace
+import checkpoint as cp
 from checkpoint import resume_source, startup_timeout
 calls=[]
-def dc(*args):
- calls.append(args)
+def start_existing_services(stack, services):
+ calls.append(services)
  raise RuntimeError('private daemon diagnostic')
-stack=SimpleNamespace(services={'server':{'environment':{'BP_STARTUP_VERIFY_TIMEOUT':'900'}}},dc=dc)
+cp.start_existing_services=start_existing_services
+stack=SimpleNamespace(services={'server':{'environment':{'BP_STARTUP_VERIFY_TIMEOUT':'900'}}})
 out=io.StringIO()
 try:
  try: raise ValueError('fenced database identity changed')
@@ -270,16 +273,96 @@ try:
 except ValueError as error: assert str(error)=='fenced database identity changed'
 else: raise AssertionError('capture failure masked')
 assert 'no Checkpoint was completed' in out.getvalue()
-assert '900' in calls[0] and calls[0][-2:]==('server','edge')
+assert startup_timeout(stack)==900 and calls[0]==['server','edge']
 assert 'private daemon' not in out.getvalue()
 try: resume_source(stack,['server'],'completed-capture',False)
 except RuntimeError as error: assert 'completed Checkpoint is retained' in str(error)
 else: raise AssertionError('restart failure ignored')
+cp.start_existing_services=lambda *_: (_ for _ in ()).throw(ValueError('private configuration error'))
+try:
+ try: raise ValueError('original capture failure')
+ finally:
+  with redirect_stderr(out): resume_source(stack,['server'],None,True)
+except ValueError as error: assert str(error)=='original capture failure'
+assert 'private configuration' not in out.getvalue()
 for value in ('0','-1','1.5','secret', '86401'):
  stack.services['server']['environment']['BP_STARTUP_VERIFY_TIMEOUT']=value
  try: startup_timeout(stack)
  except ValueError: pass
  else: raise AssertionError('invalid budget accepted')
+`);
+});
+
+const restartFixture = `import json, subprocess
+from types import SimpleNamespace
+import checkpoint as cp
+ids={'rustfs':'a'*64,'server':'b'*64,'edge':'c'*64}
+stack=SimpleNamespace(project='fixture',compose=['docker','compose','--project-name','fixture'],
+ services={'server':{'environment':{'BP_STARTUP_VERIFY_TIMEOUT':'3'}}})
+calls=[]; clock=[0.0]; lookup={}; identity={}; states={}; started=set(); timeouts=[]
+cp.time.monotonic=lambda: clock[0]
+cp.time.sleep=lambda seconds: clock.__setitem__(0,clock[0]+seconds)
+def run(args, **kwargs):
+ calls.append(args); timeouts.append(kwargs['timeout'])
+ assert kwargs['timeout']>0 and kwargs['capture_output'] and kwargs['check']
+ clock[0]+=0.1
+ if args[:len(stack.compose)]==stack.compose:
+  assert args[-3:-1]==['ps','-aq']
+  result=lookup.get(args[-1],ids[args[-1]])
+ elif args[:2]==['docker','start']:
+  assert len(args)==3 and args[-1] in ids.values()
+  started.add(args[-1]); result=args[-1]
+ elif args[:3]==['docker','inspect','--format']:
+  assert len(args)==5 and args[-1] in ids.values()
+  service=next(service for service,cid in ids.items() if cid==args[-1])
+  state={'status':'running','health':'healthy' if service!='edge' else 'none','oomKilled':False}
+  if args[-1] in started:
+   sequence=states.get(service,[])
+   if sequence: state.update(sequence.pop(0) if len(sequence)>1 else sequence[0])
+  result=json.dumps({'id':args[-1],'project':'fixture','service':service,'healthcheck':service!='edge',**state,**identity})
+ else: raise AssertionError('unexpected command: '+str(args[:3]))
+ return SimpleNamespace(stdout=result)
+cp.subprocess.run=run
+`;
+
+test("source restart selects one owned exact container and needs no Compose dependencies", async () => {
+  await python(restartFixture + `
+cp.start_existing_services(stack,['rustfs','edge'])
+assert [call[-1] for call in calls if call[:2]==['docker','start']]==[ids['rustfs'],ids['edge']]
+assert all(call[-1] in ids.values() for call in calls if call[:2]==['docker','inspect'])
+for selection, changed in [('',{}), (ids['rustfs']+' '+ids['server'],{}), (ids['rustfs'],{'project':'other'}),
+                          (ids['rustfs'],{'service':'server'}), (ids['rustfs'],{'id':ids['server']})]:
+ calls.clear(); lookup['rustfs']=selection; identity=changed
+ try: cp.start_existing_services(stack,['rustfs'])
+ except RuntimeError as error: assert str(error)=='rustfs: source container could not be resumed and verified'
+ else: raise AssertionError('missing, ambiguous or unowned container accepted')
+ assert not any(call[:2]==['docker','start'] for call in calls)
+`);
+});
+
+test("source restart bounds each service and requires RustFS health before ordered application startup", async () => {
+  await python(restartFixture + `
+states['rustfs']=[{'health':'starting'},{'health':'healthy'}]
+cp.resume_source(stack,['edge','server','rustfs'],None,False)
+assert [call[-1] for call in calls if call[:2]==['docker','start']]==[ids['rustfs'],ids['server'],ids['edge']]
+assert all(0<budget<=3 for budget in timeouts),timeouts
+# Each service receives the documented full budget, including its daemon calls.
+assert all(abs(timeouts[i]-3)<0.0001 for i,call in enumerate(calls) if call[:len(stack.compose)]==stack.compose),timeouts
+for failed in [{'status':'exited'}, {'status':'dead'}, {'oomKilled':True}, {'health':'unhealthy'}, {'health':'none'}, {'health':'starting'}]:
+ clock[0]=0; calls.clear(); started.clear(); states['rustfs']=[failed]
+ try: cp.start_existing_services(stack,['rustfs','server'])
+ except RuntimeError as error: assert str(error)=='rustfs: source container could not be resumed and verified'
+ else: raise AssertionError('failed or unready container accepted')
+ assert [call[-1] for call in calls if call[:2]==['docker','start']]==[ids['rustfs']]
+ assert clock[0]<=3,clock
+# A hung Docker command must spend only the remaining budget and keep stderr private.
+def hung(args, **kwargs):
+ assert 0<kwargs['timeout']<=3
+ raise subprocess.TimeoutExpired(args,kwargs['timeout'],stderr='private daemon error')
+cp.subprocess.run=hung
+try: cp.start_existing_services(stack,['rustfs'])
+except RuntimeError as error: assert str(error)=='rustfs: source container could not be resumed and verified'
+else: raise AssertionError('command timeout ignored')
 `);
 });
 
@@ -412,7 +495,6 @@ for exit_code in (137,0):
    if args[:3]==('ps','--status','running'): return ' '.join(running)
    if args[:2]==('ps','-aq'): return 'rustfs-container'
    if args[0]=='stop': running.remove(args[-1]); return ''
-   if args[0]=='start': running.add(args[-1]); return ''
    if 'pg_basebackup' in ' '.join(args): raise RuntimeError('injected physical capture failure')
    raise AssertionError(args)
   stack=SimpleNamespace(backend='s3',services={'server':{}},images={'server':{'id':'server'}},backups=Path(root),
@@ -425,13 +507,16 @@ for exit_code in (137,0):
   cp.prove_root_credentials=lambda stack: None
   cp.inspect_storage=lambda *args: {'backend':'s3'}
   cp.shutil.disk_usage=lambda path: SimpleNamespace(free=10**15)
+  def start_existing_services(stack, services):
+   calls.append(('resume',*services)); running.update(services)
+  cp.start_existing_services=start_existing_services
   try: cp.backup(stack,fenced=True)
   except (ValueError,RuntimeError) as error:
    assert ('did not stop cleanly' if exit_code else 'injected physical capture failure') in str(error)
   else: raise AssertionError('failed capture published')
   assert not list(Path(root).rglob('manifest.json'))
   assert receipt.read_text()=='previous completed capture'
-  starts=[call[-1] for call in calls if call[0]=='start']
+  starts=[service for call in calls if call[0]=='resume' for service in call[1:]]
   assert starts==['rustfs','server'],starts
 `);
 });
