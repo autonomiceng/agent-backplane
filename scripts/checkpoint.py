@@ -370,7 +370,10 @@ def qualify_tar(stack):
         directory = Path(root)
         (directory / 'source').mkdir(); (directory / 'restored').mkdir()
         probe = directory / 'source/probe'; probe.write_bytes(b'checkpoint tar qualification')
-        os.setxattr(probe, 'user.checkpoint', b'preserved')
+        try:
+            os.setxattr(probe, 'user.checkpoint', b'preserved')
+        except OSError:
+            raise ValueError('checkpoint repository cannot store required user xattrs; tar qualification refused') from None
         stack.helper('tar --numeric-owner --xattrs --xattrs-include="*" -cf "$1/probe.tar" -C "$1/source" .; '
                      'tar --numeric-owner --xattrs --xattrs-include="*" -xf "$1/probe.tar" -C "$1/restored"', '/backup/' + directory.name)
         validate_archives(directory, {'probe.tar': {}})
