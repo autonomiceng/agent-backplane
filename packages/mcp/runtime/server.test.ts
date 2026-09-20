@@ -26,11 +26,13 @@ test("MCP workflow diverges from executable CLI examples", async () => {
     invoke: async ({ manifest, props, input }) => {
       const bundlePath = join(directory, manifest.configHash + ".mjs");
       await writeFile(bundlePath, manifest.bundle);
-      const module: { default: { fetch: (request: Request, context: typeof props) => Promise<Response> } } =
+      // Match compute/workerd/loader.js's three-argument call. Only repository-controlled
+      // example bundles may execute here: this import runs unsandboxed under Bun.
+      const module: { default: { fetch: (request: Request, context: typeof props, ctx: unknown) => Promise<Response> } } =
         await import(bundlePath);
       return module.default.fetch(new Request("https://function.invalid/invoke", {
         method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input),
-      }), props);
+      }), props, {});
     },
   };
   const fixtures: (Awaited<ReturnType<typeof principalFixture>> & { pool: ReturnType<typeof createPool>; admin: ReturnType<typeof createPool>;
@@ -196,10 +198,11 @@ test("MCP workflow diverges from executable CLI examples", async () => {
     }
     for (const [i, f] of fixtures.entries()) {
       expect(await readFile(f.bindings.ONBOARDING_DOWNLOAD!, "utf8")).toBe("agent client setup\n");
-      const [invocation] = await f.pool<{ caller_principal_id: string; caller_run_id: string; execution_principal_id: string; execution_run_id: string }[]>`
-        SELECT e.principal_id AS caller_principal_id,e.run_id AS caller_run_id,r.principal_id AS execution_principal_id,r.id AS execution_run_id
+      const [invocation] = await f.pool<{ caller_principal_id: string; caller_run_id: string; execution_principal_id: string; execution_run_id: string; execution_deployment_id: string | null }[]>`
+        SELECT e.principal_id AS caller_principal_id,e.run_id AS caller_run_id,r.principal_id AS execution_principal_id,r.id AS execution_run_id,r.invocation_deployment_id AS execution_deployment_id
         FROM audit.events e JOIN control.runs r ON r.id=(e.metadata->>'runId')::uuid WHERE e.kind='function.invoke'`;
-      expect(invocation).toMatchObject({ caller_principal_id: f.callerPrincipalId, execution_principal_id: f.principalId });
+      expect(invocation).toMatchObject({ caller_principal_id: f.callerPrincipalId, execution_principal_id: f.principalId,
+        execution_deployment_id: f.bindings.DEPLOYMENT_ID });
       expect(invocation!.caller_run_id).not.toBe(invocation!.execution_run_id);
       expect(await f.pool`SELECT run_id FROM control.invocation_tokens`).toHaveLength(0);
       const before = await f.pool`SELECT position FROM audit.events ORDER BY position`;

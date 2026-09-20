@@ -11,7 +11,7 @@ Require the User to supply the absolute path in `BP_CREDENTIALS_FILE`. If it is 
 Use the repository-local client from the checkout instead of assuming `bp` is installed:
 
 ```sh
-BACKPLANE_REPO=/absolute/path/to/agent-backplane
+export BACKPLANE_REPO=/absolute/path/to/agent-backplane
 export BP_CREDENTIALS_FILE=/absolute/private/backplane.credentials.json
 export BP_HARNESS=codex
 export BP_SESSION=agent-setup-UNIQUE_SESSION_ID
@@ -19,6 +19,7 @@ bun "$BACKPLANE_REPO/packages/cli/runtime/main.ts" auth whoami
 ```
 
 Choose one unique `BP_SESSION` for this Harness invocation and keep it for retries.
+Run all `sh` blocks in this document in the same shell session so the exported settings and shell function remain available.
 For the executable examples below, `bp` denotes the repository client. If it is
 not installed, bind a shell function for this session without changing PATH or symlinks:
 
@@ -45,7 +46,7 @@ bun "$BACKPLANE_REPO/packages/cli/runtime/main.ts" sql execute-sql --help
 For a stdio MCP client, adapt the bootstrap-returned block only when `bp` is unavailable. Keep the private credential path in the process environment:
 
 ```json
-{"mcpServers":{"backplane":{"command":"bun","args":["/absolute/path/to/agent-backplane/packages/cli/runtime/main.ts","mcp"],"env":{"BP_CREDENTIALS_FILE":"/absolute/private/backplane.credentials.json"}}}}
+{"mcpServers":{"backplane":{"command":"bun","args":["/absolute/path/to/agent-backplane/packages/cli/runtime/main.ts","mcp"],"env":{"BP_CREDENTIALS_FILE":"/absolute/private/backplane.credentials.json","BP_SESSION":"agent-setup-UNIQUE_SESSION_ID"}}}}
 ```
 
 Verify the stdio server before installing client configuration:
