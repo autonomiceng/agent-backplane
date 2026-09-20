@@ -1,14 +1,28 @@
+import { SQL } from "bun";
+import { loadMigrations, migrate } from "../../../db/migrations.ts";
+import { sqlMigrationRunner } from "../../../db/sql-migration-runner.ts";
 import { expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { createPool, poolSnapshot, type Pool } from "../platform/pool.ts";
-import { migratedDatabase } from "../testing/postgres.ts";
+import { adminUrl, migratedDatabase } from "../testing/postgres.ts";
 import { principalFixture, issueKey, createRun, testApp } from "../testing/session.ts";
 import { withRunContext } from "../runs/with-run-context.ts";
 import { finishInvocation } from "./finish-invocation.ts";
 import { reconcileInvocations, scheduleInvocationReconciliation } from "./reconcile-invocations.ts";
 
-async function orphanFixture(pool: Pool, count: number) {
-  const f = await principalFixture(pool);
+async function orphanFixture(pool: Pool, count: number, existing?: Awaited<ReturnType<typeof principalFixture>>) {
+  const f = existing ? { ...existing } : await principalFixture(pool);
+  if (existing) {
+    const headers = { cookie: f.cookie, origin: "http://localhost", "content-type": "application/json" };
+    const workspace = await f.app.handle(new Request("http://localhost/api/v1/workspaces", {
+      method: "POST", headers, body: JSON.stringify({ name: "Recovery" }),
+    }));
+    expect(workspace.status).toBe(201); f.workspaceId = (await workspace.json()).id;
+    const principal = await f.app.handle(new Request(`http://localhost/api/v1/workspaces/${f.workspaceId}/principals`, {
+      method: "POST", headers, body: JSON.stringify({ name: "Recovery" }),
+    }));
+    expect(principal.status).toBe(201); f.principalId = (await principal.json()).id;
+  }
   const key = await issueKey(f.app, f.cookie, f.workspaceId, f.principalId), parent = await createRun(f.app, key, f.workspaceId);
   const runtimeDigest = "workerd-binary-sha256:" + "a".repeat(64);
   const artifact = { source: "host-declared" as const, reference: "fixture:local", hostObservedImageId: null };
@@ -29,7 +43,13 @@ async function orphanFixture(pool: Pool, count: number) {
     return ids;
   });
   await Bun.sleep(5);
-  return { caller, runIds, deploymentId: id };
+  return { caller, runIds, deploymentId: id, fixture: f };
+}
+
+async function agePending(database: string) {
+  const admin = new SQL(adminUrl(database));
+  try { await admin`UPDATE control.invocation_pending SET expires_at=expires_at-interval '11 seconds'`; }
+  finally { await admin.close(); }
 }
 
 test("reconciler shutdown cancels saturated reservations and late passes for only its own pool", async () => {
@@ -37,6 +57,7 @@ test("reconciler shutdown cancels saturated reservations and late passes for onl
   let held: Awaited<ReturnType<typeof pool.reserve>> | undefined, stop: (() => Promise<void>) | undefined;
   try {
     const f = await orphanFixture(other, 1);
+    await agePending(database);
     held = await pool.reserve();
     stop = scheduleInvocationReconciliation(pool);
     expect(poolSnapshot(pool)).toEqual({ inUse: 1, waiting: 1 });
@@ -45,18 +66,25 @@ test("reconciler shutdown cancels saturated reservations and late passes for onl
     expect(poolSnapshot(pool)).toEqual({ inUse: 1, waiting: 0 });
     expect(await reconcileInvocations(pool)).toBe(0);
     expect(poolSnapshot(pool)).toEqual({ inUse: 1, waiting: 0 });
+    const stopAgain = scheduleInvocationReconciliation(pool);
+    await stop(); // A stale stop closure must not stop the new scheduler.
+    expect(poolSnapshot(pool)).toEqual({ inUse: 1, waiting: 1 });
+    await stopAgain();
+    expect(poolSnapshot(pool)).toEqual({ inUse: 1, waiting: 0 });
     expect(await reconcileInvocations(other)).toBe(1);
     expect(await other<{ kind: string }[]>`SELECT kind FROM audit.events WHERE run_id=${f.runIds[0]!} AND kind LIKE 'function.%'`).toEqual([{ kind: "function.fail" }]);
   } finally { await stop?.(); held?.release(); await pool.close(); await other.close(); }
 });
 
-test("a contended recovery batch releases its connection within five seconds and later repairs immutable terminals", async () => {
-  const pool = createPool(await migratedDatabase());
+test("recovery bounds a contended batch, advances to another Workspace, and later repairs immutable terminals", async () => {
+  const database = await migratedDatabase(), pool = createPool(database);
   const release = Promise.withResolvers<void>(), acquired = Promise.withResolvers<void>();
   let blocker: Promise<unknown> | undefined;
   try {
-    // Twelve orphans exceed the pass budget at the real 250ms audit-lock timeout.
-    const f = await orphanFixture(pool, 12);
+    // Six blocked orphans exceed one pass; a later Workspace must still progress.
+    const f = await orphanFixture(pool, 6);
+    const healthy = await orphanFixture(pool, 1, f.fixture);
+    await agePending(database);
     blocker = withRunContext(pool, f.caller, async () => { acquired.resolve(); await release.promise; });
     await acquired.promise;
     const started = performance.now();
@@ -67,15 +95,23 @@ test("a contended recovery batch releases its connection within five seconds and
       WHERE r.invocation_deployment_id=${f.deploymentId} AND t.expires_at>clock_timestamp()`).toEqual([]);
     expect(await pool<{ kind: string }[]>`SELECT e.kind FROM audit.events e JOIN control.runs r ON r.id=e.run_id
       WHERE r.invocation_deployment_id=${f.deploymentId} AND e.kind LIKE 'function.%'`).toEqual([]);
+    const fairDeadline = performance.now() + 2000;
+    let otherRepaired = 0;
+    do {
+      otherRepaired += await reconcileInvocations(pool);
+      if (!otherRepaired) await Bun.sleep(20);
+    } while (!otherRepaired && performance.now() < fairDeadline);
+    expect(otherRepaired).toBe(1);
+    expect(await pool<{ kind: string }[]>`SELECT kind FROM audit.events WHERE run_id=${healthy.runIds[0]!}`).toEqual([{ kind: "function.fail" }]);
     release.resolve(); await blocker;
     // Socket close can settle before PostgreSQL releases that backend's advisory lock.
     const repairDeadline = performance.now() + 2000;
     let repaired = 0;
     do {
       repaired += await reconcileInvocations(pool);
-      if (repaired < 12) await Bun.sleep(20);
-    } while (repaired < 12 && performance.now() < repairDeadline);
-    expect(repaired).toBe(12);
+      if (repaired < 6) await Bun.sleep(20);
+    } while (repaired < 6 && performance.now() < repairDeadline);
+    expect(repaired).toBe(6);
     const runId = f.runIds[0]!;
     const before = await pool<{ kind: string; metadata: unknown }[]>`SELECT kind,metadata FROM audit.events WHERE run_id=${runId} AND kind LIKE 'function.%'`;
     expect(before[0]?.kind).toBe("function.fail");
@@ -84,3 +120,34 @@ test("a contended recovery batch releases its connection within five seconds and
     expect(await reconcileInvocations(pool)).toBe(0);
   } finally { release.resolve(); await blocker; await pool.close(); }
 }, 15000);
+
+
+test("schema upgrade backfills unfinished invocations and preserves closed-definer authority and settling delay", async () => {
+  const database = await migratedDatabase(undefined, 33), pool = createPool(database), admin = new SQL(adminUrl(database));
+  try {
+    const f = await orphanFixture(pool, 2);
+    await finishInvocation(pool, f.runIds[0]!, "function.complete", 1, 200);
+    const migrations = await loadMigrations(new URL("../../../db/migrations", import.meta.url).pathname);
+    await migrate(sqlMigrationRunner(admin), migrations);
+    expect(await pool<{ runId: string }[]>`SELECT run_id AS "runId" FROM control.invocation_pending`).toEqual([{ runId: f.runIds[1]! }]);
+    const functions = await admin<{ secure: boolean; config: string[] }[]>`SELECT prosecdef AS secure,proconfig AS config FROM pg_proc p
+      JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='control' AND p.proname IN ('create_invocation','finish_invocation')`;
+    expect(functions).toHaveLength(2);
+    for (const fn of functions) { expect(fn.secure).toBe(true); expect(fn.config).toContain("search_path=pg_catalog"); }
+    await expect(Promise.resolve(pool`DELETE FROM control.invocation_pending`)).rejects.toThrow("permission denied");
+    await admin.begin(async tx => {
+      await tx`SET LOCAL ROLE bp_executor`;
+      await expect(Promise.resolve(tx`SELECT control.create_invocation(${f.deploymentId},${randomBytes(32)},1)`)).rejects.toThrow("permission denied");
+    }).catch(error => { if (!String(error).includes("current transaction is aborted")) throw error; });
+    expect(await reconcileInvocations(pool)).toBe(0);
+    await agePending(database);
+    expect(await reconcileInvocations(pool)).toBe(1);
+    expect(await pool<{ run_id: string }[]>`SELECT run_id FROM control.invocation_pending`).toEqual([]);
+    const fresh = await orphanFixture(pool, 1, f.fixture);
+    expect(await pool<{ runId: string }[]>`SELECT run_id AS "runId" FROM control.invocation_pending`).toEqual([{ runId: fresh.runIds[0]! }]);
+    expect(await reconcileInvocations(pool)).toBe(0);
+    await finishInvocation(pool, fresh.runIds[0]!, "function.timeout", 1, null);
+    expect(await pool<{ run_id: string }[]>`SELECT run_id FROM control.invocation_pending`).toEqual([]);
+    expect(await reconcileInvocations(pool)).toBe(0);
+  } finally { await admin.close(); await pool.close(); }
+});

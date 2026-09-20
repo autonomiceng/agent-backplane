@@ -1,8 +1,8 @@
 import type { ReservedSQL } from "bun";
 import type { Pool } from "../platform/pool.ts";
-import { finishInvocation } from "./finish-invocation.ts";
+import { finishInvocationOnConnection } from "./finish-invocation.ts";
 
-type ReconciliationState = { stopped: boolean; running?: Promise<number> | undefined; controller?: AbortController | undefined };
+type ReconciliationState = { stopped: boolean; scheduled?: boolean; cursor?: { expiresAt: string; id: string } | undefined; running?: Promise<number> | undefined; controller?: AbortController | undefined };
 const states = new WeakMap<Pool, ReconciliationState>();
 // Invocation tokens cannot be renewed or recreated. Absence/expiry stays true after selection.
 export function reconcileInvocations(pool: Pool): Promise<number> {
@@ -27,21 +27,22 @@ export function reconcileInvocations(pool: Pool): Promise<number> {
       owned = true;
       const runs = await lease.begin(async tx => {
         await tx`SET LOCAL statement_timeout = 2000`;
-        return tx<{ id: string; durationMs: number }[]>`SELECT r.id,
+        return tx<{ id: string; expiresAt: string; durationMs: number }[]>`SELECT r.id,p.expires_at::text AS "expiresAt",
           least(2147483647,greatest(0,ceil(extract(epoch FROM clock_timestamp()-r.created_at)*1000)))::int AS "durationMs"
-          FROM control.runs r
-          WHERE r.invocation_deployment_id IS NOT NULL AND r.parent_run_id IS NOT NULL
-            AND NOT EXISTS (SELECT FROM control.invocation_tokens t WHERE t.run_id=r.id AND t.expires_at>clock_timestamp())
-            AND NOT EXISTS (SELECT FROM audit.events e WHERE e.workspace_id=r.workspace_id AND e.run_id=r.id
-              AND e.kind IN ('function.complete','function.fail','function.timeout'))
-          ORDER BY r.created_at,r.id LIMIT 16`;
+          FROM control.invocation_pending p JOIN control.runs r ON r.id=p.run_id
+          WHERE p.expires_at<=statement_timestamp()-interval '10 seconds'
+            AND (${state.cursor?.expiresAt ?? null}::timestamptz IS NULL OR
+              (p.expires_at,p.run_id)>(${state.cursor?.expiresAt ?? null}::timestamptz,${state.cursor?.id ?? null}::uuid))
+          ORDER BY p.expires_at,p.run_id LIMIT 16`;
       });
-      let completed = 0;
+      let completed = 0, attempted = 0;
       for (const run of runs) {
         if (controller.signal.aborted) break;
-        try { await finishInvocation(lease, run.id, "function.fail", run.durationMs, null); completed++; }
+        state.cursor = { expiresAt: run.expiresAt, id: run.id }; attempted++;
+        try { await finishInvocationOnConnection(lease, run.id, "function.fail", run.durationMs, null); completed++; }
         catch { /* The next bounded pass retries audit contention; SQL expiry still denies authority. */ }
       }
+      if (attempted === runs.length && runs.length < 16) state.cursor = undefined;
       return completed;
     } finally {
       try { if (owned && !controller.signal.aborted) await lease!`SELECT pg_advisory_unlock(112933,26)`; }
@@ -58,12 +59,17 @@ export function reconcileInvocations(pool: Pool): Promise<number> {
 
 export function scheduleInvocationReconciliation(pool: Pool) {
   const state = states.get(pool) ?? { stopped: false };
+  if (state.scheduled || state.running) throw Error("invocation_reconcile_already_running");
+  state.stopped = false; state.scheduled = true;
   states.set(pool, state);
   const tick = () => { void reconcileInvocations(pool).catch(() => { if (!state.stopped) console.error("invocation_reconcile_failed"); }); };
   tick();
   const timer = setInterval(tick, 5000);
   timer.unref();
+  let stopped = false;
   return async () => {
+    if (stopped) return;
+    stopped = true; state.scheduled = false;
     state.stopped = true; clearInterval(timer);
     state.controller?.abort(Error("invocation_reconcile_stopped"));
     await state.running?.catch(() => {});

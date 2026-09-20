@@ -88,12 +88,21 @@ under 512 MiB; no per-isolate memory guarantee is claimed.
 ## Invocation recovery
 
 A separate startup, five-second periodic and opportunistic server pass selects at most
-16 invocation Runs under a session advisory lease, with `invocation_deployment_id` and `parent_run_id`, no terminal event,
-and no live token. Ordinary Runs and live invocations are excluded. Selection has a
-two-second statement timeout and each terminal call uses existing bounded finalization.
-The pass calls `finishInvocation` outside a bound transaction and retries future passes
-after contention. It emits existing `function.fail` events and deletes authority using
-the existing closed definer. SQL token expiry is unchanged.
+16 unfinished invocations under a session advisory lease. Migration 34 records pending
+terminal work separately from immutable Runs and temporary authority, and backfills
+unfinished historical invocations. Apply it with the server fenced under the existing
+offline migration procedure. Its table locks also serialize the backfill with writers.
+The closed invocation definers insert pending work with authority and remove it only
+when a terminal audit event exists. Expired-token sweeping cannot lose recovery work.
+
+An expiry index keeps selection independent of completed invocation history. Recovery
+waits ten seconds past expiry for the original gateway to finish recording its outcome.
+A keyset cursor advances past each attempted row so a contended Workspace cannot starve
+later Workspaces; it wraps to retry unfinished rows. Selection has a two-second statement
+timeout. The whole pass, including reservation and connection release, has a five-second
+deadline. The original request's finalizer also bounds reservation and cleanup to five
+seconds. Contention leaves pending work for another pass. Recovery emits the existing
+`function.fail` event through the closed definer; SQL token expiry is unchanged.
 
 Reconciled `durationMs` is observed wall time from Run creation to reconciliation,
 capped at int32. It is neither CPU time nor exact execution duration. A terminal event

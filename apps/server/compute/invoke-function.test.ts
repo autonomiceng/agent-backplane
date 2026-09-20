@@ -1,10 +1,11 @@
 // Three real-Postgres scenarios use an authenticated fake workerd endpoint that never evaluates bundle text.
+import { SQL } from "bun";
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { principalSession } from "../auth/principal-session.ts";
 import type { Claim } from "../queue/claim-input.ts";
 import { createPool } from "../platform/pool.ts";
-import { migratedDatabase } from "../testing/postgres.ts";
+import { adminUrl, migratedDatabase } from "../testing/postgres.ts";
 import { testApp, applyMigration, createRun, issueKey, principalFixture } from "../testing/session.ts";
 import { withRunContext } from "../runs/with-run-context.ts";
 import { reconcileInvocations } from "./reconcile-invocations.ts";
@@ -12,7 +13,7 @@ import { finishInvocation } from "./finish-invocation.ts";
 import type { ComputeLauncher, Invocation } from "./compute-launcher.ts";
 
 async function fixture() {
-  const pool = createPool(await migratedDatabase());
+  const database = await migratedDatabase(), pool = createPool(database);
   try {
     const initial = await principalFixture(pool);
     const { cookie, workspaceId, principalId: callerId } = initial;
@@ -73,7 +74,7 @@ async function fixture() {
     };
     const callback = (value: Invocation, path = "/sql", body: unknown = { statement: "SELECT 1 AS value", params: [] }) =>
       post(path, body, headers(value.props.token, value.props.runId));
-    return { pool, app, base, workspaceId, callerId, callerKey, callerRun, ownerId, ownerKey, ownerRun,
+    return { database, pool, app, base, workspaceId, callerId, callerKey, callerRun, ownerId, ownerKey, ownerRun,
       headers, userHeaders, compute, post, deploy, callback, observed,
       ordinary: { get entered() { return ordinaryEntered; }, release: () => releaseOrdinary.resolve() } };
   } catch (error) { await pool.close(); throw error; }
@@ -324,6 +325,10 @@ test("execution, response overflow and failed finalization leave unbounded autho
       expect(await f.pool<{ run_id: string }[]>`SELECT run_id FROM control.invocation_tokens WHERE run_id=${value.props.runId}`).toEqual([]);
     } finally { exhaustedRelease.resolve(); await exhaustedBlocker; }
     const exhausted = f.observed.at(-1)!;
+    expect(await reconcileInvocations(f.pool)).toBe(0);
+    const admin = new SQL(adminUrl(f.database));
+    try { await admin`UPDATE control.invocation_pending SET expires_at=clock_timestamp()-interval '11 seconds' WHERE run_id=${exhausted.props.runId}`; }
+    finally { await admin.close(); }
     await reconcileInvocations(f.pool);
     const repaired = await f.pool<{ kind: string; metadata: unknown }[]>`SELECT kind,metadata FROM audit.events WHERE run_id=${exhausted.props.runId}`;
     expect(repaired).toHaveLength(1); expect(repaired[0]?.kind).toBe("function.fail");
