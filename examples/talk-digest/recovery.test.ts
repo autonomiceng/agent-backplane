@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { fixture } from "../../apps/server/blobs/testing/blob-fixture.ts";
 import { applyMigration } from "../../apps/server/testing/session.ts";
 
-test("completed CLI handoffs recover missing HTML and proof without repeating SQL, ack or upload", async () => {
+test("completed CLI handoffs skip unreadable uploads and recover without repeating SQL, ack or valid upload", async () => {
   const f = await fixture(), directory = await mkdtemp(join(tmpdir(), "bp-talk-recovery-"));
   try {
     f.app.listen({ hostname: "localhost", port: 0 });
@@ -13,6 +13,16 @@ test("completed CLI handoffs recover missing HTML and proof without repeating SQ
     const queue = await f.app.handle(new Request(`${f.base}/queues`, { method: "POST",
       headers: { ...f.headers, "content-type": "application/json" }, body: JSON.stringify({ name: "platform-talks-v1" }) }));
     expect(queue.status).toBe(201);
+    const queueHeaders = { ...f.headers, "content-type": "application/json" };
+    for (let index = 0; index < 100; index++) {
+      const sent = await f.app.handle(new Request(`${f.base}/queues/platform-talks-v1/messages`, { method: "POST", headers: queueHeaders,
+        body: JSON.stringify({ idempotencyKey: `pagination-${index}`, payload: { filler: index } }) }));
+      expect(sent.status).toBe(201);
+      const leased = await f.app.handle(new Request(`${f.base}/queues/platform-talks-v1/claim`,
+        { method: "POST", headers: queueHeaders, body: "{}" }));
+      expect(leased.status).toBe(200);
+      expect(await leased.json()).not.toBeNull();
+    }
     const credentials = join(directory, "credentials.json");
     await writeFile(credentials, JSON.stringify({ url: `http://localhost:${f.app.server!.port}`,
       workspaceId: f.workspaceId, principalId: f.principalId, key: f.key }), { mode: 0o600 });
@@ -35,6 +45,26 @@ test("completed CLI handoffs recover missing HTML and proof without repeating SQ
       expect(await invoke("collector", ["prepare", transcript, metadata, prepared])).toMatchObject({ code: 0, stderr: "" });
       expect(await invoke("collector", ["handoff", transcript, prepared])).toMatchObject({ code: 0, stderr: "" });
       expect(await invoke("analyst", ["claim", downloaded, state])).toMatchObject({ code: 0, stderr: "" });
+      const claimed = JSON.parse(await readFile(state, "utf8")) as { analyst: { runId: string } };
+      if (failure === "html") {
+        const before = await readFile(state, "utf8"), lock = `${state}.lock`;
+        await mkdir(lock, { mode: 0o700 });
+        await writeFile(`${lock}/owner.json`, JSON.stringify({ command: "held-by-test", pid: process.pid }), { mode: 0o600 });
+        const refused = await invoke("analyst", ["renew", state]);
+        expect(refused.code).toBe(1);
+        expect(refused.stderr).toContain("claim_state_locked");
+        expect(await readFile(state, "utf8")).toBe(before);
+        await rm(lock, { recursive: true });
+      }
+      if (failure === "proof") {
+        const headers = { authorization: `Bearer ${f.key}`, "x-backplane-run": claimed.analyst.runId,
+          "content-type": "application/octet-stream" };
+        const uploaded = await f.app.handle(new Request(`${f.base}/blobs?key=recovery-unreadable-${sourceId}`,
+          { method: "POST", headers, body: "unreadable earlier upload" }));
+        expect(uploaded.status).toBe(201);
+        const unavailableId = (await uploaded.json() as { id: string }).id;
+        expect((await f.app.handle(new Request(`${f.base}/blobs/${unavailableId}`, { method: "DELETE", headers }))).status).toBe(204);
+      }
       await writeFile(summary, JSON.stringify({ sourceId, digestText: "Reliable agents verify their work.",
         keyPoints: ["Use durable handoffs.", "Preserve attribution."] }), { mode: 0o600 });
       const blocked = failure === "html" ? html : proof;
@@ -42,7 +72,6 @@ test("completed CLI handoffs recover missing HTML and proof without repeating SQ
       const args = ["complete", downloaded, state, summary, html, proof];
       const interrupted = await invoke("analyst", args);
       expect(interrupted.code).not.toBe(0);
-      const claimed = JSON.parse(await readFile(state, "utf8")) as { analyst: { runId: string } };
       const events = () => f.pool<{ kind: string }[]>`SELECT kind FROM audit.events
         WHERE workspace_id=${f.workspaceId} AND run_id=${claimed.analyst.runId}`;
       expect((await events()).filter(event => event.kind === "transaction.committed"), interrupted.stderr).toHaveLength(1);
@@ -56,7 +85,7 @@ test("completed CLI handoffs recover missing HTML and proof without repeating SQ
       const observed = await events();
       expect(observed.filter(event => event.kind === "transaction.committed")).toHaveLength(1);
       expect(observed.filter(event => event.kind === "queue.ack")).toHaveLength(1);
-      expect(observed.filter(event => event.kind === "blob.put")).toHaveLength(1);
+      expect(observed.filter(event => event.kind === "blob.put")).toHaveLength(failure === "proof" ? 2 : 1);
       expect(JSON.parse(saved).transaction).toMatchObject({ expectedFailure: "assertion_failed",
         rollbackState: "pending", rollbackDigestCount: 0, ackUncommitted: true, identicalRetry: true, resultCount: 1 });
     }

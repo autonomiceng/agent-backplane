@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { createHash, randomUUID } from "node:crypto";
-import { link, open, readFile, rename, rm } from "node:fs/promises";
-import { resolve } from "node:path";
+import { link, mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 import { keySegment } from "./key-segment.ts";
 
 const QUEUE = "platform-talks-v1", FUNCTION = "talk-digest-review";
@@ -100,9 +100,25 @@ async function writePrivate(path: string, value: Json, replace = false) {
     // Publish complete JSON atomically; initial publication must not replace an existing file.
     if (replace) await rename(temporary, path);
     else await link(temporary, path);
+    const directory = await open(dirname(path), "r");
+    try { await directory.sync(); } finally { await directory.close(); }
   } finally { await rm(temporary, { force: true }); }
 }
 async function readObject(path: string, name: string) { return object(JSON.parse(await readFile(path, "utf8")) as Json, name); }
+async function withClaimLock<T>(statePath: string, command: string, action: () => Promise<T>) {
+  const lockPath = `${statePath}.lock`;
+  try { await mkdir(lockPath, { mode: 0o700 }); }
+  catch (error) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "EEXIST")
+      throw new Error(`claim_state_locked:${lockPath}`);
+    throw error;
+  }
+  try {
+    await writeFile(`${lockPath}/owner.json`, `${JSON.stringify({ command, pid: process.pid, startedAt: new Date().toISOString() })}\n`,
+      { flag: "wx", mode: 0o600 });
+    return await action();
+  } finally { await rm(lockPath, { recursive: true }); }
+}
 
 async function runAudit(runId: string) {
   const events: Obj[] = [];
@@ -126,6 +142,8 @@ async function recoveredHtmlFile(runId: string, html: string, htmlPath: string) 
       try {
         await bp(["blobs", "get-blob", "--id", id, "--out", temporary]);
         if (await readFile(temporary, "utf8") === html) return id;
+      } catch {
+        continue;
       } finally { await rm(temporary, { force: true }); }
     }
   }
@@ -200,6 +218,20 @@ async function liveReceipt(statePath: string, state: Obj) {
   return state;
 }
 async function renew(statePath: string) { await identity(); const state = await liveReceipt(statePath, await readObject(statePath, "claim_state")); console.log(JSON.stringify({ deliveryId: state.deliveryId, leaseExpiresAt: state.leaseExpiresAt })); }
+async function deliveryIsLeased(deliveryId: string) {
+  let after: string | undefined;
+  while (true) {
+    const page = object(await bp(["queue", "list-deliveries", "--queue", QUEUE, "--state", "leased", "--limit", "100",
+      ...(after ? ["--after", after] : [])]), "deliveries");
+    if (!Array.isArray(page.items)) throw new Error("delivery_page_invalid");
+    const items = page.items.map(item => object(item, "delivery"));
+    if (items.some(item => item.id === deliveryId)) return true;
+    if (page.nextCursor === null) return false;
+    const next = text(page.nextCursor, "delivery_cursor");
+    if (next === after) throw new Error("delivery_cursor_stalled");
+    after = next;
+  }
+}
 
 async function complete(transcriptPath: string, statePath: string, summaryPath: string, htmlPath: string, proofPath: string) {
   const who = await identity(), state = await readObject(statePath, "claim_state");
@@ -248,8 +280,7 @@ async function complete(transcriptPath: string, statePath: string, summaryPath: 
     const failure = object(failed.failure, "expected_failure"), failureDetails = object(failure.details, "expected_failure_details");
     if (failed.code === 0 || failure.error !== "assertion_failed" || failureDetails.operationIndex !== 0) throw new Error("expected_assertion_failure_missing");
     const rollbackRow = await inspect();
-    const deliveries = object(await bp(["queue", "list-deliveries", "--queue", QUEUE, "--state", "leased", "--limit", "100"]), "deliveries");
-    const ackUncommitted = Array.isArray(deliveries.items) && deliveries.items.some(item => object(item, "delivery").id === state.deliveryId);
+    const ackUncommitted = await deliveryIsLeased(text(state.deliveryId, "delivery_id"));
     if (rollbackRow.analysis_state !== "pending" || rollbackRow.digest_count !== 0 || !ackUncommitted) throw new Error("failure_did_not_roll_back");
     // Preserve the observed rollback before the successful transaction can commit.
     state.completionRollback = { failureKey, expectedFailure: failure.error!, failedOperationIndex: failureDetails.operationIndex!,
@@ -316,9 +347,10 @@ async function publish(proofPath: string, invocationPath: string) {
 if (import.meta.main) {
   const [command, ...args] = process.argv.slice(2);
   if (command === "discover" && args.length === 0) await discover();
-  else if (command === "claim" && args.length === 2) await claim(args[0]!, args[1]!);
-  else if (command === "renew" && args.length === 1) await renew(args[0]!);
-  else if (command === "complete" && args.length === 5) await complete(args[0]!, args[1]!, args[2]!, args[3]!, args[4]!);
+  else if (command === "claim" && args.length === 2) await withClaimLock(args[1]!, command, () => claim(args[0]!, args[1]!));
+  else if (command === "renew" && args.length === 1) await withClaimLock(args[0]!, command, () => renew(args[0]!));
+  else if (command === "complete" && args.length === 5) await withClaimLock(args[1]!, command,
+    () => complete(args[0]!, args[1]!, args[2]!, args[3]!, args[4]!));
   else if (command === "deploy" && (args.length === 1 || args.length === 2)) await deploy(args[0]!, args[1]);
   else if (command === "publish" && args.length === 2) await publish(args[0]!, args[1]!);
   else throw new Error("usage: analyst.ts discover | claim TRANSCRIPT CLAIM | renew CLAIM | complete TRANSCRIPT CLAIM SUMMARY HTML PROOF | deploy PROOF [EXPECTED_ACTIVE_ID] | publish PROOF INVOCATION");
