@@ -54,7 +54,10 @@ test("rerun overwrites secrets or repeats provisioning after an interrupted crea
   try {
     const envPath = join(f.directory, ".env"), capability = join(f.directory, "capability"), secret = "a".repeat(64);
     let existingVolume = false;
-    const runner: Runner = async args => args[0] === "image" ? `sha256:${"e".repeat(64)} amd64` : args[0] === "run" ? `${"d".repeat(64)}  /usr/bin/workerd` : args[0] === "context" ? "unix:///var/run/docker.sock" : args[0] === "volume" ? existingVolume ? "existing-data" : "" : args.at(-1) === "/data/enrollment/capability" ? secret : args.some(arg => arg.includes("curl")) ? JSON.stringify({ enrollment: { state: "pending" } }) : "";
+    const runner: Runner = async (args, env) => args.includes("config") ? JSON.stringify({ services: {
+      server: { environment: { BP_BLOB_BACKEND: env.COMPOSE_PROFILES?.split(",").includes("blobs") ? "s3" : "filesystem" } },
+      "storage-init": { environment: { BP_BLOB_BACKEND: env.COMPOSE_PROFILES?.split(",").includes("blobs") ? "s3" : "filesystem" } },
+    } }) : args[0] === "image" ? `sha256:${"e".repeat(64)} amd64` : args[0] === "run" ? args.at(-1) === "--version" ? args.includes("/usr/bin/bun") ? "1.4.2" : "workerd 2026-09-18" : `${"d".repeat(64)}  /usr/bin/workerd\na83d263767d839e4d2649ca8e35d07159c7afc99afdc96d731ced29e056dda0c  /usr/bin/bun` : args[0] === "context" ? "unix:///var/run/docker.sock" : args[0] === "volume" ? existingVolume ? "existing-data" : "" : args.at(-1) === "/data/enrollment/capability" ? secret : args.some(arg => arg.includes("curl")) ? JSON.stringify({ enrollment: { state: "pending" } }) : "";
     const args = ["--env-file", envPath, "--backup-dir", f.directory, "--public-url", "http://localhost:3000", "--capability-file", capability];
     const unrelated = 'UNRELATED=${KEEP_THIS}\nUNRELATED=again\nOTHER=`untouched`\nBP_CUSTOM=${UNMANAGED}\n';
     await privateWrite(envPath, unrelated);
@@ -80,11 +83,11 @@ test("rerun overwrites secrets or repeats provisioning after an interrupted crea
     await privateWrite(profilesPath, `BP_RUSTFS_IMAGE=rustfs@sha256:${"b".repeat(64)}\nBP_BLOB_BOOTSTRAP_IMAGE=server@sha256:${"c".repeat(64)}\nBP_WORKERD_IMAGE=workerd:local\nBP_WORKERD_BINARY_SHA256=${"d".repeat(64)}\n`);
     await prepare([...args, "--env-file", profilesPath, "--profile", "blobs", "--profile", "compute"], {}, runner);
     const profiles = await readFile(profilesPath, "utf8");
-    expect(profiles).toMatch(/^BP_COMPUTE_TOKEN=[a-f0-9]{64}$/m);
-    expect(profiles).toMatch(/^BP_RUSTFS_ROOT_USER=[a-f0-9]{20}$/m);
-    expect(profiles).toMatch(/^BP_BLOB_S3_ACCESS_KEY=[a-f0-9]{20}$/m);
-    expect(profiles).toMatch(/^BP_RUSTFS_ROOT_PASSWORD=[a-f0-9]{64}$/m);
-    expect(profiles).toMatch(/^BP_BLOB_S3_SECRET_KEY=[a-f0-9]{40}$/m);
+    expect(profiles).toMatch(/^BP_COMPUTE_TOKEN='[a-f0-9]{64}'$/m);
+    expect(profiles).toMatch(/^BP_RUSTFS_ROOT_USER='[a-f0-9]{20}'$/m);
+    expect(profiles).toMatch(/^BP_BLOB_S3_ACCESS_KEY='[a-f0-9]{20}'$/m);
+    expect(profiles).toMatch(/^BP_RUSTFS_ROOT_PASSWORD='[a-f0-9]{64}'$/m);
+    expect(profiles).toMatch(/^BP_BLOB_S3_SECRET_KEY='[a-f0-9]{40}'$/m);
     await prepare([...args, "--env-file", profilesPath, "--profile", "blobs", "--profile", "compute"], {}, runner);
     expect(await readFile(profilesPath, "utf8")).toBe(profiles);
     expect((await f.call([...f.argv, "--principal-id", "invalid"])).code).toBe(1);
