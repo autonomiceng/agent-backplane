@@ -11,8 +11,30 @@ with encrypted transport. Checkpoints contain credentials, enrollment state,
 Workspace data, filesystem blobs, and possibly Caddy CA private keys. Encryption
 and off-host replication remain operator responsibilities. Retain the protected
 `.env` separately: manifests contain image pins, database identity, audit heads,
-target LSN, checksums and completion time, never resolved environment values.
+target LSN, checksums and completion time. S3 manifests also contain private bucket
+selection, inventory evidence and a salted credential commitment; they contain no
+plaintext credentials.
 Restore needs the original database passwords and `BP_AUTH_SECRET`.
+
+Checkpoint directories stay mode `0700` and their manifests mode `0600`. Capture
+and retention have one operator UID. Capture assigns the `backups` directory to
+that UID so it can atomically publish the receipt. Capture by a second UID is
+unsupported unless the operator explicitly manages permissions. After durable completion, capture
+atomically replaces `backups/health.json` at mode `0644`. This public summary contains
+only version, PostgreSQL system ID, actual capture completion time and restore point
+name, LSN and timeline. A failed capture retains the previous receipt. Mount the
+`backups` directory so the server can traverse it and read this receipt; private
+checkpoint directories need no server access. The operations probe validates the
+receipt against its database identity and refuses malformed receipts. Only an absent
+receipt enables the historical manifest fallback, which requires readable manifests.
+
+Both filesystem and S3 capture perform two full object-byte SHA-256 inspections
+inside the writer fence, before and after physical capture. Plan downtime for both
+passes plus archiving. Each inspection uses `BP_STARTUP_VERIFY_TIMEOUT` (default
+120 seconds); expiry terminates the lease-owning helper with
+`blob_binding_inspection_timeout`, closing its database session. Increase that budget
+for the store size and measured throughput. This bounds inspection, not all Docker
+control-plane operations or the entire capture window.
 
 ```sh
 scripts/backup.sh --fenced --env-file .env
@@ -77,7 +99,7 @@ when restoring recorded references.
    `BP_HTTPS_PORT` as appropriate, then run:
 
    ```sh
-   scripts/restore.sh /new/repository/backups/YYYYMMDDTHHMMSSffffffZ --env-file recovery.env
+   scripts/restore.sh /new/repository/backups/YYYYMMDDTHHMMSSffffffZ --fenced --env-file recovery.env
    ```
 
    A capture containing cleanup leftovers needs the explicit
@@ -243,3 +265,5 @@ application stopped. It preserves hidden storage markers, publication candidates
 and retained staging/orphan bytes. Store archives dereference hard links into
 regular entries for safe restore. Follow the [storage recovery procedure](../../docs/operations/storage-identity.md)
 before resuming the server. Offline S3 capture additionally requires RustFS running on entry, and always restores its running state after the physical capture.
+
+Compose Checkpoints require `--fenced` to attest that external writers and mutating helpers remain stopped for the entire command. Local S3 capture and fresh-store restore use the [qualified RustFS procedure](../../docs/operations/s3-checkpoints.md); unsupported S3 layouts refuse before capture.

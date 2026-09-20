@@ -8,11 +8,18 @@ async function python(source:string) {
 test("checkpoint manifest includes checksums and pins without environment values",async()=>{
   const out=await python(`import json, os, tempfile
 from pathlib import Path
-from checkpoint import manifest
+from checkpoint import manifest, inventory, publish_checkpoint
 os.environ['BP_AUTH_SECRET']='secret-not-in-manifest'
 with tempfile.TemporaryDirectory() as root:
- p=Path(root); (p/'server-data.tar').write_bytes(b'checkpoint')
- print(json.dumps(manifest(p,{}, {},'bp_test','0/1','segment',{'server':{'id':'sha256:pin'}},['server-data'],'revision')))
+ p=Path(root)/('bp_'+'a'*32); p.mkdir(); (p/'server-data.tar').write_bytes(b'checkpoint')
+ doc=manifest({'systemId':'1','timeline':1},{'systemId':'1','timeline':1},p.name,'0/1','segment',{'server':{'id':'sha256:pin'}},['server-data'],'revision',inventory(p))
+ publish_checkpoint(p,doc)
+ assert p.stat().st_mode & 0o777 == 0o700
+ assert (p/'manifest.json').stat().st_mode & 0o777 == 0o600
+ assert (p.parent/'health.json').stat().st_mode & 0o777 == 0o644
+ receipt=json.loads((p.parent/'health.json').read_text())
+ assert receipt=={'version':1,'systemId':'1','completedAt':doc['completedAt'],'restorePoint':{'name':p.name,'lsn':'0/1','timeline':1}}
+ print(json.dumps(doc))
 `);
   expect(out).not.toContain("secret-not-in-manifest"); expect(out).not.toContain("BP_AUTH_SECRET");
   const doc=JSON.parse(out); expect(doc.images.server.id).toBe("sha256:pin");
@@ -279,7 +286,7 @@ for value in ('0','-1','1.5','secret', '86401'):
 test("restore exposes only a sanitized storage refusal token from Compose diagnostics", async () => {
   await python(String.raw`from types import SimpleNamespace
 import checkpoint as cp
-stack=SimpleNamespace(compose=['docker','compose'])
+stack=SimpleNamespace(compose=['docker','compose'],services={})
 for diagnostic,expected in [('\n{"error":"blob_binding_content_mismatch"}\nprivate secret', 'blob_binding_content_mismatch'),
                            ('{"error":"/private/secret"}', 'diagnostic unavailable'),
                            ('not JSON private secret', 'diagnostic unavailable')]:
@@ -359,7 +366,7 @@ for name,dest in stack.stores.items():
  service=name.split('-')[0]
  stack.services.setdefault(service,{'volumes':[]})['volumes'].append({'type':'volume','source':name,'target':dest})
 stack.dc=lambda *args: args[-1]
-stack.images={'rustfs':{'id':'rustfs-image'}}
+stack.images={name:{'id':name+'-image'} for name in stack.services}
 wrong=None; missing=None
 calls=[]
 def command(args):
@@ -369,7 +376,7 @@ def command(args):
   return '{}'
  if args[:3]==['docker','image','inspect']: return json.dumps([{'Config':{}}])
  if args[:2]==['docker','inspect']:
-  return json.dumps([{'Config':{'Cmd':['/data']},'Mounts':[{'Type':'volume','Destination':v['target'],'Name':('wrong_' if v['source']==wrong else 'expected_')+v['source']} for v in stack.services[args[-1]]['volumes']]}])
+  return json.dumps([{'Image':args[-1]+'-image','Config':{'Cmd':['/data']},'Mounts':[{'Type':'volume','Destination':v['target'],'Name':('wrong_' if v['source']==wrong else 'expected_')+v['source']} for v in stack.services[args[-1]]['volumes']]}])
  raise AssertionError('helper started before volume proof')
 cp.command=command
 assert len(stack.attest_mounts())==5
@@ -394,6 +401,8 @@ import checkpoint as cp
 for exit_code in (137,0):
  calls=[]; running={'postgres','server','rustfs'}
  with tempfile.TemporaryDirectory() as root:
+  (Path(root)/'backups').mkdir()
+  receipt=Path(root)/'backups/health.json'; receipt.write_text('previous completed capture')
   def dc(*args):
    calls.append(args)
    if args[:3]==('ps','--status','running'): return ' '.join(running)
@@ -417,6 +426,7 @@ for exit_code in (137,0):
    assert ('did not stop cleanly' if exit_code else 'injected physical capture failure') in str(error)
   else: raise AssertionError('failed capture published')
   assert not list(Path(root).rglob('manifest.json'))
+  assert receipt.read_text()=='previous completed capture'
   starts=[call[-1] for call in calls if call[0]=='start']
   assert starts==['rustfs','server'],starts
 `);
@@ -430,6 +440,8 @@ evidence={'binding':{'databaseId':str(uuid.uuid4()),'storeId':str(uuid.uuid4()),
  'intent':{'phase':'ready'},'digest':'a'*64,'objects':[{'classification':'unreferenced'}]}
 stack=SimpleNamespace(backend='s3',services={'storage-init':{},'server':{'environment':{'BP_BLOB_S3_BUCKET':'private-bucket'}}},
  dc=lambda *args:calls.append(args))
+mounts={'rustfs-data':{'destination':'/data','image':'rustfs-image','command':['/data'],'entrypoint':['entrypoint']}}
+stack.attest_mounts=lambda selected: mounts
 cp.prove_root_credentials=lambda stack: calls.append(('root-proof',))
 cp.storage_admin=lambda stack,*args: (calls.append(args),json.dumps(evidence))[1]
 captured=cp.storage_evidence(stack,evidence)
@@ -448,14 +460,14 @@ for failure in ('root','scoped','marker_missing','body_missing','body_changed','
  cp.prove_root_credentials=root; cp.storage_admin=admin
  if failure=='store_changed': current['binding']['storeId']=str(uuid.uuid4())
  if failure=='extra_missing': current['objects']=[]; current['digest']='b'*64
- try: cp.prepare_restored_storage(stack,'capture',True,captured)
+ try: cp.prepare_restored_storage(stack,'capture',True,captured,mounts)
  except RuntimeError: pass
  else: raise AssertionError(failure+' admitted')
  assert not any('reconcile' in call or 'blob-bootstrap' in call or 'server' in call for call in calls)
  assert all('--no-deps' in call for call in calls if call[0]=='up')
 cp.prove_root_credentials=lambda stack: None
 cp.storage_admin=lambda stack,*args: (calls.append(args),json.dumps(evidence))[1]
-cp.prepare_restored_storage(stack,'capture',True,captured)
+cp.prepare_restored_storage(stack,'capture',True,captured,mounts)
 assert any('reconcile' in call for call in calls)
 evidence['objects'][0]['classification']='retained'
 assert cp.storage_evidence(stack,evidence)==captured
@@ -507,15 +519,29 @@ test("S3 restore rejects changed credential commitment and nonempty targets befo
 import subprocess
 stack=cp.Stack(p/'.env')
 name='bp_'+'a'*32
-proof=cp.credentials_digest(stack,name)
+salt=cp.os.urandom(32).hex()
+proof=cp.credentials_digest(stack,salt)
+assert proof!=cp.credentials_digest(stack,cp.os.urandom(32).hex())
+assert proof==cp.credentials_digest(stack,salt)
 snapshot={'systemId':'1','postgres':'180006','schema':32,'pgmq':'1','timeline':1,'heads':[]}
 (p/'manifest.json').write_text(json.dumps({'version':1,'name':name,'targetLsn':'0/1','segment':'0'*24,
- 'before':snapshot,'after':snapshot,'images':stack.images,'volumes':list(stack.stores),'artifacts':{},'credentialsSha256':proof}))
+ 'before':snapshot,'after':snapshot,'images':stack.images,'volumes':list(stack.stores),'artifacts':{},'credentials':{'kdf':'pbkdf2-hmac-sha256','iterations':600000,'salt':salt,'digest':proof}}))
 stack.services['blob-bootstrap']['environment']['BP_RUSTFS_ROOT_PASSWORD']='different-root-secret'
 try: cp.verify(p,stack)
 except ValueError as error: assert 'captured RustFS root and scoped credentials' in str(error)
 else: raise AssertionError('wrong root credentials admitted before restore')
 assert 'private' not in proof
+stack.services['blob-bootstrap']['environment']['BP_RUSTFS_ROOT_PASSWORD']='private-root-secret'
+stack.services['blob-bootstrap']['environment']['BP_BLOB_S3_SECRET_KEY']='changed-scoped-secret'
+try: cp.verify(p,stack)
+except ValueError as error: assert 'captured RustFS root and scoped credentials' in str(error)
+else: raise AssertionError('wrong scoped credentials admitted')
+stack.services['blob-bootstrap']['environment']['BP_BLOB_S3_SECRET_KEY']='private-scoped-secret'
+doc=json.loads((p/'manifest.json').read_text()); doc['credentials']['salt']='not-a-salt'
+(p/'manifest.json').write_text(json.dumps(doc))
+try: cp.verify(p,stack)
+except ValueError as error: assert 'captured RustFS root and scoped credentials' in str(error)
+else: raise AssertionError('invalid commitment admitted')
 cp.verify=lambda *args:{'name':'capture'}
 stack.dc=lambda *args:''
 stack.volume=lambda name:name
@@ -537,5 +563,44 @@ except RuntimeError as error: assert 'nonempty target' in str(error)
 else: raise AssertionError('nonempty restore admitted')
 assert (p/'.existing').read_text()=='preserve'
 root.cleanup()
+`);
+});
+
+test("restored RustFS attests actual launch and image while allowing a fresh volume name", async () => {
+  await python(`import copy, json
+import checkpoint as cp
+stack=cp.Stack.__new__(cp.Stack)
+stack.stores={'rustfs-data':'/data'}
+stack.config={'volumes':{'rustfs-data':{'name':'fresh_rustfs-data'}}}
+stack.services={'storage-init':{'volumes':[{'type':'volume','source':'server-data','target':'/data'}]},
+ 'rustfs':{'volumes':[{'type':'volume','source':'rustfs-data','target':'/data'}]}}
+stack.images={'rustfs':{'id':'recorded-image'}}; stack.backend='s3'
+stack.dc=lambda *args: 'restored-container' if args[0]=='ps' else ''
+actual={'Image':'recorded-image','Config':{'Cmd':['/data'],'Entrypoint':['entrypoint']},
+ 'Mounts':[{'Type':'volume','Name':'fresh_rustfs-data','Destination':'/data'}]}
+recorded={'rustfs-data':{'name':'source_rustfs-data','destination':'/data','image':'recorded-image','command':['/data'],'entrypoint':['entrypoint']}}
+def command(args):
+ if args[:3]==['docker','volume','inspect']: return '{}'
+ if args[:3]==['docker','image','inspect']: return json.dumps([{'Config':{'Entrypoint':['entrypoint']}}])
+ return json.dumps([actual])
+cp.command=command
+cp.prove_root_credentials=lambda stack: None
+cp.storage_admin=lambda *args: json.dumps({'intent':{'phase':'ready'},'objects':[]})
+captured={'backend':'s3'}; cp.storage_evidence=lambda *args: captured
+cp.prepare_restored_storage(stack,'capture',False,captured,recorded)
+def premature_auth(stack): raise AssertionError('authentication before actual launch refusal')
+cp.prove_root_credentials=premature_auth
+actual['Config']['Cmd']=['/data','/other']
+try: cp.prepare_restored_storage(stack,'capture',False,captured,recorded)
+except ValueError as error: assert 'custom launch or volume layout' in str(error)
+else: raise AssertionError('custom launch accepted')
+actual['Config']['Cmd']=['/data']; actual['Image']='different-image'
+try: cp.prepare_restored_storage(stack,'capture',False,captured,recorded)
+except ValueError as error: assert 'actual container image differs' in str(error)
+else: raise AssertionError('different actual image accepted')
+actual['Image']='recorded-image'; recorded['rustfs-data']['entrypoint']=['different-entrypoint']
+try: cp.prepare_restored_storage(stack,'capture',False,captured,recorded)
+except ValueError as error: assert 'launch or mount evidence differs' in str(error)
+else: raise AssertionError('captured launch evidence ignored')
 `);
 });

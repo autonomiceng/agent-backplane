@@ -3,6 +3,7 @@
 import argparse
 import fcntl
 import hashlib
+import hmac
 import json
 import os
 from pathlib import Path
@@ -72,6 +73,11 @@ def command(args, env=None):
     result = subprocess.run(args, capture_output=True, text=True, env=env, cwd=ROOT)
     if result.returncode:
         # Compose diagnostics can contain interpolated credentials.
+        tokens = {'checkpoint_proof_' + step for step in ('configuration', 'readiness', 'authentication', 'account', 'versioning')}
+        tokens |= {'checkpoint_fixture_' + step for step in ('identity', 'configuration', 'create', 'read')}
+        token = next((line for line in reversed(result.stderr.splitlines()) if line in tokens), None)
+        if token:
+            raise RuntimeError(token)
         raise RuntimeError(f'{Path(args[0]).name} command failed (exit {result.returncode})')
     return result.stdout.strip()
 
@@ -90,11 +96,33 @@ def inventory(root):
     return result
 
 
-def manifest(root, before, after, name, lsn, segment, images, volumes, revision):
+def manifest(before, after, name, lsn, segment, images, volumes, revision, artifacts):
     # Deliberate allowlist: resolved Compose environments never enter a checkpoint manifest.
     return dict(version=1, before=before, after=after, name=name, targetLsn=lsn,
                 segment=segment, images=images, volumes=volumes, revision=revision,
-                completedAt=datetime.now(timezone.utc).isoformat(), artifacts=inventory(root))
+                artifacts=artifacts)
+
+
+def publish_checkpoint(dest, doc):
+    dest.chmod(0o700)
+    command(['sync', '-f', str(dest)])
+    doc['completedAt'] = datetime.now(timezone.utc).isoformat()
+    with os.fdopen(os.open(dest / '.manifest.json.tmp', os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'w') as file:
+        json.dump(doc, file, indent=2); file.write('\n'); file.flush()
+        os.fchmod(file.fileno(), 0o600); os.fsync(file.fileno())
+    (dest / '.manifest.json.tmp').rename(dest / 'manifest.json')
+    command(['sync', '-f', str(dest)])
+    receipt = dict(version=1, systemId=doc['after']['systemId'], completedAt=doc['completedAt'],
+                   restorePoint=dict(name=doc['name'], lsn=doc['targetLsn'], timeline=doc['after']['timeline']))
+    fd, temporary = tempfile.mkstemp(prefix='.health-', dir=dest.parent)
+    try:
+        with os.fdopen(fd, 'w') as file:
+            json.dump(receipt, file); file.write('\n'); file.flush()
+            os.fchmod(file.fileno(), 0o644); os.fsync(file.fileno())
+        os.replace(temporary, dest.parent / 'health.json')
+        command(['sync', '-f', str(dest.parent)])
+    finally:
+        Path(temporary).unlink(missing_ok=True)
 
 
 EMPTY_TARGET_CHECK = 'entries=$(ls -A "$1"); test -z "$entries" || { echo "restore refuses non-empty targets" >&2; exit 1; }'
@@ -206,17 +234,21 @@ class Stack:
             if not any(v.get('source') == 'server-data' and v.get('target') == '/data' and v.get('type') == 'volume' for v in mounts):
                 raise ValueError('storage-init must mount server-data at /data')
 
-    def attest_mounts(self):
+    def attest_mounts(self, selected=None):
         self.check_mount_config()
         proof = {}
         for volume, destination in self.stores.items():
             service = volume.split('-')[0]
+            if selected is not None and service != selected:
+                continue
             name = self.volume(volume)
             command(['docker', 'volume', 'inspect', name])
             containers = self.dc('ps', '-aq', service).split()
             if len(containers) != 1:
                 raise ValueError(f'{service}: expected one existing container for mount proof')
             actual = json.loads(command(['docker', 'inspect', containers[0]]))[0]
+            if actual['Image'] != self.images[service]['id']:
+                raise ValueError(f'{service}: actual container image differs')
             if any(m['Destination'].startswith(destination + '/') for m in actual['Mounts']):
                 raise ValueError(f'{service}: actual nested durable mounts are unsupported')
             mounts = [m for m in actual['Mounts'] if m['Destination'] == destination]
@@ -227,6 +259,9 @@ class Stack:
                 if len(actual['Mounts']) != 1 or actual['Config'].get('Cmd') != ['/data'] or actual['Config'].get('Entrypoint') != launch.get('Entrypoint'):
                     raise ValueError('running RustFS has a custom launch or volume layout')
             proof[volume] = dict(name=name, destination=destination)
+            if service == 'rustfs':
+                proof[volume].update(image=actual['Image'], command=actual['Config'].get('Cmd'),
+                                     entrypoint=actual['Config'].get('Entrypoint'))
         return proof
 
     def dc(self, *args):
@@ -417,7 +452,7 @@ def backup(stack, offline=False, fenced=False):
             if volume != 'postgres-data':
                 stack.helper('umask 077; tar --hard-dereference --numeric-owner --xattrs --xattrs-include="*" -C /source -cf "$1" .', f'{target}/{volume}.tar',
                              mounts=('-v', f'{stack.volume(volume)}:/source:ro'))
-        stack.helper('chown -R "$2:$3" "$1"; chmod -R u+rwX,go-rwx "$1"', target, str(os.getuid()), str(os.getgid()))
+        stack.helper('chown "$2:$3" /backup/backups; chown -R "$2:$3" "$1"; chmod -R u+rwX,go-rwx "$1"', target, str(os.getuid()), str(os.getgid()))
         command(['docker', 'save', '--output', str(dest / 'server-image.tar'), stack.images['server']['id']])
         per_log = (1 << 32) // segment_bytes
         first_number = int(first[8:16], 16) * per_log + int(first[16:], 16)
@@ -436,20 +471,18 @@ def backup(stack, offline=False, fenced=False):
         after = stack.snapshot()
         if before != after:
             raise ValueError('fenced database identity or audit heads changed')
-        validate_archives(dest, inventory(dest))
-        doc = manifest(dest, before, after, name, lsn, segment, stack.images, list(stack.stores),
-                       command(['git', 'rev-parse', 'HEAD']))
+        artifacts = inventory(dest)
+        validate_archives(dest, artifacts)
+        doc = manifest(before, after, name, lsn, segment, stack.images, list(stack.stores),
+                       command(['git', 'rev-parse', 'HEAD']), artifacts)
         doc.update(storage=storage, mounts=mounts, rustfsExitCode=rustfs_exit,
                    archiveValidation='regular-files-and-directories', archiveMetadata='gnu-tar-numeric-owner-xattrs')
         if stack.backend == 's3':
-            doc['credentialsSha256'] = credentials_digest(stack, name)
+            salt = os.urandom(32).hex()
+            doc['credentials'] = dict(kdf='pbkdf2-hmac-sha256', iterations=600000, salt=salt,
+                                      digest=credentials_digest(stack, salt))
         doc['walSegmentBytes'] = segment_bytes
-        with os.fdopen(os.open(dest / '.manifest.json.tmp', os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'w') as file:
-            json.dump(doc, file, indent=2); file.write('\n'); file.flush(); os.fsync(file.fileno())
-        (dest / '.manifest.json.tmp').chmod(0o600)
-        (dest / '.manifest.json.tmp').rename(dest / 'manifest.json')
-        dest.chmod(0o700)
-        command(['sync', '-f', str(dest)])
+        publish_checkpoint(dest, doc)
         completed = dest
         boundaries = prune_checkpoints(stack.backups / 'backups', stack.keep,
             lambda path: stack.helper('rm -rf -- "$1"', '/backup/backups/' + path.name))
@@ -492,7 +525,11 @@ def verify(source, stack):
         required.add('server-image.tar')
     if 'rustfs-data' in stack.stores:
         required.add('rustfs-data.tar')
-        if doc.get('credentialsSha256') != credentials_digest(stack, doc['name']):
+        proof = doc.get('credentials')
+        if (not isinstance(proof, dict) or proof.get('kdf') != 'pbkdf2-hmac-sha256' or proof.get('iterations') != 600000
+                or not isinstance(proof.get('salt'), str) or not re.fullmatch('[a-f0-9]{64}', proof['salt'])
+                or not isinstance(proof.get('digest'), str) or not re.fullmatch('[a-f0-9]{64}', proof['digest'])
+                or not hmac.compare_digest(proof['digest'], credentials_digest(stack, proof['salt']))):
             raise ValueError('restore requires the captured RustFS root and scoped credentials')
         if not doc.get('storage') or doc['storage'].get('backend') != 's3' or doc['storage'].get('phase') != 'ready' or doc.get('rustfsExitCode') != 0:
             raise ValueError('S3 checkpoint has no verified source storage proof')
@@ -514,8 +551,10 @@ def validate_archives(source, artifacts):
                         raise ValueError('unsafe archive member')
 
 
-def storage_admin(stack, *args):
-    result = subprocess.run(stack.compose + ['run', '--rm', '--no-deps', '-T', 'storage-init',
+def storage_admin(stack, *args, environment=()):
+    result = subprocess.run(stack.compose + ['run', '--rm', '--no-deps', '-T',
+                            '-e', 'BP_STARTUP_VERIFY_TIMEOUT=' + str(startup_timeout(stack)),
+                            *[arg for value in environment for arg in ('-e', value)], 'storage-init',
                             'bun', 'apps/server/blobs/storage-admin.ts', *args],
                             capture_output=True, text=True, cwd=ROOT)
     if result.returncode:
@@ -573,22 +612,23 @@ def inspect_storage(stack, offline=False):
         raise
 
 
-def credentials_digest(stack, nonce):
+def credentials_digest(stack, salt):
     # RustFS accepts root credentials at process startup. Authentication alone cannot prove
     # they equal the source credentials. Checkpoint-specific commitment prevents silent rotation.
     env = stack.services['blob-bootstrap']['environment']
     values = [env[key] for key in ('BP_RUSTFS_ROOT_USER', 'BP_RUSTFS_ROOT_PASSWORD', 'BP_BLOB_S3_ACCESS_KEY', 'BP_BLOB_S3_SECRET_KEY')]
-    return hashlib.sha256(json.dumps([nonce, *values], separators=(',', ':')).encode()).hexdigest()
+    return hashlib.pbkdf2_hmac('sha256', json.dumps(values, separators=(',', ':')).encode(), bytes.fromhex(salt), 600000).hex()
 
 
-def prove_root_credentials(stack):
+def prove_root_credentials(stack, environment=()):
     # Bootstrap's entrypoint mutates IAM. Override it with a read-only signed request.
-    stack.dc('run', '--rm', '--no-deps', '-T', '--entrypoint', 'bun',
-             '-v', str(ROOT / 'scripts/s3-checkpoint-proof.js') + ':/checkpoint-proof.js:ro',
-             'blob-bootstrap', '/checkpoint-proof.js')
+    command(stack.compose + ['run', '--rm', '--no-deps', '-T', '--entrypoint', 'bun',
+                            *[arg for value in environment for arg in ('-e', value)],
+                            '-v', str(ROOT / 'scripts/s3-checkpoint-proof.js') + ':/checkpoint-proof.js:ro',
+                            'blob-bootstrap', '/checkpoint-proof.js'])
 
 
-def prepare_restored_storage(stack, checkpoint, retain_unreferenced=False, captured=None):
+def prepare_restored_storage(stack, checkpoint, retain_unreferenced=False, captured=None, mounts=None):
     if 'storage-init' not in stack.services:
         return
     stack.dc('up', '-d', '--wait', '--wait-timeout', str(startup_timeout(stack)),
@@ -596,6 +636,10 @@ def prepare_restored_storage(stack, checkpoint, retain_unreferenced=False, captu
     if stack.backend == 's3':
         stack.dc('up', '-d', '--wait', '--wait-timeout', str(startup_timeout(stack)),
                  '--no-build', '--pull', 'never', '--no-deps', 'rustfs')
+        actual = stack.attest_mounts('rustfs')['rustfs-data']
+        recorded = (mounts or {}).get('rustfs-data', {})
+        if any(actual[key] != recorded.get(key) for key in ('destination', 'image', 'command', 'entrypoint')):
+            raise ValueError('restored RustFS launch or mount evidence differs')
         prove_root_credentials(stack)
     evidence = json.loads(storage_admin(stack, 'inspect', '--fenced'))
     if (evidence.get('intent') or {}).get('phase') != 'ready':
@@ -673,7 +717,7 @@ def restore(stack, source, retain_unreferenced=False):
         rm -rf "$1/checkpoint-wal"
         mv "$1/checkpoint.auto.conf" "$1/postgresql.auto.conf"
     ''', data, gate, mounts=pgmount, user='postgres')
-    prepare_restored_storage(stack, doc['name'], retain_unreferenced, doc.get('storage'))
+    prepare_restored_storage(stack, doc['name'], retain_unreferenced, doc.get('storage'), doc.get('mounts'))
     stack.dc('up', '-d', '--no-build', '--pull', 'never', 'server')
     deadline = time.monotonic() + startup_timeout(stack)
     while time.monotonic() < deadline:
