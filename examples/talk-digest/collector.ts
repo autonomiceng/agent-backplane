@@ -78,6 +78,7 @@ export function metadata(value: Json) {
   if (!(typeof status === "string" && status.trim())
     && !(typeof status === "number" && Number.isInteger(status) && status >= 100 && status <= 599))
     throw new Error("transcript_access_status_invalid");
+  if (!text(access.checkedAt, "transcript_access_checked_at").trim()) throw new Error("transcript_access_checked_at_invalid");
   if (!text(license.status, "license_status").trim()) throw new Error("license_status_invalid");
   return m;
 }
