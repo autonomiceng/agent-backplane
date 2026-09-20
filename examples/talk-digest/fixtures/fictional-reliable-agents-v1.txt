@@ -1,0 +1,6 @@
+[00:00] Welcome to Northstar Lab. This is a fictional talk about a delivery-planning agent.
+[00:08] The first lesson is to give the agent one bounded goal and tools with narrow contracts. A tool result should be recorded before the next decision.
+[00:22] The second lesson is to evaluate behavior at two levels. Deterministic checks verify required fields and valid identifiers. A small reviewed set tests whether the final plan is useful.
+[00:39] The third lesson is to design retries around stable identities. Repeating a request with the same idempotency key must return the recorded outcome instead of creating another handoff.
+[00:55] Store the input, output, and decision trail separately. That lets another worker continue after a failure and lets an operator see which run changed each artifact.
+[01:10] Reliable agent systems make uncertainty visible. They preserve evidence, bound effects, and let humans decide when automatic recovery would be unsafe.
