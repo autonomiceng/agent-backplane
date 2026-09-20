@@ -58,7 +58,10 @@ bash scripts/backup.sh --offline --env-file .env
 Use the same env file and `COMPOSE_FILE`/`COMPOSE_PROFILES` for capture as the
 running deployment. `--offline` requires PostgreSQL running and server, edge and
 storage-init stopped; it does not restart them. This supports a server whose
-startup already fails on crash leftovers. The normal backup mode is unchanged.
+startup already fails on crash leftovers. Normal backup resumes only the services it stopped and waits for their health.
+A source that cannot restart after capture makes the command fail with a recovery
+diagnostic; any completed Checkpoint remains available. Keep ingress fenced and use
+the capture to reconcile leftovers before resuming traffic.
 For S3, take and retain an externally coordinated PostgreSQL/store capture with
 writers and deletion fenced. Automated coordinated S3 Checkpoints remain separate.
 

@@ -299,7 +299,10 @@ def backup(stack, offline=False):
         return dest
     finally:
         if stopped:
-            stack.dc('start', *reversed(stopped))
+            try:
+                stack.dc('start', '--wait', '--wait-timeout', '120', *reversed(stopped))
+            except RuntimeError:
+                raise RuntimeError('source services did not become healthy after capture; inspect the retained Checkpoint and use fenced storage reconciliation if cleanup leftovers prevent startup') from None
 
 
 def verify(source, stack):
