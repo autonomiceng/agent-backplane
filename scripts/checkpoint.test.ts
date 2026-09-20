@@ -41,22 +41,55 @@ with tempfile.TemporaryDirectory() as root:
 `)).toContain("restore refuses non-empty targets");
 });
 
-test("retention keeps N complete Checkpoints and uses the earliest retained base backup WAL boundary", async () => {
-  expect(await python(`import json, tempfile
+test("retention preserves committed custody, ignores unpublished pin debris and refuses broken pins before deleting bytes", async () => {
+  expect(await python(`import json, os, tempfile, uuid
 from pathlib import Path
-from checkpoint import prune_checkpoints
+import checkpoint as cp
 with tempfile.TemporaryDirectory() as root:
- p=Path(root)
+ p=Path(root); migration=str(uuid.uuid4())
  for i in range(1,5):
   d=p/str(i); (d/'postgres').mkdir(parents=True)
-  (d/'manifest.json').write_text(json.dumps({'completedAt':str(i), 'walSegmentBytes':16777216}))
   (d/'postgres/backup_manifest').write_text(json.dumps({'WAL-Ranges':[{'Timeline':1,'Start-LSN':f'0/{i:02X}000000'}]}))
+  (d/'manifest.json').write_text(json.dumps({'completedAt':str(i), 'walSegmentBytes':16777216, 'artifacts':cp.inventory(d),
+   **({'migration':{'id':migration,'phase':'committed_pending_checkpoint'}} if i==2 else {})}))
+ pin,_=cp.pin_checkpoint(p,p/'1',migration)
+ # Die during the real staging-file fsync, leaving a partial unpublished record.
+ child=os.fork()
+ if child==0:
+  def crash(fd): os.ftruncate(fd,1); os._exit(23)
+  cp.os.fsync=crash
+  cp.pin_checkpoint(p,None,migration)
+  os._exit(24)
+ assert os.waitpid(child,0)[1]==23<<8
+ assert any(path.name.endswith('.tmp') and path.stat().st_size==1 for path in (p/'.pins').iterdir())
+ assert cp.pinned_checkpoints(p)=={'1'}
+ reservation,_=cp.pin_checkpoint(p,None,migration)
+ assert cp.pinned_checkpoints(p)=={'1','2'}
+ original=reservation.read_bytes(); reservation.write_bytes(b'{')
+ try: cp.prune_checkpoints(p,1)
+ except ValueError as error: assert str(error)=='blob_binding_checkpoint_pin_recovery_required'
+ else: raise AssertionError('malformed committed pin allowed pruning')
+ assert all((p/str(i)/'postgres/backup_manifest').is_file() for i in range(1,5))
+ reservation.write_bytes(original)
+ # A moved pinned checkpoint and unrecognized old atomic-write debris also fail closed.
+ (p/'1').rename(p/'moved')
+ try: cp.prune_checkpoints(p,1)
+ except ValueError as error: assert str(error)=='blob_binding_checkpoint_pin_recovery_required'
+ else: raise AssertionError('missing pinned checkpoint allowed pruning')
+ (p/'moved').rename(p/'1')
+ legacy=p/'.pins/.migration-unknown'; legacy.write_bytes(b''); legacy.chmod(0o600)
+ try: cp.prune_checkpoints(p,1)
+ except ValueError as error: assert str(error)=='blob_binding_checkpoint_pin_recovery_required'
+ else: raise AssertionError('unknown pin debris ignored')
+ legacy.unlink()
+ assert all((p/str(i)/'postgres/backup_manifest').is_file() for i in range(1,5))
  (p/'incomplete').mkdir()
- boundaries=prune_checkpoints(p,2)
- assert sorted(x.name for x in p.iterdir())==['3','4','incomplete']
- assert boundaries=={1:'000000010000000000000003'}
- print('retained 2')
-`)).toContain("retained 2");
+ boundaries=cp.prune_checkpoints(p,1)
+ assert sorted(x.name for x in p.iterdir())==['.pins','1','2','4','incomplete']
+ assert boundaries=={1:'000000010000000000000001'}
+ assert pin.read_bytes() and reservation.read_bytes()==original
+ print('custody retained')
+`)).toContain("custody retained");
 });
 
 test("destroy refuses a mismatched typed project before accessing Docker", async () => {

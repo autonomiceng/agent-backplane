@@ -12,7 +12,7 @@ import subprocess
 import tempfile
 import uuid
 from checkpoint import (ROOT, RUSTFS_DIGEST, Stack, backup, check_writers, command,
-                        pin_checkpoint, prove_root_credentials, start_existing_services, startup_timeout, verify)
+                        pin_checkpoint, prove_root_credentials, start_existing_services, startup_timeout, storage_admin, verify)
 
 
 def private_read(path, limit=1024 * 1024):
@@ -78,7 +78,7 @@ def attest_volume(stack, identity, migration):
         raise ValueError('target selection or credentials changed')
 
 
-def engine(stack, state_dir, action, migration, identity, checkpoint, empty_target=False):
+def engine(stack, state_dir, action, migration, identity, checkpoint, empty_target=False, budget=3600):
     if action in ('complete', 'restore-complete'):
         verify(checkpoint, stack)
     if checkpoint.parent != stack.backups / 'backups':
@@ -96,7 +96,7 @@ def engine(stack, state_dir, action, migration, identity, checkpoint, empty_targ
     helper = {key: value for key, value in stack.services['storage-init'].items()
               if key not in ('depends_on', 'build', 'profiles')}
     helper['environment'] = {**helper.get('environment', {}), **environment,
-                             'BP_STARTUP_VERIFY_TIMEOUT': str(startup_timeout(stack))}
+                             'BP_STARTUP_VERIFY_TIMEOUT': str(startup_timeout(stack)), 'BP_STORAGE_MIGRATION_TIMEOUT': str(budget)}
     helper['image'] = stack.images['storage-init']['id']
     helper['pull_policy'] = 'never'
     model = dict(name=stack.project, services={'storage-init': helper},
@@ -154,10 +154,12 @@ def finalize_restored_migration(stack, checkpoint, doc):
 
 def run(args):
     state_dir = args.state.resolve()
-    state_dir.mkdir(mode=0o700, parents=False, exist_ok=True)
-    if state_dir.is_symlink() or state_dir.stat().st_mode & 0o077 or state_dir.stat().st_uid != os.getuid():
+    if state_dir.is_symlink() or state_dir.exists() and (not state_dir.is_dir() or state_dir.stat().st_mode & 0o077 or state_dir.stat().st_uid != os.getuid()):
         raise ValueError('migration state directory must be private and owned')
     state_path = state_dir / 'intent.json'
+    budget = getattr(args, 'budget', None)
+    if budget is not None and (type(budget) is not int or not 1 <= budget <= 86400):
+        raise ValueError('blob_binding_migration_budget_invalid')
     target = stack_from_env(args.target_env.resolve())
     if target.backend != 's3':
         raise ValueError('target env must select the shipped local RustFS overlay')
@@ -166,11 +168,16 @@ def run(args):
     target_bytes = private_read(args.target_env)
     if state_path.exists():
         state = json.loads(private_read(state_path))
+        saved_budget = state.get('budget', 3600)
+        if type(saved_budget) is not int or not 1 <= saved_budget <= 86400 or budget is not None and budget != saved_budget:
+            raise ValueError('blob_binding_migration_budget_changed')
+        budget = saved_budget
         if state['targetEnvSha256'] != hashlib.sha256(target_bytes).hexdigest() or state['envPath'] != str(env_path):
             raise ValueError('migration environment selection changed')
     else:
         if args.action != 'migrate':
             raise ValueError('no saved migration to resume')
+        budget = 3600 if budget is None else budget
         source_bytes = private_read(env_path)
         source = stack_from_env(env_path)
         if source.backend != 'filesystem' or source.project != target.project or source.backups != target.backups:
@@ -187,22 +194,29 @@ def run(args):
             without_storage = lambda env: {key: value for key, value in env.items() if not key.startswith('BP_BLOB_')}
             if without_storage(source.services[service].get('environment', {})) != without_storage(target.services[service].get('environment', {})):
                 raise ValueError('non-storage environment differs')
+        check_writers(source)
+        inspection = json.loads(storage_admin(source, 'inspect', '--fenced'))
+        if any(obj['classification'] == 'unreferenced' for obj in inspection['objects']):
+            raise ValueError('blob_binding_migration_unreferenced_reconcile_required')
         checkpoint = args.checkpoint.resolve()
         if checkpoint.parent != source.backups / 'backups':
             raise ValueError('source checkpoint must belong to this repository')
         doc = verify(checkpoint, source)
+        if doc['images'].keys() != source.images.keys():
+            raise ValueError('blob_binding_migration_image_custody')
         if doc.get('captureMode') != 'offline' or doc['storage'].get('backend') != 'filesystem' or doc['storage'].get('phase') != 'ready':
             raise ValueError('source checkpoint must contain verified filesystem storage')
-        check_writers(source)
         # An unrelated existing target is rejected before recording or mutating anything.
         if target.volume('rustfs-data') in command(['docker', 'volume', 'ls', '--format', '{{.Name}}']).splitlines():
             raise ValueError('target volume already exists; select a fresh target')
+        state_dir.mkdir(mode=0o700, parents=False, exist_ok=True)
         migration = str(uuid.uuid4())
-        pin, digest = pin_checkpoint(source.backups / 'backups', checkpoint, migration)
+        _, digest = pin_checkpoint(source.backups / 'backups', checkpoint, migration)
         state = dict(id=migration, envPath=str(env_path), sourceEnv=source_bytes.decode(), targetEnvSha256=hashlib.sha256(target_bytes).hexdigest(),
-                     checkpoint=str(checkpoint), manifestSha256=digest, target=target_identity(target, migration))
+                     checkpoint=str(checkpoint), manifestSha256=digest, target=target_identity(target, migration), budget=budget,
+                     targetImages={name: image for name, image in target.images.items() if name not in doc['images']})
         # Reserve custody of every future post-cutover capture before binding can change.
-        atomic_private(pin.parent / (migration + '-pending.json'), json.dumps(dict(checkpoint=None, migration=migration)).encode())
+        pin_checkpoint(source.backups / 'backups', None, migration)
         atomic_private(state_path, json.dumps(state).encode())
     checkpoint = Path(state['checkpoint'])
     from checkpoint import inventory, validate_archives
@@ -212,6 +226,12 @@ def run(args):
     validate_archives(checkpoint, source_doc['artifacts'])
     if hashlib.sha256((checkpoint / 'manifest.json').read_bytes()).hexdigest() != state['manifestSha256']:
         raise ValueError('source checkpoint manifest changed')
+    if not isinstance(state.get('targetImages'), dict):
+        raise ValueError('blob_binding_migration_image_custody')
+    captured_images = {**source_doc['images'], **state['targetImages']}
+    if (source_doc['images'].keys() & state['targetImages'].keys() or captured_images.keys() != target.images.keys()
+            or any(target.images[name].get(key) != image[key] for name, image in captured_images.items() for key in ('reference', 'id'))):
+        raise ValueError('blob_binding_migration_image_custody')
     if target_identity(target, state['id']) != state['target']:
         raise ValueError('target credentials or selection drifted')
     check_writers(target)
@@ -223,14 +243,14 @@ def run(args):
     if args.action == 'abort':
         if private_read(env_path) != state['sourceEnv'].encode():
             raise ValueError('abort requires unchanged source environment')
-        return engine(target, state_dir, 'abort', state['id'], state['target'], checkpoint)
+        return engine(target, state_dir, 'abort', state['id'], state['target'], checkpoint, budget=budget)
     if intent is None:
         if target.pg("SELECT EXISTS(SELECT FROM control.blob_storage_migration WHERE phase <> 'aborted')") != 'f':
             raise ValueError('a different migration owns this database')
-        engine(target, state_dir, 'prepare', state['id'], state['target'], checkpoint)
+        engine(target, state_dir, 'prepare', state['id'], state['target'], checkpoint, budget=budget)
         intent = {'phase': 'copying'}
     if intent['phase'] == 'copying':
-        engine(target, state_dir, 'prepare', state['id'], state['target'], checkpoint)
+        engine(target, state_dir, 'prepare', state['id'], state['target'], checkpoint, budget=budget)
         volume = state['target']['volume']
         fresh = volume not in command(['docker', 'volume', 'ls', '--format', '{{.Name}}']).splitlines()
         if fresh:
@@ -242,7 +262,7 @@ def run(args):
         # Bootstrap is idempotent on this exclusively tool-owned target and precedes all payload writes.
         target.dc('run', '--rm', '--no-deps', '-T', 'blob-bootstrap')
         attest_volume(target, state['target'], state['id'])
-        engine(target, state_dir, 'copy', state['id'], state['target'], checkpoint, empty_target=fresh)
+        engine(target, state_dir, 'copy', state['id'], state['target'], checkpoint, empty_target=fresh, budget=budget)
         intent = {'phase': 'committed_pending_checkpoint'}
     if intent['phase'] not in ('committed_pending_checkpoint', 'complete'):
         raise ValueError('aborted migration is immutable; use a new state directory, fresh checkpoint and fresh target')
@@ -256,7 +276,7 @@ def run(args):
     start_existing_services(target, ['rustfs'])
     attest_volume(target, state['target'], state['id'])
     prove_root_credentials(target)
-    engine(target, state_dir, 'repair', state['id'], state['target'], checkpoint)
+    engine(target, state_dir, 'repair', state['id'], state['target'], checkpoint, budget=budget)
     pending = dict(id=state['id'], phase='committed_pending_checkpoint')
     post_path = state_dir / 'postcheckpoint.json'
     if post_path.exists():
@@ -269,7 +289,7 @@ def run(args):
         _, digest = pin_checkpoint(target.backups / 'backups', after, state['id'])
         atomic_private(post_path, json.dumps(dict(checkpoint=str(after), manifestSha256=digest)).encode())
     attest_volume(target, state['target'], state['id'])
-    return engine(target, state_dir, 'complete', state['id'], state['target'], after)
+    return engine(target, state_dir, 'complete', state['id'], state['target'], after, budget=budget)
 
 
 def main():
@@ -279,10 +299,13 @@ def main():
     parser.add_argument('--target-env', required=True, type=Path)
     parser.add_argument('--checkpoint', type=Path)
     parser.add_argument('--state', required=True, type=Path)
+    parser.add_argument('--budget', type=int, help='helper budget in seconds, 1..86400; initially 3600, retries reuse the saved value')
     parser.add_argument('--fenced', action='store_true')
     args = parser.parse_args()
     if not args.fenced or args.action == 'migrate' and not args.state.joinpath('intent.json').exists() and not args.checkpoint:
         parser.error('--fenced and an initial --checkpoint are required')
+    if args.budget is not None and not 1 <= args.budget <= 86400:
+        parser.error('--budget must be between 1 and 86400 seconds')
     os.umask(0o077)
     # Prevent exported selectors from overriding either explicit private environment.
     if any(key.startswith('BP_') or key.startswith('COMPOSE_') for key in os.environ):
