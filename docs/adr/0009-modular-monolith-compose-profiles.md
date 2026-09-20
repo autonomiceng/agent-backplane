@@ -46,3 +46,15 @@ network access and a compatible Docker/BuildKit toolchain on the installation ho
 No registry release or arm64 qualification is claimed. Arm64 recipe inputs alone cannot
 promote an arm64 default. Fresh minimal selection and the trusted operator/enrolled-agent
 boundary remain unchanged; this preparatory change does not satisfy either runtime gate.
+
+Amended 2026-09-20 (B-PROMOTE preparation, pending H-PROOF): This supersedes the fresh
+minimal selection policy above. Fresh bootstrap defaults to full mode with RustFS-backed
+Files and Functions; explicit `--mode minimal` retains core plus filesystem Files and no
+workerd. Full costs additional memory and local build/network prerequisites in exchange
+for both capabilities being available from initial preparation. Ingress remains separately
+selected through edge/gateway. Native Compose reuses the saved project, ordered files
+and profiles without a wrapper. Complete existing selections remain authoritative;
+no-mode reruns preserve them, and explicit modes must agree or refuse with an upgrade/
+migration diagnostic. Incomplete installations retain the explicit original-selection
+confirmation contract. Storage and secrets never migrate silently. Root must confirm
+actual host consoles/runtime and the existing gates before any qualified release claim.

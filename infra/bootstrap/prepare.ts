@@ -10,7 +10,7 @@ import { privateRead, privateWrite, privateLock } from "../../packages/cli/runti
 import { CliError, type Environment } from "../../packages/cli/runtime/credentials.ts";
 import { resolveAccess } from "../compose/validate-edge.ts";
 import { record } from "../../packages/cli/runtime/http.ts";
-export type Runner = (args: string[], env: Environment) => Promise<string>;
+export type Runner = (args: string[], env: Environment, timeoutMs?: number) => Promise<string>;
 export type StatusRecorder = (args: string[]) => Promise<void>;
 const core = ["BP_AUTH_SECRET", "BP_POSTGRES_ADMIN_PASSWORD", "BP_POSTGRES_PASSWORD", "BP_OPERATIONS_TOKEN"];
 const blobs = ["BP_RUSTFS_ROOT_USER", "BP_RUSTFS_ROOT_PASSWORD", "BP_BLOB_S3_ACCESS_KEY", "BP_BLOB_S3_SECRET_KEY"];
@@ -18,13 +18,16 @@ const selectors = ["COMPOSE_PROJECT_NAME", "COMPOSE_FILE", "COMPOSE_PROFILES"];
 const help = `Usage: bun infra/bootstrap/prepare.ts --capability-file PATH [options]
   --env-file PATH                 Environment file (default: checkout .env)
   --compose-project NAME         Select the original Compose project
+  --mode full|minimal            Fresh default: full (RustFS Files + Functions)
   --profile NAME                 Repeat for blobs, compute, edge or gateway; '' selects none
   --confirm-existing-selection   Confirm original selection for an incomplete existing installation
                                  Requires --compose-project and --profile (use '' for none).
                                  Set COMPOSE_FILE in the env file for original custom overlays.
   --access-mode local|public|proxy  --public-url URL  --backup-dir PATH
 Omitted selectors reuse recorded COMPOSE_PROJECT_NAME, COMPOSE_FILE and COMPOSE_PROFILES.
-Fresh installations default to core only. Existing selections and backends cannot be changed here.
+Fresh ingress flags add to the mode's profiles. Minimal selects filesystem Files, no Functions.
+Saved selections stay authoritative; a mode must agree or requires an explicit upgrade/migration.
+Existing selections and backends cannot be changed here.
 `;
 
 // These values enter Caddy tokens and expressions. Accept literals, never Caddy syntax.
@@ -71,10 +74,11 @@ export async function prepare(argv: string[], env: Environment, run: Runner = do
   const { values } = parseArgs({ args: argv, allowPositionals: false, options: {
     "access-mode": { type: "string" }, "public-url": { type: "string" }, "backup-dir": { type: "string" }, "env-file": { type: "string" },
     "capability-file": { type: "string" }, "compose-project": { type: "string" }, profile: { type: "string", multiple: true },
-    "confirm-existing-selection": { type: "boolean" }, help: { type: "boolean" },
+    mode: { type: "string" }, "confirm-existing-selection": { type: "boolean" }, help: { type: "boolean" },
   } });
   if (values.help) return help;
   if (!values["capability-file"] || values["confirm-existing-selection"] && (!values["compose-project"] || !values.profile)) throw new CliError("invalid_arguments", 1);
+  if (values.mode !== undefined && !["full", "minimal"].includes(values.mode)) throw new CliError("invalid_arguments", 1);
   const path = resolve(values["env-file"] ?? resolve(import.meta.dir, "../../.env"));
   const root = resolve(import.meta.dir, "../..");
   const unlock = await privateLock(`${path}.lock`);
@@ -108,7 +112,16 @@ export async function prepare(argv: string[], env: Environment, run: Runner = do
     };
     const project = select("COMPOSE_PROJECT_NAME", values["compose-project"], "agent-backplane");
     if (!/^[a-z0-9][a-z0-9_-]*$/.test(project)) throw new CliError("invalid_compose_project", 1);
-    const profileSelection = select("COMPOSE_PROFILES", values.profile?.join(","), "");
+    const completeSelection = selectors.every(key => entries[key] !== undefined) && entries.BP_BLOB_BACKEND !== undefined;
+    // Recorded selectors and confirmation describe an original installation, never a new default.
+    const freshSelection = entries.COMPOSE_PROFILES === undefined && entries.COMPOSE_FILE === undefined && entries.BP_BLOB_BACKEND === undefined
+      && ![...core, ...blobs, "BP_COMPUTE_TOKEN"].some(key => entries[key] !== undefined) && !values["confirm-existing-selection"];
+    const mode = values.mode ?? (freshSelection ? "full" : undefined);
+    const requestedProfiles = freshSelection
+      ? [...new Set([...(mode === "full" ? ["blobs", "compute"] : []), ...(values.profile ?? []).filter(Boolean)])].join(",")
+      : values.profile?.join(",");
+    if (freshSelection && mode === "full" && values.profile?.includes("")) throw new CliError("mode_conflict_requires_explicit_upgrade_or_migration", 2);
+    const profileSelection = select("COMPOSE_PROFILES", requestedProfiles, "");
     const profiles = profileSelection === "" ? [] : [...new Set(profileSelection.split(","))];
     if (profiles.some(p => !["blobs", "compute", "edge", "gateway"].includes(p)) || values.profile?.includes("") && values.profile.length !== 1) throw new CliError("invalid_arguments", 1);
     if (profiles.includes("edge") && profiles.includes("gateway")) throw new CliError("choose_one_gateway", 1);
@@ -117,7 +130,9 @@ export async function prepare(argv: string[], env: Environment, run: Runner = do
     const files = select("COMPOSE_FILE", undefined, [resolve(root, "compose.yaml"), ...profiles.map(p => resolve(root, `compose.${p}.yaml`))].join(":"))
       .split(":").map(file => file ? resolve(dirname(path), file) : "");
     for (const file of files) if (!file || /[\n\r$`'"\\:]/.test(file) || !(await lstat(file).catch(() => undefined))?.isFile()) throw new CliError("invalid_compose_file", 1);
-    const completeSelection = selectors.every(key => entries[key] !== undefined) && entries.BP_BLOB_BACKEND !== undefined;
+    if (mode !== undefined && (profiles.includes("blobs") !== (mode === "full") || profiles.includes("compute") !== (mode === "full")
+      || entries.BP_BLOB_BACKEND !== undefined && entries.BP_BLOB_BACKEND !== (mode === "full" ? "s3" : "filesystem")))
+      throw new CliError("mode_conflict_requires_explicit_upgrade_or_migration", 2);
     const keys = [...core, ...(profiles.includes("blobs") ? blobs : []), ...(profiles.includes("compute") ? ["BP_COMPUTE_TOKEN"] : [])];
     const save = (key: string, value: string) => {
       entries[key] = value;
@@ -178,6 +193,9 @@ export async function prepare(argv: string[], env: Environment, run: Runner = do
     const backend = config.services.server.environment.BP_BLOB_BACKEND ?? "filesystem";
     if (backend !== "filesystem" && backend !== "s3" || entries.BP_BLOB_BACKEND !== undefined && entries.BP_BLOB_BACKEND !== backend
       || (config.services["storage-init"].environment.BP_BLOB_BACKEND ?? "filesystem") !== backend) throw new CliError("backend_change_requires_migration", 2);
+    if (mode !== undefined && (backend !== (mode === "full" ? "s3" : "filesystem")
+      || Boolean(config.services.server.environment.BP_COMPUTE_URL) !== (mode === "full")))
+      throw new CliError("mode_conflict_requires_explicit_upgrade_or_migration", 2);
     save("BP_BLOB_BACKEND", backend);
     await recordStatus(["--state-dir", statusDir, "--prepare"]);
     source = lines.join("\n");
@@ -207,8 +225,22 @@ export async function prepare(argv: string[], env: Environment, run: Runner = do
       await run(["volume", "create", "--label", `com.docker.compose.project=${project}`, `${prefix}_${volume}`], child);
     }
     await run([...compose, "up", ...(entries.BP_SERVER_IMAGE ? ["--no-build"] : []), "--wait"], child);
-    const readiness: unknown = JSON.parse(await run([...compose, "exec", "-T", "server", "sh", "-ec", 'exec curl -fsS -H "Authorization: Bearer $BP_OPERATIONS_TOKEN" http://localhost:3000/health/ready'], child));
+    const readiness: unknown = JSON.parse(await run([...compose, "exec", "-T", "server", "sh", "-ec", 'exec curl --max-time 5 -fsS -H "Authorization: Bearer $BP_OPERATIONS_TOKEN" http://localhost:3000/health/ready'], child, 10_000));
     if (typeof readiness !== "object" || readiness === null || !("enrollment" in readiness) || typeof readiness.enrollment !== "object" || readiness.enrollment === null || !("state" in readiness.enrollment)) throw new CliError("invalid_readiness", 2);
+    // Operations may return 503 for an absent first backup; inspect the selected capabilities.
+    let operations: unknown;
+    try {
+      operations = JSON.parse(await run([...compose, "exec", "-T", "server", "sh", "-ec",
+        'exec curl --max-time 5 -sS -H "Authorization: Bearer $BP_OPERATIONS_TOKEN" http://localhost:3000/health/operations'], child, 10_000));
+    } catch { throw new CliError("selected_capabilities_not_ready", 2); }
+    const capabilities = record(operations) && record(operations.capabilities) ? operations.capabilities : {};
+    const selected = { files: backend, ...(profiles.includes("compute") ? { functions: "workerd" } : {}) };
+    for (const [name, expected] of Object.entries(selected)) {
+      const observation = capabilities[name];
+      const age = record(observation) && typeof observation.observedAt === "string" ? Date.now() - Date.parse(observation.observedAt) : NaN;
+      if (!record(observation) || observation.state !== "healthy" || observation.backend !== expected || !(age >= 0 && age <= 15_000))
+        throw new CliError("selected_capabilities_not_ready", 2);
+    }
     const capabilityPath = resolve(values["capability-file"]);
     if (readiness.enrollment.state === "pending") {
       const capability = await run([...compose, "exec", "-T", "server", "cat", "/data/enrollment/capability"], child);
@@ -221,11 +253,20 @@ export async function prepare(argv: string[], env: Environment, run: Runner = do
     return (rustfsConsole.enabled === "true" ? `RustFS console: ${rustfsConsole.origin}/rustfs/console/\n` : "") + `bp bootstrap --url '${url}' --email USER_EMAIL --capability-file '${capabilityPath.replaceAll("'", "'\\''")}'\n`;
   } finally { await unlock(); }
 }
-async function docker(args: string[], env: Environment): Promise<string> {
+async function docker(args: string[], env: Environment, timeoutMs?: number): Promise<string> {
   const child = Bun.spawn(["docker", ...args], { env, stdout: "pipe", stderr: "pipe" });
-  const [stdout] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text()]);
-  if (await child.exited !== 0) throw new CliError("compose_command_failed", 2);
-  return stdout;
+  const result = (async () => {
+    const [stdout] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text()]);
+    if (await child.exited !== 0) throw new CliError("compose_command_failed", 2);
+    return stdout;
+  })();
+  if (timeoutMs === undefined) return result;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<string>((_, reject) => {
+    timeout = setTimeout(() => { child.kill("SIGKILL"); reject(new CliError("compose_command_failed", 2)); }, timeoutMs);
+  });
+  try { return await Promise.race([result, deadline]); }
+  finally { clearTimeout(timeout); }
 }
 export async function statusRecorder(args: string[], searchPath = process.env.PATH ?? "/usr/bin:/bin"): Promise<void> {
   const python = Bun.which("python3", { PATH: searchPath });
