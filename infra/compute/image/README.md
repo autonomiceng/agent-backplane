@@ -40,7 +40,8 @@ props and does not prove server-issued credentials or cross-Workspace isolation.
 The image includes the [curl conversion of Mozilla CA roots](https://curl.se/docs/caextract.html),
 revision 2026-08-13, checksum-pinned under MPL 2.0. `SSL_CERT_FILE` points workerd at that
 file; the artifact probe performs a declared HTTPS request to verify trust. Updating the
-root bundle is an explicit reviewed artifact update.
+root bundle is an explicit reviewed artifact update. The probe requires outbound HTTPS
+to `example.com`; network or endpoint failure is a failed gate to diagnose and retry.
 
 The image runs as UID/GID 65534. Keep the Compose read-only filesystem, dropped capabilities,
 resource limits and authenticated private control endpoint. A non-root container does not

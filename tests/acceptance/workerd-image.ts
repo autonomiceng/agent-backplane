@@ -18,9 +18,13 @@ async function command(args: string[]) {
     return { code, out: out.trim(), err: err.trim() };
   } finally { clearTimeout(timer); }
 }
+function diagnostic(value: string) {
+  return value.replaceAll(token, "[REDACTED]").replaceAll(invocationToken, "[REDACTED]")
+    .split("").filter(character => character === "\t" || character === "\n" || (character >= " " && character <= "~")).join("").slice(0, 2048);
+}
 async function docker(...args: string[]) {
   const result = await command(args);
-  assert.equal(result.code, 0, `Docker ${args[0]} failed in the owned artifact fixture`);
+  assert.equal(result.code, 0, `Docker ${args[0]} failed in the owned artifact fixture: ${diagnostic(result.err)}`);
   return result.out;
 }
 function manifest(bundle: string, runtimeDigest: string, outboundUrls: string[] = []): Manifest {
@@ -51,6 +55,10 @@ try {
   assert.equal(digest, expected.get(architecture), "running binary differs from pinned upstream artifact");
   assert.equal((await docker("exec", container, "sha256sum", "/usr/share/licenses/workerd/LICENSE")).split(" ")[0],
     "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594");
+  for (const [path, hash] of [
+    ["/etc/ssl/certs/ca-certificates.crt", "f66dff1bdf8f96060b8177976f8b7d9254bc89bc4db933d769f7384d28480bc9"],
+    ["/usr/share/licenses/ca-certificates/MPL-2.0", "fab3dd6bdab226f1c08630b1dd917e11fcb4ec5e1e020e2c16f83a0a13863e85"],
+  ] as const) assert.equal((await docker("exec", container, "sha256sum", path)).split(" ")[0], hash);
   assert.equal(await docker("image", "inspect", "--format", '{{index .Config.Labels "io.backplane.workerd.source"}}', identity),
     "https://github.com/cloudflare/workerd/tree/679c09e5eea0af8a04062e1875e99c75af532e3b");
   const address = (await docker("port", container, "8080")).split("\n")[0];
@@ -87,16 +95,18 @@ try {
 } catch (error) {
   failed = true;
   const logs = await command(["logs", "--tail", "40", name]).catch(() => null);
-  if (logs) console.error((logs.out + "\n" + logs.err).replaceAll(token, "[REDACTED]").replaceAll(invocationToken, "[REDACTED]")
-    .split("").filter(character => character === "\t" || character === "\n" || (character >= " " && character <= "~")).join("").slice(0, 2048));
+  if (logs) console.error(diagnostic(logs.out + "\n" + logs.err));
   throw error;
 } finally {
-  const observed = await command(["inspect", "--format", '{{.Id}} {{index .Config.Labels "io.backplane.artifact-probe"}}', name]);
-  if (observed.code === 0) {
-    const [id, label] = observed.out.split(" ");
-    assert(id && label === owner, "artifact cleanup ownership mismatch");
-    const removed = await command(["rm", "--force", id]);
-    if (removed.code && failed) console.error("artifact fixture cleanup failed; inspect the owned fixture privately");
-    else assert.equal(removed.code, 0, "artifact fixture cleanup failed");
-  } else assert(failed, "artifact cleanup could not verify ownership");
+  try {
+    const observed = await command(["inspect", "--format", '{{.Id}} {{index .Config.Labels "io.backplane.artifact-probe"}}', name]);
+    if (observed.code === 0) {
+      const [id, label] = observed.out.split(" ");
+      assert(id && label === owner, "artifact cleanup ownership mismatch; container retained");
+      assert.equal((await command(["rm", "--force", id])).code, 0, "artifact fixture cleanup failed");
+    } else assert(failed, "artifact cleanup could not verify ownership");
+  } catch (error) {
+    if (failed) console.error("artifact fixture cleanup failed; original probe error retained");
+    else assert.fail(error instanceof Error ? error.message : "artifact fixture cleanup failed");
+  }
 }
