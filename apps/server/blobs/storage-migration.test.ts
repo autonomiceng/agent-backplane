@@ -32,6 +32,8 @@ test("intent, partial copy, published marker and lost precommit connection resum
   const f = await migrationFixture();
   try {
     await f.operate("prepare"); const original = await f.intent(), marker = await f.store.readMarker();
+    expect(await adoptStorage(f.admin, f.store, { ...adoption, mode: "inspect" })).toMatchObject({ migration: { id: f.id, phase: "copying" } });
+    await expect(adoptStorage(f.admin, f.store, { ...adoption, mode: "reconcile" })).rejects.toThrow("blob_binding_migration_pending");
     await expect(f.verify()).rejects.toThrow("blob_binding_migration_pending");
     await expect(f.operate("copy", { ...f.targetStore, async createStored(workspace, ref, bytes) {
       await f.targetStore.createStored(workspace, ref, bytes); throw new Error("copy interrupted");
@@ -55,6 +57,7 @@ test("pending cutover repairs only absent bytes under the same binding before ve
   const f = await migrationFixture();
   try {
     await f.operate("prepare"); await f.operate("copy");
+    expect(await adoptStorage(f.admin, f.targetStore, { ...adoption, mode: "inspect" })).toMatchObject({ migration: { id: f.id, phase: "committed_pending_checkpoint" } });
     await expect(verifyStorageBinding(f.admin, f.targetStore)).rejects.toThrow("blob_binding_migration_pending");
     await expect(f.operate("complete")).rejects.toThrow("blob_binding_migration_mismatch");
     await expect(f.operate("abort")).rejects.toThrow("blob_binding_migration_mismatch");
