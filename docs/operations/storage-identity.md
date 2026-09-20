@@ -71,9 +71,18 @@ With the reviewed matching image built or loaded, apply the repository migration
 without starting the server, then inspect the store:
 
 ```sh
-deployment_compose up --wait migrate data-init
+deployment_compose up -d --no-deps --no-build migrate data-init
+for service in migrate data-init; do
+  container=$(deployment_compose ps -aq "$service")
+  test -n "$container" && test "$(docker wait "$container")" = 0 || exit 1
+done
 storage_operator inspect --fenced
 ```
+
+PostgreSQL must already be healthy. These two tasks finish and exit; `up --wait`
+can reject their successful completion because it expects running or healthy
+containers. Wait for each selected container and require exit code zero before
+inspection. Keep the server and ingress stopped if either task fails.
 
 `--fenced` and, for mutating adoption/reconciliation, `--checkpoint` are explicit operator attestations. Inspection requires fencing but no checkpoint reference. The checkpoint ID
 is a non-secret recovery reference recorded durably, not an automatically validated
