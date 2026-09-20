@@ -190,3 +190,17 @@ else: raise AssertionError('unsupported data directory was captured')
 assert calls == ['attest', 'SHOW server_version_num', 'SHOW data_directory']
 `);
 });
+
+test("offline checkpoint refuses live writers and permits a stopped server recovery capture", async () => {
+  expect(await python(`from checkpoint import require_backup_services
+require_backup_services(['postgres'], True, True)
+for running in ([], ['postgres','server'], ['postgres','edge'], ['postgres','storage-init']):
+ try: require_backup_services(running, True, True)
+ except ValueError: pass
+ else: raise AssertionError('offline fence missing')
+try: require_backup_services(['postgres'], False, False)
+except ValueError: pass
+else: raise AssertionError('normal backup accepted a stopped server')
+print('offline fence checked')
+`)).toContain('offline fence checked');
+});
