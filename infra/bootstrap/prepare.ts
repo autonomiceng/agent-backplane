@@ -143,7 +143,8 @@ export async function prepare(argv: string[], env: Environment, run: Runner = do
         try { await parent.sync(); } finally { await parent.close(); }
       } finally { await rm(temporary, { force: true }); }
     }
-    const statusRecord = ["--state-dir", statusDir, "--checkout", root, "--env-file", path, "--started", new Date().toISOString()];
+    const statusRecord = ["--state-dir", statusDir, "--checkout", root, "--env-file", path, "--started", new Date().toISOString(),
+      "--project-name", project, ...files.flatMap(file => ["--compose-file", file]), ...profiles.flatMap(profile => ["--profile", profile])];
     await recordStatus([...statusRecord, "--state", "unavailable"]);
     if (profiles.includes("compute")) {
       const identity = await verifyWorkerdImage(entries, child, run);

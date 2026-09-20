@@ -46,9 +46,18 @@ Run `--help` for the selection flags. Successful local resource inventory and Co
 configuration validation precede network or volume mutation. Selection and secrets
 are published together by atomic replacement before durable volumes are created,
 so an interrupted preparation reuses the same identities on its next run. An
-inventory failure refuses preparation. Bootstrap status references the selected env
-file; the current status observer still requires explicit matching project, file and
-profile arguments for custom selections.
+inventory failure refuses preparation. Bootstrap status records the actual project,
+ordered Compose files and profile set. The observer reports bootstrap health only
+when that selection matches; older records without selection remain unknown until
+preparation records another outcome.
+
+`python3 scripts/status_observer.py --checkout "$PWD" --env-file /path/to/.env`
+reads the saved native Compose selection and `BP_STATUS_DIR`. Explicit observer or
+timer selectors must agree with recorded values. `--profile ''` explicitly selects
+no optional profiles. Existing timers supply project and file arguments; omitted
+profile flags with explicit files retain their original empty-selection meaning.
+Without recorded settings, the observer retains its core-only and checkout `data`
+defaults. `--state-dir` still explicitly selects the publication directory.
 
 Add `--profile blobs` to use RustFS and bootstrap helpers from the effective server image. `BP_BLOB_BOOTSTRAP_IMAGE` remains an explicit helper-code experiment override. Add `--profile compute` with a required full `BP_WORKERD_IMAGE` reference available locally and its expected `BP_WORKERD_BINARY_SHA256` in `.env`. Bootstrap resolves tags for each launch, verifies the binary, and saves private launch evidence under `BP_DATA_DIR/compute` (default `data/compute` beside the env file). The effective image override exists only in the child environment; a later bare Compose deployment may resolve the tag again. See [runtime identity](../compute/runtime.md); legacy repository/digest configuration requires migration. Core generates auth, database and operations secrets; blobs generates independent root and service credentials; compute generates its token. Preparation does not provision backup storage or workerd images.
 
