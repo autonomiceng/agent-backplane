@@ -42,10 +42,12 @@ Root runs these in disposable fixtures:
 # Owns containers sequentially. Includes real HTTPS unless --identity-only is supplied.
 bun tests/acceptance/workerd-image.ts agent-backplane-workerd:1.20260918.1
 
-bun run test apps/server/compute/compute-launcher.test.ts apps/server/compute/compute-identity.test.ts
+# Set BP_COMPUTE_URL, BP_COMPUTE_TOKEN and BP_WORKERD_RUNTIME_ID for a separately owned runtime.
+bun run test ./tests/acceptance/workerd-identity.ts
+bun run test apps/server/compute/compute-launcher.test.ts apps/server/compute/compute-identity.test.ts tests/acceptance/workerd-legacy.test.ts
 ```
 
-The image probe records reference, actual image ID, architecture, binary and control hashes. It checks private persistence, wrong identity refusal, null bare-Compose image evidence, stale admission evidence refusal for prepare/invoke after changing artifact declarations or loader bytes with the same binary, followed by healthy preparation of the original manifest. Each Docker command is bounded to 120 seconds, control requests to five seconds and startup/restart waits to 15 seconds. The local HTTP/PG regression checks stored configuration hashes across two artifact declarations and one identity check per operation. Separate real-runtime attribution and legacy-upgrade gates must pass before operational qualification.
+The image probe records reference, actual image ID, architecture, binary and control hashes. It checks private persistence, wrong identity refusal, null bare-Compose image evidence, stale admission evidence refusal for prepare/invoke after changing artifact declarations or loader bytes with the same binary, followed by healthy preparation of the original manifest. Each Docker command is bounded to 120 seconds, control requests to five seconds and startup/restart waits to 15 seconds. The 30-second PG gate writes through the server, checks persisted deployment/activation/invocation evidence and unchanged Principal/Run attribution, and uses real HTTP to check core readiness and authentication while compute refuses a wrong identity. The local HTTP/PG regression checks stored configuration hashes across two artifact declarations and one identity check per operation. The legacy PG gate seeds an active deployment under schema 32, applies migration 33, and checks unchanged history, API readability, attributed activation/invocation refusal, constraint enforcement, and replacement activation retiring the legacy deployment.
 
 Full F-GATE remains separate: initializer timeout, restart/eviction lifecycle, resource limits, redirect/private-address/cross-Workspace egress refusal and subsequent healthy invocation. Workerd is not a hardened sandbox; server deadlines do not prove CPU termination. No shipping support or published artifact custody is claimed.
 
