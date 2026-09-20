@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { diskSampler } from "./platform/disk-sampler.ts";
 import { scheduledPurge, readPurgeInterval } from "./retention/scheduled-purge.ts";
 import { createComputeLauncher } from "./compute/compute-launcher.ts";
+import { verifyStorageBinding } from "./blobs/storage-binding.ts";
 import { createBlobStore } from "./blobs/blob-storage.ts";
 import { readOperationsConfig } from "./platform/operations.ts";
 import { loadMigrations } from "../../db/migrations.ts";
@@ -31,6 +32,19 @@ if (readiness.problems.length > 0) {
   process.exit(1);
 }
 
+// Storage verification writes nothing. One-shot operator initialization precedes server startup.
+let stopStorage: () => Promise<void>;
+try {
+  stopStorage = await verifyStorageBinding(pool, blobStore, () => {
+    console.error("blob_binding_lease_lost: stopping server; fence this process before replacement");
+    process.exit(1);
+  });
+} catch (error) {
+  console.error(`refusing to start: ${error instanceof Error ? error.message : "blob_binding_unavailable"}; see docs/operations/storage-identity.md`);
+  await pool.close({ timeout: 1 });
+  process.exit(1);
+}
+
 const enrollment = createEnrollment(pool, config);
 await enrollment.prepare();
 const auth = createAuth(pool, config);
@@ -44,6 +58,7 @@ const shutdown = async () => {
   await stopPurge();
   await stopDisk();
   await app.stop();
+  await stopStorage();
   await pool.close({ timeout: 5 });
   process.exit(0);
 };

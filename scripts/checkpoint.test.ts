@@ -66,7 +66,7 @@ import checkpoint as cp
 root = tempfile.TemporaryDirectory()
 p = Path(root.name)
 refs = {'postgres':'pg:experiment', 'server':'server:local', 'edge':'caddy:experiment',
-        'backup-init':'pg:experiment', 'migrate':'server:local', 'data-init':'server:local'}
+        'backup-init':'pg:experiment', 'migrate':'server:local', 'data-init':'server:local', 'storage-init':'server:local'}
 ids = {'pg:experiment':'sha256:pg', 'server:local':'sha256:server', 'caddy:experiment':'sha256:edge'}
 digests = {'pg:experiment':'pg@sha256:'+'a'*64, 'caddy:experiment':'caddy@sha256:'+'b'*64}
 ids.update({digest:ids[ref] for ref,digest in digests.items()})
@@ -132,6 +132,10 @@ test("restore resolves recorded immutable content and rejects unavailable or dif
   await python(imageFixture + `
 stack = cp.Stack(p/'.env'); recorded = stack.images
 running = False
+(p/'manifest.json').write_text(json.dumps({'images':recorded,'artifacts':{},'after':{'schema':31}}))
+try: cp.Stack(p/'.env', p)
+except ValueError as error: assert 'matching pre-upgrade checkout' in str(error)
+else: raise AssertionError('old runtime was sent through newer initialization')
 (p/'manifest.json').write_text(json.dumps({'images':recorded,'artifacts':{}}))
 def refused(fragment):
  try: cp.Stack(p/'.env', p)
@@ -203,4 +207,33 @@ except ValueError: pass
 else: raise AssertionError('normal backup accepted a stopped server')
 print('offline fence checked')
 `)).toContain('offline fence checked');
+});
+
+
+test("restore gates leftovers before server startup and only retains with explicit consent", async () => {
+  await python(`import json
+from types import SimpleNamespace
+from checkpoint import prepare_restored_storage
+calls=[]
+evidence={'intent':{'phase':'ready'},'objects':[{'classification':'unreferenced'}]}
+def dc(*args):
+ calls.append(args)
+ return json.dumps(evidence) if 'inspect' in args else ''
+stack=SimpleNamespace(services={'storage-init':{}}, dc=dc)
+try: prepare_restored_storage(stack,'capture-1')
+except RuntimeError as error: assert 'cleanup leftovers' in str(error)
+else: raise AssertionError('leftovers admitted without consent')
+assert not any('reconcile' in call or 'server' in call for call in calls)
+calls.clear()
+prepare_restored_storage(stack,'capture-1',True)
+assert any('reconcile' in call and '--retain-unreferenced' in call for call in calls)
+assert not any('server' in call for call in calls)
+calls.clear(); evidence['objects'][0]['classification']='retained'
+prepare_restored_storage(stack,'capture-2')
+assert not any('reconcile' in call for call in calls)
+evidence['intent']['phase']='verifying'
+try: prepare_restored_storage(stack,'capture-2',True)
+except RuntimeError as error: assert 'unfinished binding intent' in str(error)
+else: raise AssertionError('unfinished intent overwritten')
+`);
 });

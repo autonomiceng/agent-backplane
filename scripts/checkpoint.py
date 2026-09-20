@@ -83,11 +83,16 @@ class Stack:
             doc = json.loads((source / 'manifest.json').read_text())
             if doc['artifacts'] != inventory(source):
                 raise ValueError('checkpoint artifacts or checksums differ')
+            captured_schema = doc.get('after', {}).get('schema')
+            if 'storage-init' in self.services and ('storage-init' not in doc['images'] or isinstance(captured_schema, int) and captured_schema < 32):
+                raise ValueError('pre-binding Checkpoint requires the matching pre-upgrade checkout before restore; its archived image has no storage-init command')
             recorded = doc['images']
             if 'server-image.tar' in doc['artifacts']:
                 command(['docker', 'load', '--input', str(source / 'server-image.tar')])
         self.images = {}
         helpers = {'backup-init': 'postgres', 'migrate': 'server', 'data-init': 'server'}
+        if 'storage-init' in self.services:
+            helpers['storage-init'] = 'server'
         for service in ('postgres', 'server', *(['edge'] if 'edge' in self.services else []), *helpers):
             ref = self.services[service]['image']
             expected = recorded.get(service, recorded.get(helpers.get(service))) if recorded is not None else None
@@ -324,7 +329,21 @@ def verify(source, stack):
     return doc
 
 
-def restore(stack, source):
+def prepare_restored_storage(stack, checkpoint, retain_unreferenced=False):
+    if 'storage-init' not in stack.services:
+        return
+    stack.dc('up', '-d', '--wait', '--no-build', '--pull', 'never', 'postgres')
+    args = ('run', '--rm', '--no-deps', 'storage-init', 'bun', 'apps/server/blobs/storage-admin.ts')
+    evidence = json.loads(stack.dc(*args, 'inspect', '--fenced', '--checkpoint', checkpoint))
+    if (evidence.get('intent') or {}).get('phase') != 'ready':
+        raise RuntimeError('restored storage has an unfinished binding intent; keep the server stopped and retry its original operator command before starting')
+    if any(ref['classification'] == 'unreferenced' for ref in evidence['objects']):
+        if not retain_unreferenced:
+            raise RuntimeError('restored storage contains cleanup leftovers; server remains stopped. Reconcile the restored capture with --retain-unreferenced before starting, or restore fresh targets with that explicit flag')
+        stack.dc(*args, 'reconcile', '--fenced', '--checkpoint', checkpoint, '--retain-unreferenced')
+
+
+def restore(stack, source, retain_unreferenced=False):
     source = source.resolve()
     doc = verify(source, stack)
     if stack.dc('ps', '-aq'):
@@ -380,6 +399,7 @@ def restore(stack, source):
         rm -rf "$1/checkpoint-wal"
         mv "$1/checkpoint.auto.conf" "$1/postgresql.auto.conf"
     ''', data, gate, mounts=pgmount, user='postgres')
+    prepare_restored_storage(stack, doc['name'], retain_unreferenced)
     stack.dc('up', '-d', '--no-build', '--pull', 'never', 'server')
     deadline = time.monotonic() + 120
     while time.monotonic() < deadline:
@@ -401,9 +421,12 @@ def main():
     parser.add_argument('checkpoint', nargs='?', type=Path)
     parser.add_argument('--env-file', type=Path, default=ROOT / '.env')
     parser.add_argument('--offline', action='store_true', help='capture a fenced stopped server without restarting it')
+    parser.add_argument('--retain-unreferenced', action='store_true', help='explicitly retain restored cleanup leftovers before starting the server')
     args = parser.parse_args()
     if args.offline and args.action != 'backup':
         parser.error('--offline is only valid for backup')
+    if args.retain_unreferenced and args.action != 'restore':
+        parser.error('--retain-unreferenced is only valid for restore')
     os.umask(0o077)
     lock_path = args.env_file.with_suffix(args.env_file.suffix + '.lock')
     with lock_path.open('x'):
@@ -416,7 +439,7 @@ def main():
                 else:
                     if args.checkpoint is None:
                         raise ValueError('checkpoint path required')
-                    restore(stack, args.checkpoint)
+                    restore(stack, args.checkpoint, args.retain_unreferenced)
         finally:
             lock_path.unlink()
 

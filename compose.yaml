@@ -82,10 +82,29 @@ services:
     volumes:
       - server-data:/data
 
+  storage-init:
+    image: ${BP_SERVER_IMAGE:-agent-backplane-server:local}
+    build: *server-build
+    restart: "no"
+    logging: *logging
+    command: ["bun", "apps/server/blobs/storage-admin.ts", "initialize"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      data-init:
+        condition: service_completed_successfully
+    environment:
+      BP_ADMIN_DATABASE_URL: postgres://postgres:${BP_POSTGRES_ADMIN_PASSWORD:?generate with infra/bootstrap/prepare.ts}@postgres:5432/backplane
+      BP_DATA_DIR: /data
+    volumes:
+      - server-data:/data
+
   server:
     image: ${BP_SERVER_IMAGE:-agent-backplane-server:local}
     build: *server-build
     depends_on:
+      storage-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       migrate:
