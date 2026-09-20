@@ -7,7 +7,7 @@ export type AdoptionOptions = { mode: "initialize" | "adopt" | "reconcile" | "in
 type Intent = Binding & { intent_kind: string | null; checkpoint_ref: string | null; retain_unreferenced: boolean; inventory_sha256: string | null };
 const mismatch = () => { throw new Error("blob_binding_intent_mismatch"); };
 export async function adoptStorage(pool: Pool, store: BindingStore, options: AdoptionOptions) {
-  if (options.mode !== "initialize" && (!options.fenced || !/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/.test(options.checkpoint))) throw new Error("blob_binding_checkpoint_and_fence_required");
+  if (options.mode !== "initialize" && (!options.fenced || options.mode !== "inspect" && !/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/.test(options.checkpoint))) throw new Error("blob_binding_checkpoint_and_fence_required");
   // A repeated bootstrap never writes a ready binding, including when the server is running.
   if (options.mode === "initialize") {
     const rows = await pool<Intent[]>`SELECT * FROM control.blob_storage_binding`;

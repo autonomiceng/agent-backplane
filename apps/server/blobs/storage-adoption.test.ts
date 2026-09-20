@@ -59,7 +59,7 @@ test("publication failures retry only their exact durable intent and inventory",
       } }, adoption)).rejects.toThrow("injected_publication_disconnect");
       const [intent] = await f.admin`SELECT * FROM control.blob_storage_binding`;
       expect(intent.phase).toBe("verifying");
-      expect(await f.operate({ ...adoption, mode: "inspect", checkpoint: "inspection-only" })).toMatchObject({
+      expect(await f.operate({ ...adoption, mode: "inspect", checkpoint: "" })).toMatchObject({
         intent: { phase: "verifying", operation: "adopt", checkpoint: adoption.checkpoint, retainUnreferenced: false },
       });
       expect(Boolean(await f.store.markerOrAbsent())).toBe(published);

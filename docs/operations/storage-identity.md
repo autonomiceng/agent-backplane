@@ -1,6 +1,6 @@
 # Blob storage identity and offline adoption
 
-Startup verifies the selected store before enrollment, requests, sampling or purge.
+Once activated, startup verifies the selected store before enrollment, requests, sampling or purge.
 It writes no binding, marker or blob bytes. A separate operator command initializes
 or adopts storage. Deploy the operator, schema, cleanup exclusions and bootstrap
 service together before activating the startup check. Startup/Compose activation ships separately from this operator protocol.
@@ -53,10 +53,10 @@ without starting the server, then inspect the store:
 ```sh
 deployment_compose up --wait migrate data-init
 deployment_compose run --rm --no-deps storage-init \
-  bun apps/server/blobs/storage-admin.ts inspect --fenced --checkpoint CAPTURE_ID
+  bun apps/server/blobs/storage-admin.ts inspect --fenced
 ```
 
-`--fenced` and `--checkpoint` are explicit operator attestations. The checkpoint ID
+`--fenced` and, for mutating adoption/reconciliation, `--checkpoint` are explicit operator attestations. Inspection requires fencing but no checkpoint reference. The checkpoint ID
 is a non-secret recovery reference recorded durably, not an automatically validated
 archive. Keep the completed capture and its integrity evidence. The command also
 refuses any observed `bp_server` database sessions, acquires the same advisory
