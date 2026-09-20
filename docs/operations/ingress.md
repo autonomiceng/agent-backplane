@@ -87,3 +87,105 @@ The gateway uses `bp-gateway:80` on the shared Platform Network and publishes no
 Platform Edge routes Backplane requests through that gateway. Do not combine this overlay
 with the standalone `edge` profile. Existing direct server access remains for internal telemetry.
 The advanced deployment with an operator-owned proxy can still target the server directly.
+
+
+## Native RustFS console
+
+The console is an opt-in human storage administration surface. Keep
+`BP_RUSTFS_CONSOLE=false` for the default deployment. Disabled consoles have no
+published console link or forwarding route, and standalone Caddy requests no
+console certificate. Reserved HTTP console hosts return 404.
+
+On an existing RustFS installation, set `BP_RUSTFS_CONSOLE=true` in its private
+environment file and prepare with `--profile blobs` plus either `--profile edge`
+or `--profile gateway`. Enabling the console never selects a storage backend.
+Keep the original profiles, credentials, bucket, source bytes and volumes;
+a filesystem deployment requires an explicit storage migration first. An explicit
+`BP_BLOB_BACKEND=filesystem` conflicts with enabling this console.
+
+Standalone mode derives `https://rustfs.<BP_PUBLIC_DOMAIN or localhost>` with
+`BP_HTTPS_PORT` when non-default. Optional `BP_RUSTFS_HOST` overrides the native
+DNS hostname. The local HTTP hostname on `BP_HTTP_PORT` is reserved and always
+returns 404. `BP_RUSTFS_URL` must select the HTTPS listener in every mode.
+Point the console hostname at Caddy and use the same local CA trust procedure as
+Backplane. Only Caddy publishes console ports; RustFS stays on `blob-internal`,
+off the Platform Network. Core plus edge remains valid without blobs.
+
+Behind Platform Edge, set a separate external HTTPS origin explicitly, for example:
+
+```dotenv
+BP_ACCESS_MODE=proxy
+BP_PUBLIC_URL=https://darkforge.tail694fe2.ts.net:8449
+BP_RUSTFS_CONSOLE=true
+BP_RUSTFS_URL=https://darkforge.tail694fe2.ts.net:8450
+BP_RUSTFS_CONSOLE_ALLOW='100.100.1.2/32 fd7a:115c:a1e0::1/128'
+BP_TRUSTED_PROXIES='192.0.2.2/32'
+```
+
+Replace the example IPs with actual operator addresses and the exact Platform
+Edge peer address observed by Caddy. `BP_RUSTFS_CONSOLE_ALLOW` accepts space-separated
+IP literals or CIDRs. `BP_TRUSTED_PROXIES` accepts only exact IPs or host routes
+(`/32` or `/128`); Docker and Tailnet ranges are never trusted proxy peers.
+Forwarded client IPs affect the console allowlist only when the direct peer is
+trusted. That peer must replace untrusted `X-Forwarded-For` with a single verified
+client address. Platform Edge's console route normalizes it this way, so Backplane
+trusts only the exact Edge peer IP. A custom ingress that preserves a chain must
+append the address it actually observes and configure every actual trusted proxy
+hop in `BP_TRUSTED_PROXIES`; it must never pass a client-supplied chain through
+unchanged. Caddy evaluates that chain from the nearest hop toward the client.
+Untrusted callers cannot gain access by supplying forwarded headers when this
+upstream contract is enforced.
+Native RustFS root authentication is still required after the allowlist check.
+The Backplane server's forwarded-header stripping and configured authentication
+origin remain unchanged. Functions retain their trusted operator boundary.
+
+Platform Edge must preserve the full original Host, including a non-default
+port, and forward the complete console origin to `bp-gateway:80`. The internal
+gateway matches the console authority before its normal Backplane fallback,
+so a shared hostname with different ports stays separate. It proxies assets,
+STS, S3 and admin requests to RustFS 1.0.0 on port 9001. Only `GET`/`HEAD` of `/`
+with `Accept: text/html` redirects to `/rustfs/console/`; other requests retain
+their path, method and Host for native login and SigV4. Platform Edge publication
+on port 8450 is a separate follow-up; this setup does not publish that port.
+
+Run preparation again with the same environment file, project and profiles after
+editing these settings. It validates before Docker calls, preserves credentials
+and user settings, and refreshes the derived `BP_RUSTFS_URL_HOST` and
+`BP_RUSTFS_AUTHORITY` fields used by Caddy. Subsequent bare Compose commands must
+use that prepared file. Preparation prints the console link only when enabled.
+Sign in using `BP_RUSTFS_ROOT_USER` and `BP_RUSTFS_ROOT_PASSWORD` from that private
+file. These are human administration credentials, not Backplane User credentials.
+Agents must use the Files API with Principal and Run context to preserve provenance;
+native storage administration bypasses those application records.
+
+Pure preparation tests do not establish installed login or ingress qualification.
+Release checks must cover actual root-key browser login, signed account info,
+trusted-peer allow/deny, standalone/proxy routing, and disabled 404 behavior.
+
+
+The disposable console gate, `python3 tests/acceptance/rustfs-console.py`, uses the
+pinned Caddy image to adapt and validate all six local/public/proxy and enabled/
+disabled configurations, plus the unprepared gateway defaults. In the same fixture,
+signed admin account-info and S3 root-list GETs must return 200 through the trusted
+peer with the original Host and port. Signed requests cannot follow redirects.
+The existing HTML, native-auth requirement, client allow/deny, spoof rejection and
+disabled-console checks remain required. Browser login is a separate optional
+host gate selected with `BP_CONSOLE_PROOF_BROWSER`.
+
+When the storage-migration parent lands, CI integration must retain a gates job
+budget of at least 60 minutes (`timeout-minutes: 60` or higher) and all actual gates
+from both branches, including the console acceptance above, storage migration,
+storage startup/identity, workerd lifecycle/runtime, and both offline and S3 backup
+drills. Preserve the check and test steps too. Resolve the workflow conflict by
+keeping both branches' gate additions; config validation alone does not qualify
+signed requests, browser login, or storage migration.
+
+The native RustFS console requires an HTTPS browser origin in every mode. Local
+HTTP requests to its hostname return 404, even when the console is enabled;
+Backplane's ordinary local HTTP interface is unchanged. Behind a trusted gateway,
+HTTPS terminates there and the private gateway hop remains HTTP.
+
+The console allowlist defaults to loopback and does not automatically permit Docker
+bridge peers. For standalone access, inspect Caddy's observed peer and explicitly
+permit that exact address. For proxy access, permit verified client addresses and
+trust only the gateway. A denied client receives 404.
