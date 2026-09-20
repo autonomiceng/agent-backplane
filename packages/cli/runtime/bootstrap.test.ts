@@ -236,3 +236,13 @@ test("saved credentials cannot operate CLI or the MCP child over real HTTP", asy
     await expect(privateRead(output.credentialsFile)).rejects.toMatchObject({ error: "unsafe_private_file" });
   } finally { if (child && child.exitCode === null) { child.kill(); await child.exited; } await f.close(); }
 }, 30_000);
+
+
+test("bootstrap accepts the configured public URL and an equivalent auth origin", async () => {
+  const f = await fixture();
+  try {
+    const result = await f.call(f.argv, { env: { ...f.env, BP_URL: undefined,
+      BP_PUBLIC_URL: f.origin, BP_AUTH_URL: f.origin.toUpperCase() + "/" } });
+    expect(result.code, result.stderr).toBe(0);
+  } finally { await f.close(); }
+});

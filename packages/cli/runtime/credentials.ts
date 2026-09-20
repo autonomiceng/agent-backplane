@@ -17,7 +17,7 @@ export function credentials(env: Environment, auth: string, workspaceId: string 
       || (isIP(url.hostname) === 4 && url.hostname.startsWith("127.")))) throw new CliError("BP_URL_invalid");
     return url.origin;
   });
-  const url = origins[0];
+  const url = env.BP_PUBLIC_URL || env.BP_URL ? origins[0] : undefined;
   if (!url) throw new CliError("BP_URL_required");
   if (origins.some(origin => origin !== url)) throw new CliError("BP_URL_conflict");
   const key = ["none", "user"].includes(auth) ? "" : env.BP_KEY ?? "";

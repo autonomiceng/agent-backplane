@@ -41,7 +41,7 @@ async function fixture(publicOrigin: string) {
 test("spoofed proxy headers bypass authentication or operator authorization", async () => {
   const origin = (env: Record<string, string | undefined>) => resolvePublicOrigin(env, "http://localhost:3000");
   expect(origin({ BP_PUBLIC_URL: "HTTPS://BÜCHER.example:443/", BP_AUTH_URL: "https://xn--bcher-kva.example" })).toBe("https://xn--bcher-kva.example");
-  expect(origin({ BP_PUBLIC_URL: "", BP_AUTH_URL: "https://backplane.example" })).toBe("https://backplane.example");
+  expect(() => origin({ BP_PUBLIC_URL: "", BP_AUTH_URL: "https://backplane.example" })).toThrow("must match");
   expect(origin({ BP_PUBLIC_URL: "http://127.42.0.1" })).toBe("http://127.42.0.1");
   expect(origin({ BP_PUBLIC_URL: "http://[::1]" })).toBe("http://[::1]");
   expect(origin({ BP_PUBLIC_URL: "http://backplane.example", BP_ALLOW_INSECURE_ORIGIN: "true" })).toBe("http://backplane.example");
@@ -54,16 +54,14 @@ test("spoofed proxy headers bypass authentication or operator authorization", as
   const client = (env: Record<string, string | undefined>) => credentials(env, "none", undefined).url;
   expect(client({ BP_PUBLIC_URL: "HTTPS://BP.EXAMPLE:443/", BP_URL: "https://bp.example", BP_AUTH_URL: "https://bp.example/" })).toBe("https://bp.example");
   expect(client({ BP_URL: "http://127.42.0.1/" })).toBe("http://127.42.0.1");
-  expect(client({ BP_AUTH_URL: "https://bp.example" })).toBe("https://bp.example");
+  expect(() => client({ BP_AUTH_URL: "https://bp.example" })).toThrow("BP_URL_required");
   expect(() => credentials({ BP_PUBLIC_URL: "https://a.example", BP_URL: "https://b.example", BP_KEY: "invalid" }, "principal", undefined)).toThrow("BP_URL_conflict");
   expect(() => client({ BP_URL: "https://a.example", BP_AUTH_URL: "https://b.example" })).toThrow("BP_URL_conflict");
   expect(() => client({ BP_PUBLIC_URL: "http://a.example", BP_ALLOW_INSECURE_ORIGIN: "true" })).toThrow("BP_URL_invalid");
-  const edge = { BP_PUBLIC_URL: "https://bp.example", BP_PUBLIC_HOST: "bp.example", BP_TLS_ISSUER: "acme", BP_CADDY_DIGEST: "a".repeat(64) };
+  const edge = { BP_PUBLIC_URL: "https://backplane.example.com", BP_PUBLIC_DOMAIN: "example.com", BP_ACCESS_MODE: "public" };
   expect(validateEdge(edge).origin).toBe(edge.BP_PUBLIC_URL);
-  expect(() => validateEdge({ ...edge, BP_BIND_HOST: "0.0.0.0" })).toThrow();
-  expect(() => validateEdge({ ...edge, BP_PUBLIC_HOST: "bp.example:443" })).toThrow();
-  expect(() => validateEdge({ ...edge, BP_EDGE_CA: "off" })).toThrow();
-  expect(() => validateEdge({ ...edge, BP_CADDY_DIGEST: "latest" })).toThrow();
+  expect(() => validateEdge({ ...edge, BP_PUBLIC_DOMAIN: "example.com:443" })).toThrow();
+  expect(() => validateEdge({ ...edge, BP_ACCESS_MODE: "proxy" })).toThrow();
   expect(() => validateEdge({ ...edge, BP_PUBLIC_URL: "https://other.example" })).toThrow();
 
   const f = await fixture("http://localhost");

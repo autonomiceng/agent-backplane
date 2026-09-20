@@ -1,8 +1,7 @@
 x-logging: &logging
-  driver: json-file
+  driver: journald
   options:
-    max-size: "10m"
-    max-file: "3"
+    cache-disabled: "true"
 
 services:
   blob-image-check:
@@ -10,6 +9,7 @@ services:
     profiles: [blobs]
     entrypoint: ["bun", "/app/infra/init/blobs/bootstrap.js", "--images"]
     restart: "no"
+    logging: *logging
     read_only: true
     network_mode: none
     environment: &pins
@@ -32,6 +32,8 @@ services:
       RUSTFS_SECRET_KEY: ${BP_RUSTFS_ROOT_PASSWORD:?required}
       RUSTFS_ADDRESS: ":9000"
       RUSTFS_CONSOLE_ENABLE: "false"
+      RUSTFS_OBS_LOG_DIRECTORY: ""
+      RUSTFS_OBS_LOG_STDOUT_ENABLED: "true"
     volumes:
       - rustfs-data:/data
     healthcheck:
@@ -50,6 +52,7 @@ services:
         condition: service_healthy
     entrypoint: ["bun", "/app/infra/init/blobs/bootstrap.js"]
     restart: "no"
+    logging: *logging
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]

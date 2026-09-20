@@ -1,51 +1,94 @@
 {
 	auto_https disable_redirects
 	skip_install_trust
-}
-
-(ca-acme) {
-	tls {
-		issuer acme
+	# IP clients omit SNI; Docker forwards to a container address.
+	default_sni 127.0.0.1
+	log default {
+		output stderr
+		format filter {
+			wrap json
+			fields {
+				request>headers delete
+				request>uri regexp \?.* ?REDACTED
+				resp_headers delete
+			}
+		}
 	}
 }
 
-(ca-internal) {
-	tls internal
+(access-log) {
+	log {
+		output stdout
+		format filter {
+			wrap json
+			fields {
+				request>headers delete
+				request>uri regexp \?.* ?REDACTED
+				resp_headers delete
+			}
+		}
+	}
 }
 
 (operator-deny) {
 	@operator path_regexp (?i)^/+(health/+operations|metrics)\.*(/|$)
 	respond @operator 404
-	# Public ingress strips the token; direct server access can unlock readiness details.
 	@ready path /health/ready /health/ready/*
 	request_header @ready -Authorization
 }
 
-:80 {
-	route {
-		@health path /health
-		respond @health 200
-		import operator-deny
-		redir {$BP_PUBLIC_URL}{uri} 308
+(upstream) {
+	# Plaintext upstreams require a trusted host and Docker peers (ADR-0021).
+	reverse_proxy server:3000 {
+		header_up -Forwarded
+		header_up -X-Forwarded-*
+		header_up -X-Real-IP
+		header_up -CF-Connecting-IP
+		header_up -True-Client-IP
 	}
 }
 
-https://{$BP_PUBLIC_HOST} {
-	import ca-{$BP_EDGE_CA}
-	header Strict-Transport-Security "max-age=31536000"
-
-	route {
-		import operator-deny
-		# Edge and server share default and external BP_PLATFORM_NETWORK; server resolves on both.
-		# Only server -> http://workerd:8080 is confined to default; platform peers reach server in plaintext.
-		# Plaintext upstreams require a trusted host and Docker peers (ADR-0021).
-		# Restrict Docker access and network membership; isolate untrusted peers or use authenticated HTTPS.
-		reverse_proxy server:3000 {
-			header_up -Forwarded
-			header_up -X-Forwarded-*
-			header_up -X-Real-IP
-			header_up -CF-Connecting-IP
-			header_up -True-Client-IP
+(mode-local) {
+	http://:80 {
+		import access-log
+		route {
+			@health path /health
+			respond @health 200
+			import operator-deny
+			import upstream
+		}
+	}
+	https://{$BP_EDGE_HOST}, https://localhost, https://127.0.0.1 {
+		tls internal
+		import access-log
+		route {
+			import operator-deny
+			import upstream
 		}
 	}
 }
+
+(mode-public) {
+	:80 {
+		import access-log
+		route {
+			@health path /health
+			respond @health 200
+			import operator-deny
+			redir {$BP_PUBLIC_URL}{uri} 308
+		}
+	}
+	https://{$BP_EDGE_HOST} {
+		tls {
+			issuer acme
+		}
+		header Strict-Transport-Security "max-age=31536000"
+		import access-log
+		route {
+			import operator-deny
+			import upstream
+		}
+	}
+}
+
+import mode-{$BP_ACCESS_MODE}

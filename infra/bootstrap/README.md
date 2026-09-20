@@ -1,6 +1,6 @@
 # Local bootstrap
 
-Prepare an existing encrypted off-host backup mount, install Docker Compose and Bun, then run from this checkout:
+Prepare an existing encrypted off-host backup mount, install Docker Compose and Bun on a Linux host with journald, then run from this checkout. Other hosts need a [logging override](../../docs/operations/logging.md).
 
 ```bash
 bun infra/bootstrap/prepare.ts --public-url http://localhost:3000 \
@@ -9,7 +9,7 @@ bp bootstrap --url http://localhost:3000 --email user@example.com \
   --capability-file "$HOME/.bp-enrollment"
 ```
 
-Preparation writes absent secrets to the repository-root `.env`, creates the external network selected by `BP_PLATFORM_NETWORK` (default `platform`) and durable volumes named with `BP_VOLUME_PREFIX` (default `agent-backplane`), starts the core services with `up --wait`, and exports the pending enrollment capability. `--env-file PATH` selects another environment file; `--compose-project NAME` selects the local Compose project. Its subprocess output is captured privately. TLS and public ingress are configured separately.
+Preparation writes absent secrets to the repository-root `.env`, creates the external network selected by `BP_PLATFORM_NETWORK` (default `platform`) and durable volumes named with `BP_VOLUME_PREFIX` (default `agent-backplane`), starts the core services with `up --wait`, and exports the pending enrollment capability. `--env-file PATH` selects another environment file; `--compose-project NAME` selects the local Compose project. Its subprocess output is captured privately. `BP_ACCESS_MODE` defaults to `local`. Add `--profile edge` for local HTTP and self-signed HTTPS, with no domain needed. For public access or use behind another gateway, follow [access setup](../../docs/operations/ingress.md). Preparation chooses and validates the browser URL before creating resources. Use `--access-mode local|public|proxy` to select a mode, or set it in the selected environment file.
 
 Add `--profile blobs` with the digest-pinned `BP_BLOB_BOOTSTRAP_IMAGE` built from this checkout already in `.env`. RustFS is pinned in `compose.blobs.yaml`. Add `--profile compute` with `BP_WORKERD_REPOSITORY` and `BP_WORKERD_DIGEST` in `.env` and that image installed locally. Core generates auth, database and operations secrets; blobs generates independent root and service credentials; compute generates its token. Preparation does not provision backup storage or workerd images.
 

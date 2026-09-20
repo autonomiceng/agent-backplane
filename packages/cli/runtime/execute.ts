@@ -31,7 +31,7 @@ export async function execute(argv: string[], io: Execution): Promise<number> {
       output(`${JSON.stringify(value)}\n`); return 0;
     }
     if (!argv.length || argv[0] === "--help") {
-      output(`${JSON.stringify({ bootstrap: bootstrapHelp, login: "bp login|logout (BP_URL, BP_AUTH_URL, BP_USER_EMAIL, BP_USER_PASSWORD)", restoreDrill: restoreDrillHelp, push: pushHelp, commands: commands.map((c) => ({ command: c.command, aliases: c.aliases })), session: "BP_SESSION defaults to default; Runs expire locally after 24 hours idle" })}\n`); return 0;
+      output(`${JSON.stringify({ bootstrap: bootstrapHelp, login: "bp login|logout (BP_PUBLIC_URL, BP_URL, BP_USER_EMAIL, BP_USER_PASSWORD)", restoreDrill: restoreDrillHelp, push: pushHelp, commands: commands.map((c) => ({ command: c.command, aliases: c.aliases })), session: "BP_SESSION defaults to default; Runs expire locally after 24 hours idle" })}\n`); return 0;
     }
     if (["login", "logout"].includes(argv[0] ?? "")) {
       if (argv.length !== 1) throw new CliError("invalid_arguments");

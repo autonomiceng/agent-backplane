@@ -17,9 +17,9 @@ export async function bootstrap(argv: string[], io: Execution, invoke: (id: stri
   for (const [key, value] of Object.entries(parsed.values)) { if (typeof value !== "string") throw new CliError("invalid_arguments", 1); values[key] = value; }
   for (const flag of ["workspace-id", "principal-id"]) if (values[flag] !== undefined) values[flag] = canonicalUuid(values[flag]);
   if (values.url && io.env.BP_URL && values.url !== io.env.BP_URL) throw new CliError("url_conflict", 1);
-  io.env = { ...io.env, BP_USER_PASSWORD: undefined, BP_URL: values.url ?? io.env.BP_URL ?? "http://localhost:3000", BP_USER_EMAIL: (values.email ?? io.env.BP_USER_EMAIL)?.trim().toLowerCase() };
+  io.env = { ...io.env, BP_USER_PASSWORD: undefined, BP_URL: values.url ?? io.env.BP_URL ?? io.env.BP_PUBLIC_URL ?? "http://localhost:3000", BP_USER_EMAIL: (values.email ?? io.env.BP_USER_EMAIL)?.trim().toLowerCase() };
   const config = (() => { try { return credentials(io.env, "user", undefined); } catch { throw new CliError("invalid_url", 1); } })(), origin = new URL(config.url).origin;
-  if (config.url !== origin || io.env.BP_AUTH_URL && io.env.BP_AUTH_URL !== origin) throw new CliError("origin_conflict", 1);
+  if (config.url !== origin) throw new CliError("origin_conflict", 1);
   const directory = join(dirname(config.directory), "bootstrap"), digest = createHash("sha256").update(origin).digest("hex");
   await safeDirectory(dirname(directory)); await safeDirectory(directory);
   const path = join(directory, `${digest}.json`), credentialPath = join(directory, `${digest}.credentials.json`);
