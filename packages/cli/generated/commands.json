@@ -25,6 +25,59 @@
     "aliases": [],
     "auth": "user",
     "binary": false,
+    "body": null,
+    "command": [
+      "auth",
+      "list-workspaces"
+    ],
+    "method": "GET",
+    "operationId": "listWorkspaces",
+    "parameters": [
+      {
+        "flag": "after",
+        "in": "query",
+        "name": "after",
+        "required": false,
+        "schema": {
+          "maxLength": 1024,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      {
+        "flag": "limit",
+        "in": "query",
+        "name": "limit",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "default": 0,
+              "format": "integer",
+              "type": "string"
+            },
+            {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          ],
+          "default": 50,
+          "maximum": 100,
+          "minimum": 1
+        }
+      }
+    ],
+    "path": "/api/v1/workspaces",
+    "responsesRef": "listWorkspaces.responses",
+    "run": "none",
+    "stream": false
+  },
+  {
+    "aliases": [],
+    "auth": "user",
+    "binary": false,
     "body": {
       "contentType": "application/json",
       "empty": false,
