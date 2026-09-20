@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { controlUnchanged, killAndReap, preferChildOom, readPort } from "./child-process.ts";
 
 const bodyLimit = 6 * 4194304 + 1048576 + 65536;
+export const supervisorTransportLimit = bodyLimit + 1048576;
 const responseLimit = 1048576;
 const digest = (value: string) => createHash("sha256").update(value).digest();
 const failure = (reason: string) => new Response(null, { status: reason === "function_timeout" ? 504 : reason === "function_failed" ? 502 : 503,
@@ -68,6 +69,7 @@ export function createSupervisor(options: { binary: string; config: string; toke
       const bytes = await boundedBytes(response.body, responseLimit, controller.signal);
       controller.signal.throwIfAborted();
       const headers = new Headers(response.headers);
+      headers.set("x-backplane-response", "proxied");
       headers.delete("transfer-encoding"); headers.delete("content-length"); headers.delete("content-encoding");
       return new Response([204, 205, 304].includes(response.status) ? null : bytes, { status: response.status, headers });
     } catch (error) {
@@ -84,7 +86,7 @@ export function createSupervisor(options: { binary: string; config: string; toke
     }
   }
   return {
-    async fetch(request: Request) {
+    async fetch(request: Request, server?: Pick<Bun.Server<undefined>, "timeout">) {
       if (!options.token || !timingSafeEqual(digest(request.headers.get("authorization") ?? ""), digest(`Bearer ${options.token}`))) return new Response(null, { status: 401 });
       const path = new URL(request.url).pathname;
       const probe = path === "/identity" && request.method === "GET";
@@ -99,8 +101,10 @@ export function createSupervisor(options: { binary: string; config: string; toke
       if (!Number.isSafeInteger(budget) || budget <= 0) return failure("compute_unavailable");
       if (active) return failure("compute_unavailable");
       active = true;
+      // The operation deadline covers intake through reaping, even above Bun's 255-second idle ceiling.
+      server?.timeout(request, 0);
       try { return await operation(request, false, Math.min(path === "/prepare" ? 2000 : options.timeoutMs, budget)); }
-      finally { active = false; }
+      finally { active = false; server?.timeout(request, 10); }
     },
     async close() {
       closing = true;
@@ -115,7 +119,7 @@ if (import.meta.main) {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 2147483647) throw Error("invalid compute timeout");
   const supervisor = createSupervisor({ binary: "/usr/bin/workerd", config: "/compute/config.capnp",
     token: Bun.env.BP_COMPUTE_TOKEN ?? "", timeoutMs, env: Bun.env, args: Bun.argv.slice(2) });
-  const server = Bun.serve({ hostname: "0.0.0.0", port: 8080, maxRequestBodySize: bodyLimit, fetch: supervisor.fetch });
+  const server = Bun.serve({ hostname: "0.0.0.0", port: 8080, maxRequestBodySize: supervisorTransportLimit, fetch: supervisor.fetch });
   const shutdown = async () => { await supervisor.close(); await server.stop(true); process.exit(0); };
   process.on("SIGTERM", shutdown); process.on("SIGINT", shutdown);
 }

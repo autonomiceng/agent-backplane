@@ -45,7 +45,7 @@ async function healthyAgain() {
 }
 beforeAll(async () => {
   child = Bun.spawn([process.execPath, "tests/acceptance/workerd-prototype.ts"], {
-    env: { ...Bun.env, BP_COMPUTE_TOKEN: token }, stdin: "ignore", stdout: "pipe", stderr: "inherit",
+    env: { ...Bun.env, BP_COMPUTE_TOKEN: token, BP_COMPUTE_TIMEOUT_MS: "15000" }, stdin: "ignore", stdout: "pipe", stderr: "inherit",
   });
   const reader = child.stdout.getReader();
   const timer = setTimeout(() => child.kill("SIGKILL"), 5000);
@@ -70,7 +70,10 @@ test("initializer and handler loops terminate their captured children and permit
     for (const pid of pids) expect(existsSync(`/proc/${pid}`)).toBe(false);
     await healthyAgain();
   }
-}, 15000);
+  const long = await request('export default {async fetch(){await new Promise(r=>setTimeout(r,11000));return Response.json({ok:true})}}', 14000, AbortSignal.timeout(16000));
+  expect(long.status).toBe(200); expect(await long.json()).toEqual({ ok: true });
+  expect(await children()).toEqual([]);
+}, 25000);
 
 test("wire disconnect bounds child lifetime and response completion kills waitUntil work", async () => {
   const controller = new AbortController();
@@ -113,7 +116,7 @@ test("a full operation slot refuses extra spawn while singleflight identity stay
   expect((await pending).status).toBe(504); await healthyAgain();
 }, 10000);
 
-test("identity measures current controls and refuses stale admission without loading looping code", async () => {
+test("a mismatched admission observation is refused and reaped before a healthy successor", async () => {
   const bad = await fetch(new URL("/identity", url), { headers: { authorization: "Bearer wrong" } });
   expect(bad.status).toBe(401); expect(await children()).toEqual([]);
   const response = await fetch(new URL("/invoke", url), { method: "POST", headers: { ...headers, "x-backplane-control": "0".repeat(64) },
