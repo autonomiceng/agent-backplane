@@ -6,6 +6,7 @@ from pathlib import Path
 import runpy
 import secrets
 import shutil
+import subprocess
 import tempfile
 from types import SimpleNamespace
 import urllib.request
@@ -149,9 +150,17 @@ def drill():
         del os.environ['COMPOSE_FILE']
         recovery.compose += [arg for name in target_files for arg in ('-f', name)]
         volumes.extend(recovery.volume(name) for name in recovery.stores)
-        command(['python3', str(ROOT / 'scripts/checkpoint.py'), 'restore', '--env-file', str(recovery_env),
-                 str(copied), '--fenced', '--migration-budget', '7200'],
-                env={**os.environ, 'COMPOSE_FILE': os.pathsep.join(target_files), 'COMPOSE_PROFILES': 'blobs'})
+        result = subprocess.run(['python3', str(ROOT / 'scripts/checkpoint.py'), 'restore', '--env-file', str(recovery_env),
+                                 str(copied), '--fenced', '--migration-budget', '7200'],
+                                capture_output=True, text=True, cwd=ROOT, timeout=7500,
+                                env={**os.environ, 'COMPOSE_FILE': os.pathsep.join(target_files), 'COMPOSE_PROFILES': 'blobs'})
+        if result.returncode:
+            detail = result.stderr.strip()
+            for value in sorted(values.values(), key=len, reverse=True):
+                if value:
+                    detail = detail.replace(value, '[redacted]')
+            detail = ''.join(char for char in detail if char in '\n\t' or ' ' <= char <= '~')[-2048:]
+            raise RuntimeError(f'restore CLI failed (exit {result.returncode}): ' + detail)
         if recovery.pg(f"SELECT phase FROM control.blob_storage_migration WHERE id='{str(uuid.UUID(doc['migration']['id']))}'") != 'complete':
             raise ValueError('captured pending intent was not exactly reconciled')
         user = login(); status = request(base + '/restore', actor=user)
