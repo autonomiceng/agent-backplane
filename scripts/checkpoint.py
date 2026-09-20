@@ -466,6 +466,14 @@ def backup(stack, offline=False, fenced=False):
         capture_failed = False
         return dest
     finally:
+        if capture_failed:
+            # An interrupted pg_basebackup/archive may leave a root-owned directory.
+            # Preserve it for diagnosis without making the next retention scan fail.
+            try:
+                stack.helper('if [ -d "$1" ]; then chown -R "$2:$3" "$1"; chmod -R u+rwX,go-rwx "$1"; fi',
+                             target, str(os.getuid()), str(os.getgid()))
+            except Exception:
+                print('Failed Checkpoint permissions could not be normalized; retain it for operator recovery.', file=sys.stderr)
         resume_source(stack, stopped, completed, capture_failed)
 
 
