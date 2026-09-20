@@ -42,6 +42,7 @@ export async function verifyStorageBinding(pool: Pool, store: BindingStore, onLe
   } catch (error) {
     await lease.release();
     if (error instanceof BindingError || error instanceof Error && /^blob_binding_(inventory_mismatch|content_mismatch)$/.test(error.message)) throw error;
+    if (error instanceof Error && error.message === "blob_inventory_invalid") return refuse("store_invalid");
     return refuse("unavailable");
   }
 }

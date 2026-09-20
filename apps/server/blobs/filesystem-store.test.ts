@@ -1,6 +1,6 @@
 import { expect, spyOn, test } from "bun:test";
 import { Dir } from "node:fs";
-import { cp, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { filesystemStore } from "./filesystem-store.ts";
@@ -30,8 +30,10 @@ test("failed blob and marker reads leave absent store directories untouched", as
     await expect(store.readMarker()).rejects.toThrow();
     await expect(Array.fromAsync(store.inventory())).rejects.toThrow();
     await store.remove(crypto.randomUUID(), { id: crypto.randomUUID(), staging: false });
-    expect(await store.scanPage(crypto.randomUUID())).toEqual([]);
+    await expect(store.scanPage(crypto.randomUUID())).rejects.toThrow();
     expect(await readdir(root)).toEqual([]);
+    await mkdir(join(root, "blobs"), { mode: 0o700 });
+    expect(await store.scanPage(crypto.randomUUID())).toEqual([]);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 

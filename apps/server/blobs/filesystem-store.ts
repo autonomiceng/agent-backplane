@@ -93,7 +93,11 @@ export function filesystemStore(dataDir: string): BindingStore {
     },
     async scanPage(workspace) {
       try { await path(workspace, { id: workspace, staging: false }, false); }
-      catch (error) { if (error instanceof Error && "code" in error && error.code === "ENOENT") return []; throw error; }
+      catch (error) {
+        if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+        await directory(root, false);
+        return [];
+      }
       const dir = scans.get(workspace) ?? await opendir(join(root, workspace)); scans.set(workspace, dir);
       const refs: BlobRef[] = [];
       try {

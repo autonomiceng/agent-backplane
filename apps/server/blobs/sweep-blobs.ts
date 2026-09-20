@@ -14,9 +14,10 @@ export async function sweepBlobs(tx: RunTransaction, emit: EmitAudit, workspace:
     for (const ref of refs) {
       if (performance.now() >= deadline) { pending = true; break; }
       try {
-        const [evidence] = await tx`SELECT
+        const [evidence] = await tx<{ referenced: boolean; retained: boolean }[]>`SELECT
           EXISTS(SELECT FROM control.blobs WHERE workspace_id=${workspace} AND id=${ref.id}) AS referenced,
           EXISTS(SELECT FROM control.blob_storage_retained WHERE workspace_id=${workspace} AND id=${ref.id} AND staging=${ref.staging}) AS retained`;
+        if (!evidence) throw new Error("blob_cleanup_unavailable");
         if ((!ref.staging && evidence.referenced) || evidence.retained) continue;
         await store.remove(workspace, ref); removed++;
       } catch { pending = true; }

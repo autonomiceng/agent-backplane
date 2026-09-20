@@ -156,6 +156,9 @@ test("missing markers, unsafe files, staging leftovers and failed reads preserve
     // Deterministic mid-read outage, which a local filesystem cannot reliably induce.
     await expect(verifyStorageBinding(f.pool, { ...f.store, open: async () => { throw new Error("credential-secret"); } })).rejects.toThrow(/^blob_binding_unavailable$/);
     expect(await readFile(path, "utf8")).toBe("proof bytes");
+    const stray = join(f.dataDir, "blobs", "stray"); await writeFile(stray, "preserve");
+    await expect(verifyStorageBinding(f.pool, f.store)).rejects.toThrow("blob_binding_store_invalid");
+    expect(await readFile(stray, "utf8")).toBe("preserve"); await rm(stray);
     const stop = await verifyStorageBinding(f.pool, f.store); await stop();
   } finally { await f.close(); }
 });
