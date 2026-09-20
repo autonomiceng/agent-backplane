@@ -143,7 +143,9 @@ Network names use Docker's bounded name alphabet. At most four effective network
 checked independently, so one missing external network does not erase valid local-bridge
 evidence for another component.
 
-Configuration and component validity are 120 seconds. Configuration time dates the start
+Configuration and explicitly disabled states remain valid for 300 seconds, leaving
+room for the 90-second collection budget. Observed service and capability validity
+remains 120 seconds. Configuration time dates the start
 of effective Compose inspection. Each service time dates the start of its bounded
 inspection/probe transaction. Capability time remains the server's original probe time.
 Task observation time dates record inspection. `generatedAt` dates assembly and never
@@ -162,6 +164,6 @@ and atomic publication. The later gateway route must independently prove unauthe
 GET/HEAD behavior, credential stripping, JSON/no-store headers, method rejection, and
 missing-file behavior.
 
-The repository acceptance assertion expects the shipped workerd binary to print
-`workerd 2026-09-18`; it is not runtime evidence from this observer. Keep the workerd
-parser pending until the selected shipped image is exercised in the real-service drill.
+The pinned workerd binary was checked directly and prints `workerd 2026-09-18`.
+The observer must still be exercised against the selected running container during
+installation acceptance; a direct binary check does not prove the whole collector.

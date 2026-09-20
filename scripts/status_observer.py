@@ -21,6 +21,7 @@ CAPABILITIES = ('files', 'functions')
 TASKS = ('bootstrap', 'migrate', 'data-init', 'blob-bootstrap')
 SERVICE_NAMES = {'caddy': 'edge'}
 TTL = 120
+CONFIGURATION_TTL = 300
 LIMIT = 1024 * 1024
 COLLECTION_TIMEOUT = 90
 
@@ -195,13 +196,13 @@ def configure_rows(rows, config, configured_at, selected_modes):
             rows[component]['configured'] = True
             rows[component].update(configured_image(component, services[service].get('image')))
         elif mode == 'disabled':
-            rows[component].update(configured=False, state='disabled', observedAt=configured_at)
+            rows[component].update(configured=False, state='disabled', observedAt=configured_at, validForSeconds=CONFIGURATION_TTL)
     if selected_modes['files'] in ('filesystem', 's3'):
         rows['files']['configured'] = True
     if selected_modes['functions'] == 'workerd':
         rows['functions']['configured'] = True
     elif selected_modes['functions'] == 'disabled':
-        rows['functions'].update(configured=False, state='disabled', observedAt=configured_at)
+        rows['functions'].update(configured=False, state='disabled', observedAt=configured_at, validForSeconds=CONFIGURATION_TTL)
     rows['bootstrap']['configured'] = True
     for task in ('migrate', 'data-init'):
         if task in services:
@@ -209,7 +210,7 @@ def configure_rows(rows, config, configured_at, selected_modes):
     if selected_modes['files'] == 's3':
         rows['blob-bootstrap']['configured'] = True
     elif selected_modes['files'] == 'filesystem':
-        rows['blob-bootstrap'].update(configured=False, state='disabled', observedAt=configured_at)
+        rows['blob-bootstrap'].update(configured=False, state='disabled', observedAt=configured_at, validForSeconds=CONFIGURATION_TTL)
 
 
 def collect(root, env_file, project, compose_files, profiles, state_dir, runner, clock=now):
@@ -268,7 +269,7 @@ def collect(root, env_file, project, compose_files, profiles, state_dir, runner,
         except (OSError, Unavailable, TypeError, ValueError):
             pass
     return {'schemaVersion': 1, 'stack': 'backplane', 'generatedAt': clock(),
-            'configurationObservedAt': configured_at, 'configurationValidForSeconds': TTL,
+            'configurationObservedAt': configured_at, 'configurationValidForSeconds': CONFIGURATION_TTL,
             'telemetry': 'unknown', 'components': list(rows.values())}
 
 

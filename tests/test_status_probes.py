@@ -25,6 +25,8 @@ class StatusProbeTests(unittest.TestCase):
             'workerd', 'container', None,
             lambda *_args, **_options: (_ for _ in ()).throw(status_io.Unavailable())),
             ('unknown', None))
+        self.assertEqual(probes.probe('postgres', 'container', None, lambda *_a, **_o: '19beta1\n'),
+                         ('unknown', None))
         for service in ('caddy', 'rustfs'):
             responses = iter([json.dumps([200, '']), outputs[service]])
             self.assertEqual(probes.probe(service, 'container', '172.20.0.3',
