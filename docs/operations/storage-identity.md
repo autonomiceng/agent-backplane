@@ -54,7 +54,7 @@ For filesystem storage with the offline-capable helper, capture while stopped:
 ```sh
 deployment_compose stop server
 # Also stop edge if that service is configured.
-bash scripts/backup.sh --offline --env-file .env
+bash scripts/backup.sh --offline --fenced --env-file .env
 ```
 
 Use the same env file and `COMPOSE_FILE`/`COMPOSE_PROFILES` for capture as the
@@ -64,8 +64,8 @@ startup already fails on crash leftovers. Normal backup resumes only the service
 A source that cannot restart after capture makes the command fail with a recovery
 diagnostic; any completed Checkpoint remains available. Keep ingress fenced and use
 the capture to reconcile leftovers before resuming traffic.
-For S3, take and retain an externally coordinated PostgreSQL/store capture with
-writers and deletion fenced. Automated coordinated S3 Checkpoints remain separate.
+For local S3, follow the [RustFS checkpoint procedure](s3-checkpoints.md) with
+writers and deletion fenced. Unsupported S3 layouts refuse before capture.
 
 With the reviewed matching image built or loaded, apply the repository migration
 without starting the server, then inspect the store:
@@ -172,7 +172,7 @@ retention records. Store archives use `tar --hard-dereference` so marker links b
 regular file entries accepted by the existing safe restore validator. Restore both
 stores from one capture before the existing User restore-release flow. Captures can
 contain ordinary cleanup leftovers. Restore inspects the recovered inventory while fenced before starting the server.
-Use `bash scripts/restore.sh CHECKPOINT --env-file .env --retain-unreferenced` to
+Use `bash scripts/restore.sh CHECKPOINT --fenced --env-file .env --retain-unreferenced` to
 explicitly preserve such leftovers. Without that flag, unreferenced bytes stop
 recovery before server startup; the restored stores remain available for inspection.
 Already retained bytes need no new opt-in. An unfinished adoption intent still

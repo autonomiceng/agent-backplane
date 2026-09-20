@@ -3,6 +3,7 @@
 import argparse
 import fcntl
 import hashlib
+import hmac
 import json
 import os
 from pathlib import Path
@@ -13,16 +14,70 @@ import subprocess
 import sys
 import time
 import tarfile
+import tempfile
 import uuid
+from urllib.parse import urlsplit
 from datetime import datetime, timezone
 
 ROOT = Path(__file__).resolve().parent.parent
+RUSTFS_DIGEST = 'sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff'
+MUTATING_HELPERS = {'storage-init', 'blob-bootstrap', 'migrate', 'data-init', 'backup-init'}
+
+
+def qualify_storage(services):
+    server = services['server'].get('environment', {})
+    backend = server.get('BP_BLOB_BACKEND', 'filesystem')
+    selected = services.get('storage-init', {}).get('environment', {})
+    if any(env.get('BP_DATA_DIR', '/data') != '/data' for env in (server, selected)) or selected.get('BP_STORAGE_ADMIN_URL_FILE'):
+        raise ValueError('checkpoint requires /data and the selected Compose admin database')
+    if selected.get('BP_BLOB_BACKEND', 'filesystem') != backend:
+        raise ValueError('server and storage-init storage selections differ')
+    if backend == 'filesystem':
+        return backend
+    if backend != 's3' or not {'rustfs', 'blob-bootstrap', 'blob-image-check', 'storage-init'} <= services.keys():
+        raise ValueError('only filesystem and shipped local single-volume RustFS checkpoints are supported')
+    rustfs = services['rustfs']
+    if rustfs['image'].split('@')[-1] != RUSTFS_DIGEST or rustfs.get('command') != ['/data']:
+        raise ValueError('S3 checkpoints require the shipped pinned single-volume RustFS')
+    if set(rustfs.get('environment', {})) - {'RUSTFS_ACCESS_KEY', 'RUSTFS_SECRET_KEY', 'RUSTFS_ADDRESS', 'RUSTFS_CONSOLE_ENABLE', 'RUSTFS_OBS_LOG_DIRECTORY', 'RUSTFS_OBS_LOG_STDOUT_ENABLED'}:
+        raise ValueError('custom RustFS environment is unsupported')
+    if rustfs.get('entrypoint') or rustfs.get('environment', {}).get('RUSTFS_ADDRESS') != ':9000':
+        raise ValueError('custom RustFS launch configuration is unsupported')
+    mounts = rustfs.get('volumes', [])
+    if len(mounts) != 1 or any(mounts[0].get(k) != v for k, v in dict(type='volume', source='rustfs-data', target='/data').items()) or mounts[0].get('read_only'):
+        raise ValueError('custom RustFS volume layout is unsupported')
+    for key in ('BP_BLOB_S3_ENDPOINT', 'BP_BLOB_S3_REGION', 'BP_BLOB_S3_BUCKET', 'BP_BLOB_S3_ACCESS_KEY', 'BP_BLOB_S3_SECRET_KEY'):
+        if not server.get(key) or selected.get(key) != server[key]:
+            raise ValueError('server and storage-init S3 selections differ')
+    if server['BP_BLOB_S3_ENDPOINT'] != 'http://rustfs:9000' or server['BP_BLOB_S3_REGION'] != 'us-east-1':
+        raise ValueError('remote or custom S3 endpoints are unsupported')
+    bootstrap = services['blob-bootstrap'].get('environment', {})
+    for key in ('BP_BLOB_S3_BUCKET', 'BP_BLOB_S3_ACCESS_KEY', 'BP_BLOB_S3_SECRET_KEY'):
+        if bootstrap.get(key) != server[key]:
+            raise ValueError('bootstrap and server S3 selections differ')
+    for key, root_key in [('BP_RUSTFS_ROOT_USER', 'RUSTFS_ACCESS_KEY'), ('BP_RUSTFS_ROOT_PASSWORD', 'RUSTFS_SECRET_KEY')]:
+        if not bootstrap.get(key) or bootstrap[key] != rustfs.get('environment', {}).get(root_key):
+            raise ValueError('RustFS and bootstrap root credentials differ')
+    for env, key in [(server, 'BP_DATABASE_URL'), (selected, 'BP_ADMIN_DATABASE_URL')]:
+        try:
+            url = urlsplit(env.get(key, ''))
+            selected_database = url.hostname == 'postgres' and url.port in (None, 5432) and url.path == '/backplane'
+        except ValueError:
+            selected_database = False
+        if not selected_database:
+            raise ValueError('storage inspection must select the checkpoint PostgreSQL database')
+    return backend
 
 
 def command(args, env=None):
     result = subprocess.run(args, capture_output=True, text=True, env=env, cwd=ROOT)
     if result.returncode:
         # Compose diagnostics can contain interpolated credentials.
+        tokens = {'checkpoint_proof_' + step for step in ('configuration', 'readiness', 'authentication', 'account', 'versioning')}
+        tokens |= {'checkpoint_fixture_' + step for step in ('identity', 'configuration', 'create', 'read')}
+        token = next((line.strip() for line in reversed(result.stderr.splitlines()) if line.strip() in tokens), None)
+        if token:
+            raise RuntimeError(token)
         raise RuntimeError(f'{Path(args[0]).name} command failed (exit {result.returncode})')
     return result.stdout.strip()
 
@@ -41,11 +96,37 @@ def inventory(root):
     return result
 
 
-def manifest(root, before, after, name, lsn, segment, images, volumes, revision):
+def manifest(before, after, name, lsn, segment, images, volumes, revision, artifacts):
     # Deliberate allowlist: resolved Compose environments never enter a checkpoint manifest.
     return dict(version=1, before=before, after=after, name=name, targetLsn=lsn,
                 segment=segment, images=images, volumes=volumes, revision=revision,
-                completedAt=datetime.now(timezone.utc).isoformat(), artifacts=inventory(root))
+                artifacts=artifacts)
+
+
+def publish_checkpoint(dest, doc):
+    dest.chmod(0o700)
+    command(['sync', '-f', str(dest)])
+    doc['completedAt'] = datetime.now(timezone.utc).isoformat()
+    with os.fdopen(os.open(dest / '.manifest.json.tmp', os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'w') as file:
+        json.dump(doc, file, indent=2); file.write('\n'); file.flush()
+        os.fchmod(file.fileno(), 0o600); os.fsync(file.fileno())
+    (dest / '.manifest.json.tmp').rename(dest / 'manifest.json')
+    command(['sync', '-f', str(dest)])
+    publish_health(dest.parent, doc)
+
+
+def publish_health(root, doc):
+    receipt = dict(version=1, systemId=doc['after']['systemId'], completedAt=doc['completedAt'],
+                   restorePoint=dict(name=doc['name'], lsn=doc['targetLsn'], timeline=doc['after']['timeline']))
+    fd, temporary = tempfile.mkstemp(prefix='.health-', dir=root)
+    try:
+        with os.fdopen(fd, 'w') as file:
+            json.dump(receipt, file); file.write('\n'); file.flush()
+            os.fchmod(file.fileno(), 0o644); os.fsync(file.fileno())
+        os.replace(temporary, root / 'health.json')
+        command(['sync', '-f', str(root)])
+    finally:
+        Path(temporary).unlink(missing_ok=True)
 
 
 EMPTY_TARGET_CHECK = 'entries=$(ls -A "$1"); test -z "$entries" || { echo "restore refuses non-empty targets" >&2; exit 1; }'
@@ -66,12 +147,13 @@ class Stack:
         self.project = self.config['name']
         self.services = self.config['services']
         startup_timeout(self)
-        if self.services['server']['environment'].get('BP_BLOB_BACKEND', 'filesystem') != 'filesystem':
-            raise ValueError('filesystem checkpoints require BP_BLOB_BACKEND=filesystem; coordinate S3 recovery separately')
+        self.backend = qualify_storage(self.services)
         self.backups = Path(next(v['source'] for v in self.services['postgres']['volumes'] if v['target'] == '/backup')).resolve()
         if not self.backups.is_dir():
             raise ValueError('backup mount must exist')
         self.stores = {'postgres-data': '/var/lib/postgresql', 'server-data': '/data'}
+        if self.backend == 's3':
+            self.stores['rustfs-data'] = '/data'
         if 'edge' in self.services:
             self.stores.update({'edge-data': '/data', 'edge-config': '/config'})
         self.keep = int(self.services['server']['environment'].get('BP_BACKUP_KEEP', '7'))
@@ -94,7 +176,8 @@ class Stack:
         helpers = {'backup-init': 'postgres', 'migrate': 'server', 'data-init': 'server'}
         if 'storage-init' in self.services:
             helpers['storage-init'] = 'server'
-        for service in ('postgres', 'server', *(['edge'] if 'edge' in self.services else []), *helpers):
+        blob_services = ['rustfs', 'blob-bootstrap', 'blob-image-check'] if self.backend == 's3' else []
+        for service in ('postgres', 'server', *(['edge'] if 'edge' in self.services else []), *helpers, *blob_services):
             ref = self.services[service]['image']
             expected = recorded.get(service, recorded.get(helpers.get(service))) if recorded is not None else None
             try:
@@ -102,7 +185,8 @@ class Stack:
                     if expected is None or expected['reference'] != ref:
                         raise ValueError(f'{service}: restore requires the recorded image reference; check the env file and exported BP_* settings')
                     recovery = expected.get('recoveryReference', ref)
-                    if service not in helpers and service != 'server':
+                    covered = service in ('blob-bootstrap', 'blob-image-check') and expected['id'] == recorded['server']['id']
+                    if service not in helpers and service != 'server' and not covered:
                         if not re.fullmatch(r'[^\s@]+@sha256:[a-f0-9]{64}', recovery):
                             raise ValueError(f'{service}: checkpoint has no immutable recovery image; recover the original image and capture a new Checkpoint')
                         try:
@@ -125,7 +209,7 @@ class Stack:
             if service in helpers:
                 if image_id != self.images[helpers[service]]['id']:
                     raise ValueError(f'{service}: helper must use the same content as {helpers[service]}')
-            elif service != 'server':
+            elif service != 'server' and not (service in ('blob-bootstrap', 'blob-image-check') and image_id == self.images['server']['id']):
                 digests = info.get('RepoDigests') or []
                 recovery = expected.get('recoveryReference', ref) if expected is not None else next((d for d in digests
                     if re.fullmatch(r'[^\s@]+@sha256:[a-f0-9]{64}', d)
@@ -140,6 +224,49 @@ class Stack:
             for container in self.dc('ps', '-aq', service).split():
                 if command(['docker', 'inspect', '--format', '{{.Image}}', container]) != image['id']:
                     raise ValueError(f'{service}: container differs from configured image; reconcile the deployment before capture')
+
+    def check_mount_config(self):
+        for volume, destination in self.stores.items():
+            service = volume.split('-')[0]
+            configured = [v for v in self.services[service].get('volumes', []) if v['target'] == destination]
+            if any(v['target'].startswith(destination + '/') for v in self.services[service].get('volumes', [])):
+                raise ValueError(f'{service}: nested durable mounts are unsupported')
+            if len(configured) != 1 or configured[0].get('type') != 'volume' or configured[0].get('source') != volume:
+                raise ValueError(f'{service}: configured durable mount differs')
+        if 'storage-init' in self.services:
+            mounts = self.services['storage-init'].get('volumes', [])
+            if not any(v.get('source') == 'server-data' and v.get('target') == '/data' and v.get('type') == 'volume' for v in mounts):
+                raise ValueError('storage-init must mount server-data at /data')
+
+    def attest_mounts(self, selected=None):
+        self.check_mount_config()
+        proof = {}
+        for volume, destination in self.stores.items():
+            service = volume.split('-')[0]
+            if selected is not None and service != selected:
+                continue
+            name = self.volume(volume)
+            command(['docker', 'volume', 'inspect', name])
+            containers = self.dc('ps', '-aq', service).split()
+            if len(containers) != 1:
+                raise ValueError(f'{service}: expected one existing container for mount proof')
+            actual = json.loads(command(['docker', 'inspect', containers[0]]))[0]
+            if actual['Image'] != self.images[service]['id']:
+                raise ValueError(f'{service}: actual container image differs')
+            if any(m['Destination'].startswith(destination + '/') for m in actual['Mounts']):
+                raise ValueError(f'{service}: actual nested durable mounts are unsupported')
+            mounts = [m for m in actual['Mounts'] if m['Destination'] == destination]
+            if len(mounts) != 1 or mounts[0].get('Type') != 'volume' or mounts[0].get('Name') != name:
+                raise ValueError(f'{service}: actual durable mount differs from configured volume')
+            if service == 'rustfs':
+                launch = json.loads(command(['docker', 'image', 'inspect', self.images[service]['id']]))[0]['Config']
+                if len(actual['Mounts']) != 1 or actual['Config'].get('Cmd') != ['/data'] or actual['Config'].get('Entrypoint') != launch.get('Entrypoint'):
+                    raise ValueError('running RustFS has a custom launch or volume layout')
+            proof[volume] = dict(name=name, destination=destination)
+            if service == 'rustfs':
+                proof[volume].update(image=actual['Image'], command=actual['Config'].get('Cmd'),
+                                     entrypoint=actual['Config'].get('Entrypoint'))
+        return proof
 
     def dc(self, *args):
         return command(self.compose + list(args))
@@ -200,6 +327,8 @@ def prune_checkpoints(root, keep, remove=shutil.rmtree):
 
 
 def require_backup_services(running, edge, offline):
+    if set(running) & MUTATING_HELPERS:
+        raise ValueError('stop mutating helpers before backup')
     if offline:
         if 'postgres' not in running or set(running) & {'server', 'edge', 'storage-init'}:
             raise ValueError('offline backup requires postgres running and server, edge, storage-init stopped')
@@ -218,7 +347,11 @@ def resume_source(stack, stopped, completed, capture_failed):
     if not stopped:
         return
     try:
-        stack.dc('start', '--wait', '--wait-timeout', str(startup_timeout(stack)), *reversed(stopped))
+        if 'rustfs' in stopped:
+            stack.dc('start', '--wait', '--wait-timeout', str(startup_timeout(stack)), 'rustfs')
+        application = [service for service in reversed(stopped) if service != 'rustfs']
+        if application:
+            stack.dc('start', '--wait', '--wait-timeout', str(startup_timeout(stack)), *application)
     except RuntimeError:
         state = 'the completed Checkpoint is retained' if completed else 'no Checkpoint was completed'
         message = f'source services could not be resumed and verified; {state}. Inspect service state and logs; startup may still be verifying stored bytes'
@@ -229,7 +362,27 @@ def resume_source(stack, stopped, completed, capture_failed):
             raise RuntimeError(message) from None
 
 
-def backup(stack, offline=False):
+def qualify_tar(stack):
+    support = stack.helper('tar --version; tar --help')
+    if 'GNU tar' not in support or '--xattrs' not in support or '--numeric-owner' not in support:
+        raise ValueError('checkpoint helper requires GNU tar with xattrs and numeric ownership')
+    with tempfile.TemporaryDirectory(prefix='.tar-proof-', dir=stack.backups) as root:
+        directory = Path(root)
+        (directory / 'source').mkdir(); (directory / 'restored').mkdir()
+        probe = directory / 'source/probe'; probe.write_bytes(b'checkpoint tar qualification')
+        try:
+            os.setxattr(probe, 'user.checkpoint', b'preserved')
+        except OSError:
+            raise ValueError('checkpoint repository cannot store required user xattrs; tar qualification refused') from None
+        stack.helper('tar --numeric-owner --xattrs --xattrs-include="*" -cf "$1/probe.tar" -C "$1/source" .; '
+                     'tar --numeric-owner --xattrs --xattrs-include="*" -xf "$1/probe.tar" -C "$1/restored"', '/backup/' + directory.name)
+        validate_archives(directory, {'probe.tar': {}})
+        restored = directory / 'restored/probe'
+        if restored.read_bytes() != probe.read_bytes() or os.getxattr(restored, 'user.checkpoint') != b'preserved' or (restored.stat().st_uid, restored.stat().st_gid) != (probe.stat().st_uid, probe.stat().st_gid):
+            raise ValueError('checkpoint helper did not preserve xattrs or numeric ownership')
+
+
+def backup(stack, offline=False, fenced=False):
     stack.attest()
     if any('@' not in image['reference'] for name, image in stack.images.items() if name in ('postgres', 'edge')):
         print('Upstream image custody is external: retain the recorded immutable references in a registry or a tested off-host image archive; publication was not checked.', file=sys.stderr, flush=True)
@@ -243,6 +396,12 @@ def backup(stack, offline=False):
         raise ValueError('WAL archiving is required')
     if stack.pg("SELECT count(*) FROM pg_tablespace WHERE spcname NOT IN ('pg_default','pg_global')") != '0':
         raise ValueError('custom tablespaces are unsupported')
+    if not fenced:
+        raise ValueError('--fenced must attest exclusion of all external application/operator writers and mutating helpers for the entire command')
+    if stack.backend == 's3' and 'rustfs' not in running:
+        raise ValueError('S3 capture requires RustFS running on entry, including offline capture')
+    mounts = stack.attest_mounts()  # Before any helper mount can create a missing volume.
+    qualify_tar(stack)
     sizes = sum(int(stack.helper('du -sb /source | cut -f1',
                     mounts=('-v', f'{stack.volume(volume)}:/source:ro'))) for volume in stack.stores)
     image_size = int(command(['docker', 'image', 'inspect', '--format', '{{.Size}}', stack.images['server']['id']]))
@@ -260,7 +419,16 @@ def backup(stack, offline=False):
             if service in running:
                 stopped.append(service)
                 stack.dc('stop', '-t', '60', service)
+        check_writers(stack)
         before = stack.snapshot()
+        if stack.backend == 's3':
+            prove_root_credentials(stack)
+        storage = inspect_storage(stack, offline)
+        rustfs_exit = None
+        if stack.backend == 's3':
+            stopped.append('rustfs')
+            rustfs_exit = stop_rustfs(stack)
+        check_writers(stack)
         stack.dc('exec', '-T', '--user', '0', 'postgres', 'sh', '-ec',
                  'umask 077; mkdir "$1"; pg_basebackup -U postgres -D "$1/postgres" -Ft -X stream --checkpoint=fast', 'sh', target)
         base_manifest = json.loads(stack.dc('exec', '-T', '--user', '0', 'postgres', 'cat', target + '/postgres/backup_manifest'))
@@ -289,9 +457,9 @@ def backup(stack, offline=False):
         ''', 'sh', target, first, segment)
         for volume, mount in stack.stores.items():
             if volume != 'postgres-data':
-                stack.helper('umask 077; tar --hard-dereference -C /source -cf "$1" .', f'{target}/{volume}.tar',
+                stack.helper('umask 077; tar --hard-dereference --numeric-owner --xattrs --xattrs-include="*" -C /source -cf "$1" .', f'{target}/{volume}.tar',
                              mounts=('-v', f'{stack.volume(volume)}:/source:ro'))
-        stack.helper('chown -R "$2:$3" "$1"; chmod -R u+rwX,go-rwx "$1"', target, str(os.getuid()), str(os.getgid()))
+        stack.helper('chown "$2:$3" /backup/backups; chmod a+rx /backup/backups; chown -R "$2:$3" "$1"; chmod -R u+rwX,go-rwx "$1"', target, str(os.getuid()), str(os.getgid()))
         command(['docker', 'save', '--output', str(dest / 'server-image.tar'), stack.images['server']['id']])
         per_log = (1 << 32) // segment_bytes
         first_number = int(first[8:16], 16) * per_log + int(first[16:], 16)
@@ -300,15 +468,28 @@ def backup(stack, offline=False):
             filename = f'{first[:8]}{number // per_log:08X}{number % per_log:08X}'
             if not (dest / 'wal' / filename).is_file():
                 raise ValueError('archived WAL has a gap')
-        doc = manifest(dest, before, after, name, lsn, segment, stack.images, list(stack.stores),
-                       command(['git', 'rev-parse', 'HEAD']))
+        check_writers(stack)
+        if stack.backend == 's3':
+            stack.dc('start', '--wait', '--wait-timeout', str(startup_timeout(stack)), 'rustfs')
+            stopped.remove('rustfs')
+        if inspect_storage(stack, offline) != storage:
+            raise ValueError('fenced source storage identity or full inventory changed')
+        check_writers(stack)
+        after = stack.snapshot()
+        if before != after:
+            raise ValueError('fenced database identity or audit heads changed')
+        artifacts = inventory(dest)
+        validate_archives(dest, artifacts)
+        doc = manifest(before, after, name, lsn, segment, stack.images, list(stack.stores),
+                       command(['git', 'rev-parse', 'HEAD']), artifacts)
+        doc.update(storage=storage, mounts=mounts, rustfsExitCode=rustfs_exit,
+                   archiveValidation='regular-files-and-directories', archiveMetadata='gnu-tar-numeric-owner-xattrs')
+        if stack.backend == 's3':
+            salt = os.urandom(32).hex()
+            doc['credentials'] = dict(kdf='pbkdf2-hmac-sha256', iterations=600000, salt=salt,
+                                      digest=credentials_digest(stack, name, salt))
         doc['walSegmentBytes'] = segment_bytes
-        with (dest / '.manifest.json.tmp').open('x') as file:
-            json.dump(doc, file, indent=2); file.write('\n'); file.flush(); os.fsync(file.fileno())
-        (dest / '.manifest.json.tmp').chmod(0o644)
-        (dest / '.manifest.json.tmp').rename(dest / 'manifest.json')
-        dest.chmod(0o711)
-        command(['sync', '-f', str(dest)])
+        publish_checkpoint(dest, doc)
         completed = dest
         boundaries = prune_checkpoints(stack.backups / 'backups', stack.keep,
             lambda path: stack.helper('rm -rf -- "$1"', '/backup/backups/' + path.name))
@@ -325,6 +506,14 @@ def backup(stack, offline=False):
         capture_failed = False
         return dest
     finally:
+        if capture_failed:
+            # An interrupted pg_basebackup/archive may leave a root-owned directory.
+            # Preserve it for diagnosis without making the next retention scan fail.
+            try:
+                stack.helper('if [ -d "$1" ]; then chown -R "$2:$3" "$1"; chmod -R u+rwX,go-rwx "$1"; fi',
+                             target, str(os.getuid()), str(os.getgid()))
+            except Exception:
+                print('Failed Checkpoint permissions could not be normalized; retain it for operator recovery.', file=sys.stderr)
         resume_source(stack, stopped, completed, capture_failed)
 
 
@@ -338,25 +527,48 @@ def verify(source, stack):
         raise ValueError('invalid WAL segment')
     if not re.fullmatch(r'(?:bp_[a-f0-9]{32}|[0-9]{8}T[0-9]{12}Z)', doc['name']) or not re.fullmatch(r'[0-9A-F]+/[0-9A-F]+', doc['targetLsn']):
         raise ValueError('invalid restore target')
+    completed = doc.get('completedAt')
+    if (not isinstance(completed, str) or not re.fullmatch(r'[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?(?:Z|\+00:00)', completed)):
+        raise ValueError('invalid checkpoint completion time')
+    try:
+        datetime.fromisoformat(completed.replace('Z', '+00:00'))
+    except ValueError:
+        raise ValueError('invalid checkpoint completion time') from None
     required = {'postgres/base.tar', 'postgres/pg_wal.tar', 'postgres/backup_manifest', 'server-data.tar', 'wal/' + doc['segment']}
     if not re.fullmatch(r'bp_[a-f0-9]{32}', doc['name']):
         required.add('server-image.tar')
+    if 'rustfs-data' in stack.stores:
+        required.add('rustfs-data.tar')
+        proof = doc.get('credentials')
+        if (not isinstance(proof, dict) or proof.get('kdf') != 'pbkdf2-hmac-sha256' or proof.get('iterations') != 600000
+                or not isinstance(proof.get('salt'), str) or not re.fullmatch('[a-f0-9]{64}', proof['salt'])
+                or not isinstance(proof.get('digest'), str) or not re.fullmatch('[a-f0-9]{64}', proof['digest'])
+                or not hmac.compare_digest(proof['digest'], credentials_digest(stack, doc['name'], proof['salt']))):
+            raise ValueError('restore requires the captured RustFS root and scoped credentials')
+        if not doc.get('storage') or doc['storage'].get('backend') != 's3' or doc['storage'].get('phase') != 'ready' or doc.get('rustfsExitCode') != 0:
+            raise ValueError('S3 checkpoint has no verified source storage proof')
     if 'edge-data' in stack.stores:
         required |= {'edge-data.tar', 'edge-config.tar'}
     if not required <= doc['artifacts'].keys() or doc['artifacts'] != inventory(source):
         raise ValueError('checkpoint artifacts or checksums differ')
-    for name in doc['artifacts']:
+    validate_archives(source, doc['artifacts'])
+    return doc
+
+
+def validate_archives(source, artifacts):
+    for name in artifacts:
         if name.endswith('.tar') and name != 'server-image.tar':
             with tarfile.open(source / name) as archive:
                 for member in archive:
                     path = Path(member.name)
                     if path.is_absolute() or '..' in path.parts or not (member.isfile() or member.isdir()):
                         raise ValueError('unsafe archive member')
-    return doc
 
 
-def storage_admin(stack, *args):
-    result = subprocess.run(stack.compose + ['run', '--rm', '--no-deps', '-T', 'storage-init',
+def storage_admin(stack, *args, environment=()):
+    result = subprocess.run(stack.compose + ['run', '--rm', '--no-deps', '-T',
+                            '-e', 'BP_STARTUP_VERIFY_TIMEOUT=' + str(startup_timeout(stack)),
+                            *[arg for value in environment for arg in ('-e', value)], 'storage-init',
                             'bun', 'apps/server/blobs/storage-admin.ts', *args],
                             capture_output=True, text=True, cwd=ROOT)
     if result.returncode:
@@ -375,14 +587,88 @@ def storage_admin(stack, *args):
     return result.stdout
 
 
-def prepare_restored_storage(stack, checkpoint, retain_unreferenced=False):
+def check_writers(stack):
+    if stack.pg("SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND usename='bp_server'") != '0':
+        raise ValueError('stop all bp_server sessions before physical capture')
+    if set(stack.dc('ps', '--status', 'running', '--services').split()) & (MUTATING_HELPERS | {'server', 'edge'}):
+        raise ValueError('writer fence changed during checkpoint')
+
+
+def stop_rustfs(stack):
+    stack.dc('stop', '-t', '60', 'rustfs')
+    containers = stack.dc('ps', '-aq', 'rustfs').split()
+    if len(containers) != 1:
+        raise ValueError('RustFS stop has no unique container proof')
+    state = json.loads(command(['docker', 'inspect', containers[0]]))[0]['State']
+    if state.get('Running') or state.get('ExitCode') != 0 or state.get('OOMKilled') or state.get('Error'):
+        raise ValueError('RustFS did not stop cleanly; checkpoint refused')
+    return 0
+
+
+def storage_evidence(stack, evidence):
+    binding = evidence.get('binding')
+    if not binding or binding.get('phase') != 'ready' or binding.get('backend') != stack.backend:
+        raise ValueError('storage inspection requires a ready matching binding')
+    identity = {key: str(uuid.UUID(binding[key])) for key in ('databaseId', 'storeId', 'generation')}
+    digest = evidence['digest']
+    if not re.fullmatch('[a-f0-9]{64}', digest):
+        raise ValueError('invalid storage inventory digest')
+    return dict(**identity, backend=binding['backend'], phase=binding['phase'], inventorySha256=digest,
+                objectCount=len(evidence['objects']), bucket=stack.services['server']['environment'].get('BP_BLOB_S3_BUCKET') if stack.backend == 's3' else None)
+
+
+def inspect_storage(stack, offline=False):
+    startup_timeout(stack)
+    try:
+        return storage_evidence(stack, json.loads(storage_admin(stack, 'inspect', '--fenced')))
+    except (RuntimeError, ValueError, KeyError) as error:
+        token = str(error).removeprefix('storage initialization refused: ')
+        forensic = {'blob_binding_marker_missing', 'blob_binding_marker_mismatch',
+                    'blob_binding_content_mismatch', 'blob_binding_inventory_mismatch',
+                    'blob_binding_intent_mismatch', 'blob_binding_ambiguous',
+                    'blob_binding_intent_missing', 'blob_binding_store_inventory_invalid'}
+        if offline and stack.backend == 'filesystem' and token in forensic:
+            return {'backend': 'filesystem', 'inspection': 'failed', 'servable': False}
+        raise
+
+
+def credentials_digest(stack, name, salt):
+    # RustFS accepts root credentials at process startup. Authentication alone cannot prove
+    # they equal the source credentials. Checkpoint-specific commitment prevents silent rotation.
+    env = stack.services['blob-bootstrap']['environment']
+    values = [env[key] for key in ('BP_RUSTFS_ROOT_USER', 'BP_RUSTFS_ROOT_PASSWORD', 'BP_BLOB_S3_ACCESS_KEY', 'BP_BLOB_S3_SECRET_KEY')]
+    return hashlib.pbkdf2_hmac('sha256', json.dumps([name, *values], separators=(',', ':')).encode(), bytes.fromhex(salt), 600000).hex()
+
+
+def prove_root_credentials(stack, environment=()):
+    # Bootstrap's entrypoint mutates IAM. Override it with a read-only signed request.
+    command(stack.compose + ['run', '--rm', '--no-deps', '-T', '--entrypoint', 'bun',
+                            *[arg for value in environment for arg in ('-e', value)],
+                            '-v', str(ROOT / 'scripts/s3-checkpoint-proof.js') + ':/checkpoint-proof.js:ro',
+                            'blob-bootstrap', '/checkpoint-proof.js'])
+
+
+def prepare_restored_storage(stack, checkpoint, retain_unreferenced=False, captured=None, mounts=None):
     if 'storage-init' not in stack.services:
         return
     stack.dc('up', '-d', '--wait', '--wait-timeout', str(startup_timeout(stack)),
-             '--no-build', '--pull', 'never', 'postgres')
+             '--no-build', '--pull', 'never', '--no-deps', 'postgres')
+    if stack.backend == 's3':
+        stack.dc('up', '-d', '--wait', '--wait-timeout', str(startup_timeout(stack)),
+                 '--no-build', '--pull', 'never', '--no-deps', 'rustfs')
+        actual = stack.attest_mounts('rustfs')['rustfs-data']
+        recorded = (mounts or {}).get('rustfs-data', {})
+        if any(actual[key] != recorded.get(key) for key in ('destination', 'image', 'command', 'entrypoint')):
+            raise ValueError('restored RustFS launch or mount evidence differs')
+        prove_root_credentials(stack)
     evidence = json.loads(storage_admin(stack, 'inspect', '--fenced'))
     if (evidence.get('intent') or {}).get('phase') != 'ready':
         raise RuntimeError('restored storage has an unfinished binding intent; keep the server stopped and retry its original operator command before starting')
+    if captured is not None:
+        if captured.get('inspection') != 'failed' and storage_evidence(stack, evidence) != captured:
+            raise RuntimeError('restored storage differs from source identity or full inventory; keep server and bootstrap stopped')
+    elif stack.backend == 's3':
+        raise RuntimeError('S3 restore requires source storage evidence')
     if any(ref['classification'] == 'unreferenced' for ref in evidence['objects']):
         if not retain_unreferenced:
             raise RuntimeError('restored storage contains cleanup leftovers; server remains stopped. Reconcile the restored capture with --retain-unreferenced before starting, or restore fresh targets with that explicit flag')
@@ -392,8 +678,11 @@ def prepare_restored_storage(stack, checkpoint, retain_unreferenced=False):
 def restore(stack, source, retain_unreferenced=False):
     source = source.resolve()
     doc = verify(source, stack)
+    if source.parent != stack.backups / 'backups' or source.name != doc['name']:
+        raise ValueError('preserve the checkpoint name under the recovery repository backups directory')
     if stack.dc('ps', '-aq'):
         raise ValueError('remove target containers before restore; leave the source fenced')
+    stack.check_mount_config()
     # Preflight every target before extracting anything. Helpers inspect as root, including dotfiles.
     for volume in stack.stores:
         if command(['docker', 'ps', '-aq', '--filter', 'volume=' + stack.volume(volume)]):
@@ -420,7 +709,8 @@ def restore(stack, source, retain_unreferenced=False):
     ''', target, data, doc['name'], str(int(doc['after']['timeline'])), mounts=pgmount)
     for volume in stack.stores:
         if volume != 'postgres-data':
-            stack.helper('tar -xf "$1" -C /target', f'{target}/{volume}.tar', mounts=('-v', f'{stack.volume(volume)}:/target'))
+            stack.helper('tar --numeric-owner --xattrs --xattrs-include="*" -xf "$1" -C /target', f'{target}/{volume}.tar', mounts=('-v', f'{stack.volume(volume)}:/target'))
+    stack.helper('mkdir -p /backup/archive /backup/backups; chown postgres:postgres /backup/archive /backup/backups')
     # Recovery stays isolated until identity, the named target and audit heads are verified and the gate is armed.
     gate = f"""DO $$ DECLARE h record; BEGIN
       IF pg_is_in_recovery() OR NOT (pg_last_wal_replay_lsn()>='{doc['targetLsn']}'::pg_lsn) THEN RAISE EXCEPTION 'restore target missing'; END IF;
@@ -432,7 +722,11 @@ def restore(stack, source, retain_unreferenced=False):
     # All SQL values below are validated UUIDs/decimal positions from the manifest.
     for head in doc['after']['heads']:
         workspace = str(uuid.UUID(head['workspaceId'])); position = int(head['head'])
-        gate += f"DO $$ BEGIN IF NOT EXISTS (SELECT FROM audit.cursor WHERE workspace_id='{workspace}' AND last_position>={position}) THEN RAISE EXCEPTION 'restore head missing'; END IF; END $$;"
+        gate += f"DO $$ BEGIN IF NOT EXISTS (SELECT FROM audit.cursor WHERE workspace_id='{workspace}' AND last_position={position}) THEN RAISE EXCEPTION 'restore head missing'; END IF; END $$;"
+    expected = dict(systemId=doc['after']['systemId'], postgres=str(int(doc['after']['postgres'])),
+                    schema=int(doc['after']['schema']), pgmq=doc['after']['pgmq'],
+                    heads=[dict(workspaceId=str(uuid.UUID(h['workspaceId'])), head=str(int(h['head']))) for h in doc['after']['heads']])
+    gate = f"DO $$ BEGIN IF (({SNAPSHOT})::jsonb - 'timeline') <> '{json.dumps(expected)}'::jsonb THEN RAISE EXCEPTION 'restored database snapshot differs'; END IF; END $$;" + gate
     stack.helper('''
         pg_ctl -D "$1" -l /tmp/recovery.log -w -t 120 -o "-c listen_addresses='' -c unix_socket_directories=/tmp -c archive_mode=off" start
         trap 'pg_ctl -D "$1" -m fast -w stop' EXIT
@@ -445,7 +739,7 @@ def restore(stack, source, retain_unreferenced=False):
         rm -rf "$1/checkpoint-wal"
         mv "$1/checkpoint.auto.conf" "$1/postgresql.auto.conf"
     ''', data, gate, mounts=pgmount, user='postgres')
-    prepare_restored_storage(stack, doc['name'], retain_unreferenced)
+    prepare_restored_storage(stack, doc['name'], retain_unreferenced, doc.get('storage'), doc.get('mounts'))
     stack.dc('up', '-d', '--no-build', '--pull', 'never', 'server')
     deadline = time.monotonic() + startup_timeout(stack)
     while time.monotonic() < deadline:
@@ -458,6 +752,11 @@ def restore(stack, source, retain_unreferenced=False):
         time.sleep(1)
     else:
         raise RuntimeError('restored server did not expose its recovery API')
+    try:
+        stack.helper('chown "$1:$2" /backup/backups; chmod a+rx /backup/backups', str(os.getuid()), str(os.getgid()))
+        publish_health(stack.backups / 'backups', doc)
+    except (RuntimeError, ValueError, OSError, KeyError):
+        print('Restored data is gated, but the health receipt could not be published. Repair repository permissions/free space, then take a new fenced Checkpoint; do not repeat restore into these volumes.', file=sys.stderr)
     print('Restore complete. Workspaces remain gated. Release them through the User API, then start the remaining profiles.')
 
 
@@ -466,6 +765,7 @@ def main():
     parser.add_argument('action', choices=['backup', 'restore'])
     parser.add_argument('checkpoint', nargs='?', type=Path)
     parser.add_argument('--env-file', type=Path, default=ROOT / '.env')
+    parser.add_argument('--fenced', action='store_true', help='attest exclusive operator control: exclude all external writers and mutating helpers until this command finishes')
     parser.add_argument('--offline', action='store_true', help='capture a fenced stopped server without restarting it')
     parser.add_argument('--retain-unreferenced', action='store_true', help='explicitly retain restored cleanup leftovers before starting the server')
     args = parser.parse_args()
@@ -473,6 +773,8 @@ def main():
         parser.error('--offline is only valid for backup')
     if args.retain_unreferenced and args.action != 'restore':
         parser.error('--retain-unreferenced is only valid for restore')
+    if not args.fenced:
+        parser.error('--fenced is required; hold the external writer fence throughout capture or restore')
     os.umask(0o077)
     lock_path = args.env_file.with_suffix(args.env_file.suffix + '.lock')
     with lock_path.open('x'):
@@ -481,7 +783,7 @@ def main():
             with (stack.backups / '.checkpoint.lock').open('w') as repository_lock:
                 fcntl.flock(repository_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 if args.action == 'backup':
-                    backup(stack, args.offline)
+                    backup(stack, args.offline, fenced=args.fenced)
                 else:
                     if args.checkpoint is None:
                         raise ValueError('checkpoint path required')
