@@ -129,3 +129,10 @@ metadata, Audit Events, and direct S3 byte hashes, including an unknown extra ob
 retained explicitly on restore. Cleanup is limited to its project and volumes with
 matching ownership labels; failed runs keep the repository evidence. Successful
 command/file-boundary tests are not runtime recovery proof.
+
+Checkpoint resumption starts only the verified existing container IDs, without
+pulling images or recreating containers. RustFS must become healthy before the
+server and gateway resume. Each service receives `BP_STARTUP_VERIFY_TIMEOUT`
+seconds, including Docker calls; the total is bounded by the number of services
+times that budget. A failure names the affected service and retains completed
+checkpoints and the original capture error.

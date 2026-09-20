@@ -343,18 +343,65 @@ def startup_timeout(stack):
     return int(value)
 
 
+def start_existing_services(stack, services):
+    # Compose start can require absent one-shot dependencies. Resume only the existing IDs.
+    budget = startup_timeout(stack)
+    deadline = time.monotonic() + budget
+    def remaining():
+        left = deadline - time.monotonic()
+        if left <= 0:
+            raise TimeoutError()
+        return left
+    def run(args):
+        result = subprocess.run(args, capture_output=True, text=True, check=True,
+                                timeout=remaining(), cwd=ROOT)
+        remaining()
+        return result.stdout.strip()
+    fields = ('{"id":{{json .Id}},"project":{{json (index .Config.Labels "com.docker.compose.project")}},'
+              '"service":{{json (index .Config.Labels "com.docker.compose.service")}},'
+              '"healthcheck":{{if and .Config.Healthcheck .Config.Healthcheck.Test '
+              '(ne (index .Config.Healthcheck.Test 0) "NONE")}}true{{else}}false{{end}},'
+              '"status":{{json .State.Status}},"oomKilled":{{.State.OOMKilled}},'
+              '"health":{{if .State.Health}}{{json .State.Health.Status}}{{else}}"none"{{end}}}')
+    def inspect(cid, service):
+        container = json.loads(run(['docker', 'inspect', '--format', fields, cid]))
+        if (container['id'], container['project'], container['service']) != (cid, stack.project, service):
+            raise ValueError()
+        return container
+    try:
+        for service in services:
+            deadline = time.monotonic() + budget
+            ids = run(stack.compose + ['ps', '-aq', service]).split()
+            if len(ids) != 1 or not re.fullmatch(r'[0-9a-f]{64}', ids[0]):
+                raise ValueError()
+            cid = ids[0]
+            healthcheck = inspect(cid, service)['healthcheck']
+            run(['docker', 'start', cid])
+            while True:
+                container = inspect(cid, service)
+                if container['oomKilled'] or container['status'] not in {'created', 'running', 'restarting'}:
+                    raise ValueError()
+                if healthcheck and container['health'] not in {'starting', 'healthy'}:
+                    raise ValueError()
+                if container['status'] == 'running' and (not healthcheck or container['health'] == 'healthy'):
+                    remaining()
+                    break
+                time.sleep(min(0.5, remaining()))
+    except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError):
+        raise RuntimeError(f'{service}: source container could not be resumed and verified') from None
+
+
 def resume_source(stack, stopped, completed, capture_failed):
     if not stopped:
         return
     try:
-        if 'rustfs' in stopped:
-            stack.dc('start', '--wait', '--wait-timeout', str(startup_timeout(stack)), 'rustfs')
+        storage = ['rustfs'] if 'rustfs' in stopped else []
         application = [service for service in reversed(stopped) if service != 'rustfs']
-        if application:
-            stack.dc('start', '--wait', '--wait-timeout', str(startup_timeout(stack)), *application)
-    except RuntimeError:
+        start_existing_services(stack, storage + application)
+    except Exception as error:
+        reason = str(error) if re.fullmatch(r'(rustfs|server|edge): source container could not be resumed and verified', str(error)) else 'source services could not be resumed and verified'
         state = 'the completed Checkpoint is retained' if completed else 'no Checkpoint was completed'
-        message = f'source services could not be resumed and verified; {state}. Inspect service state and logs; startup may still be verifying stored bytes'
+        message = f'{reason}; {state}. Inspect service state and logs; startup may still be verifying stored bytes'
         if capture_failed:
             # Keep the original capture failure as the primary error.
             print(message, file=sys.stderr, flush=True)
@@ -470,7 +517,7 @@ def backup(stack, offline=False, fenced=False):
                 raise ValueError('archived WAL has a gap')
         check_writers(stack)
         if stack.backend == 's3':
-            stack.dc('start', '--wait', '--wait-timeout', str(startup_timeout(stack)), 'rustfs')
+            start_existing_services(stack, ['rustfs'])
             stopped.remove('rustfs')
         if inspect_storage(stack, offline) != storage:
             raise ValueError('fenced source storage identity or full inventory changed')
