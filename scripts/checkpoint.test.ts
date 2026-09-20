@@ -24,7 +24,8 @@ with tempfile.TemporaryDirectory() as root:
   expect(out).not.toContain("secret-not-in-manifest"); expect(out).not.toContain("BP_AUTH_SECRET");
   const doc=JSON.parse(out); expect(doc.images.server.id).toBe("sha256:pin");
   expect(doc.artifacts["server-data.tar"].sha256).toBe(new Bun.CryptoHasher("sha256").update("checkpoint").digest("hex"));
-});
+// Publication calls sync -f on the real shared filesystem, which can exceed Bun's default five seconds under CI I/O load.
+}, 30000);
 test("restore refuses a target containing a hidden file",async()=>{
   expect(await python(`import tempfile, subprocess
 from pathlib import Path
