@@ -255,8 +255,9 @@ export async function prepare(argv: string[], env: Environment, run: Runner = do
         });
       }
       if (timing.now() >= deadline) { capabilitiesReady = false; break; }
-      if (capabilitiesReady || attempt === 3 || deadline - timing.now() <= 1000) break;
-      await timing.sleep(1000);
+      if (capabilitiesReady || attempt === 3 || deadline - timing.now() < 5000) break;
+      // Capability observations cache failures for five seconds. Let a retry resample.
+      await timing.sleep(5000);
     }
     if (!capabilitiesReady) throw new CliError("selected_capabilities_not_ready", 2);
     const capabilityPath = resolve(values["capability-file"]);

@@ -72,7 +72,7 @@ preparation records another outcome.
 
 After Compose startup, preparation checks authenticated `/health/ready` and
 `/health/operations` before exporting enrollment authority or recording healthy
-bootstrap. Capability readiness polls up to four times with one-second gaps within
+bootstrap. Capability readiness polls up to four times with five-second gaps within
 30 seconds total. Each HTTP request has a five-second timeout; its Docker exec deadline
 is at most ten seconds and no greater than the remaining polling budget. The existing
 capability sampler must report a healthy,

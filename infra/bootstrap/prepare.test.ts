@@ -404,8 +404,8 @@ test("selected capability failures cannot publish healthy bootstrap or enrollmen
       }, record, { now: () => elapsed, sleep: async ms => { elapsed += ms; } })).rejects.toMatchObject({
         error: fault === "unsupported" ? "operations_capabilities_unsupported" : "selected_capabilities_not_ready", exit: 2,
       });
-      expect(attempts).toBe(fault === "unsupported" || fault === "invalid-json" ? 1 : fault === "timeout" ? 3 : 4);
-      expect(elapsed).toBe(fault === "timeout" ? 30_000 : fault === "unsupported" || fault === "invalid-json" ? 0 : 3000);
+      expect(attempts).toBe(fault === "unsupported" || fault === "invalid-json" ? 1 : fault === "timeout" ? 2 : 4);
+      expect(elapsed).toBe(fault === "timeout" ? 30_000 : fault === "unsupported" || fault === "invalid-json" ? 0 : 15000);
       expect(calls.some(call => call.at(-1) === "/data/enrollment/capability")).toBe(false);
       await expect(lstat(join(directory, "capability"))).rejects.toMatchObject({ code: "ENOENT" });
       expect(records.filter(call => call.includes("--state")).map(call => call.at(-1))).toEqual(["unavailable"]);
@@ -413,7 +413,7 @@ test("selected capability failures cannot publish healthy bootstrap or enrollmen
   }
 });
 
-test("capability polling recovers transient unknown before exporting pending enrollment", async () => {
+test("capability polling outlasts a cached failure before exporting pending enrollment", async () => {
   await selectionFixture(async ({ directory, args, runner, record, records }) => {
     let attempts = 0, elapsed = 0;
     const sleeps: number[] = [];
@@ -424,15 +424,15 @@ test("capability polling recovers transient unknown before exporting pending enr
         attempts++;
         expect(records.some(call => call.at(-1) === "healthy")).toBe(false);
         await expect(lstat(join(directory, "capability"))).rejects.toMatchObject({ code: "ENOENT" });
-        if (attempts < 3) return JSON.stringify({ capabilities: { files: { state: "unknown" }, functions: { state: "unknown" } } });
+        if (elapsed < 5000) return JSON.stringify({ capabilities: { files: { state: "unknown" }, functions: { state: "unknown" } } });
       }
       if (command.at(-1) === "/data/enrollment/capability") {
-        expect(attempts).toBe(3);
+        expect(attempts).toBe(2);
         return `${"a".repeat(64)}\n`;
       }
       return response;
     }, record, { now: () => elapsed, sleep: async ms => { sleeps.push(ms); elapsed += ms; } });
-    expect(sleeps).toEqual([1000, 1000]);
+    expect(sleeps).toEqual([5000]);
     expect(output).toContain("bp bootstrap");
     expect(await readFile(join(directory, "capability"), "utf8")).toBe(`${"a".repeat(64)}\n`);
     expect(records.filter(call => call.includes("--state")).map(call => call.at(-1))).toEqual(["unavailable", "healthy"]);
