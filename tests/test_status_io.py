@@ -18,6 +18,8 @@ class StatusIOTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
+        self.selection = {'project': 'agent-backplane',
+                          'composeFiles': [str(self.root / 'compose.yaml')], 'profiles': []}
 
     def test_deadline_stops_descendant_after_direct_child_exits(self):
         marker = self.root / 'descendant-heartbeat'
@@ -106,7 +108,7 @@ class StatusIOTests(unittest.TestCase):
         self.assertEqual((self.root / 'secret').read_text(), 'SECRET')
 
     def test_private_record_permissions_and_installation_binding(self):
-        io.task_record(self.root, self.root, self.root / '.env', '2026-09-20T12:00:00Z', 'healthy')
+        io.task_record(self.root, self.root, self.root / '.env', '2026-09-20T12:00:00Z', 'healthy', self.selection)
         self.assertEqual((self.root / 'status').stat().st_mode & 0o777, 0o700)
         path = self.root / 'status/bootstrap.json'
         self.assertEqual(path.stat().st_mode & 0o777, 0o600)
@@ -121,7 +123,7 @@ class StatusIOTests(unittest.TestCase):
         private = self.root / 'status'
         private.mkdir(mode=0o750)
         io.task_record(self.root, self.root, self.root / '.env',
-                       '2026-09-20T12:00:00Z', 'healthy')
+                       '2026-09-20T12:00:00Z', 'healthy', self.selection)
         self.assertEqual(private.stat().st_mode & 0o777, 0o750)
         self.assertEqual((private / 'bootstrap.json').stat().st_mode & 0o777, 0o600)
 
@@ -173,7 +175,7 @@ class StatusIOTests(unittest.TestCase):
         self.assertEqual((self.root / 'status').stat().st_mode & 0o777, 0o750)
 
     def test_malformed_private_utf8_is_unavailable(self):
-        io.task_record(self.root, self.root, self.root / '.env', '2026-09-20T12:00:00Z', 'healthy')
+        io.task_record(self.root, self.root, self.root / '.env', '2026-09-20T12:00:00Z', 'healthy', self.selection)
         (self.root / 'status/bootstrap.json').write_bytes(b'\xff')
         with self.assertRaises(io.Unavailable):
             io.read_task(self.root, self.root, self.root / '.env')
