@@ -150,8 +150,8 @@ def drill():
         del os.environ['COMPOSE_FILE']
         recovery.compose += [arg for name in target_files for arg in ('-f', name)]
         volumes.extend(recovery.volume(name) for name in recovery.stores)
-        result = subprocess.run(['python3', str(ROOT / 'scripts/checkpoint.py'), 'restore', '--env-file', str(recovery_env),
-                                 str(copied), '--fenced', '--migration-budget', '7200'],
+        result = subprocess.run(['python3', str(ROOT / 'scripts/checkpoint.py'), 'restore', str(copied),
+                                 '--env-file', str(recovery_env), '--fenced', '--migration-budget', '7200'],
                                 capture_output=True, text=True, cwd=ROOT, timeout=7500,
                                 env={**os.environ, 'COMPOSE_FILE': os.pathsep.join(target_files), 'COMPOSE_PROFILES': 'blobs'})
         if result.returncode:
