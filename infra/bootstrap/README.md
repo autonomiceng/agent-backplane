@@ -57,3 +57,13 @@ and content. It initializes only an empty installation. The
 [storage identity procedure](../../docs/operations/storage-identity.md) also documents
 explicit operator commands and fenced adoption for an existing unbound installation. Crash leftovers can be
 recorded for permanent retention without deleting or moving their bytes.
+
+Fresh Files preparation generates a 40-character scoped S3 secret, within RustFS’s
+service-account creation limit. Existing credentials are preserved. If an earlier
+uncompleted installation generated a longer `BP_BLOB_S3_SECRET_KEY`, preparation may
+report `compose_command_failed` when RustFS refuses creation. Keep all other secrets
+and replace that value with a generated 40-character secret before rerunning
+preparation; do not rotate a serving installation as a bootstrap repair. Readiness
+or enrollment state cannot prove that a credential is unused: an existing
+installation may be stopped, and RustFS accepts longer secrets through its
+account-update path. Preparation therefore never silently repairs existing credentials.
