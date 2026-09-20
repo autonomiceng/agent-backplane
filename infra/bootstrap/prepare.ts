@@ -107,10 +107,10 @@ export async function prepare(argv: string[], env: Environment, run: Runner = do
     for (const [key, value] of [["BP_ACCESS_MODE", access.mode], ["BP_PUBLIC_URL", url]]) {
       if (key && value && entries[key] === undefined) { entries[key] = value; additions.push(`${key}='${value}'`); }
     }
-    const console = resolveRustfsConsole(entries, profiles, access);
+    const rustfsConsole = resolveRustfsConsole(entries, profiles, access);
     // Refresh derived routing fields when the selected URL changes; never replace user settings.
     let output = source ?? "";
-    for (const [key, value] of [["BP_RUSTFS_URL_HOST", console.urlHost], ["BP_RUSTFS_AUTHORITY", console.authority]]) {
+    for (const [key, value] of [["BP_RUSTFS_URL_HOST", rustfsConsole.urlHost], ["BP_RUSTFS_AUTHORITY", rustfsConsole.authority]]) {
       if (!key || !value || entries[key] === value) continue;
       if (entries[key] !== undefined) output = output.replace(new RegExp(`^${key}=.*$`, "m"), `${key}='${value}'`);
       else additions.push(`${key}='${value}'`);
@@ -162,7 +162,7 @@ export async function prepare(argv: string[], env: Environment, run: Runner = do
       if (existing === undefined) await privateWrite(capabilityPath, capability);
     } else if (readiness.enrollment.state !== "claimed") throw new CliError("enrollment_recovery_required", 2);
     await recordStatus([...statusRecord, "--state", "healthy"]);
-    return (console.enabled === "true" ? `RustFS console: ${console.origin}/rustfs/console/\n` : "") + `bp bootstrap --url '${url}' --email USER_EMAIL --capability-file '${capabilityPath.replaceAll("'", "'\\''")}'\n`;
+    return (rustfsConsole.enabled === "true" ? `RustFS console: ${rustfsConsole.origin}/rustfs/console/\n` : "") + `bp bootstrap --url '${url}' --email USER_EMAIL --capability-file '${capabilityPath.replaceAll("'", "'\\''")}'\n`;
   } finally { await unlock(); }
 }
 async function docker(args: string[], env: Environment): Promise<string> {
