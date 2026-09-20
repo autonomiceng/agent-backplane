@@ -76,13 +76,28 @@ function metadata(value: Json) {
   object(m.transcriptAccess, "transcriptAccess"); object(m.license, "license");
   return m;
 }
+export function preparedMetadataMatches(prepared: Obj, source: Obj) {
+  const original = Object.fromEntries(Object.entries(prepared).filter(([key]) =>
+    !["transcriptFile", "collector", "provenance"].includes(key)));
+  return equal(original, source);
+}
+export function handoffEvidence(prepared: Obj) {
+  const file = object(prepared.transcriptFile, "transcriptFile"), collector = object(prepared.collector, "collector");
+  const provenance = object(prepared.provenance, "provenance");
+  const runId = text(collector.runId, "run_id"), eventCursor = text(provenance.eventCursor, "event_cursor");
+  if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(runId)) throw new Error("run_id_invalid");
+  if (!/^\d+$/.test(eventCursor)) throw new Error("event_cursor_invalid");
+  if (typeof provenance.fileUploadedInRun !== "boolean") throw new Error("file_uploaded_in_run_invalid");
+  if (text(file.mediaType, "media_type") !== text(prepared.mediaType, "media_type")) throw new Error("media_type_mismatch");
+  return { file, collector, provenance, runId, eventCursor };
+}
 async function prepare(transcriptPath: string, metadataPath: string, outputPath: string) {
   const who = await identity(), source = metadata(JSON.parse(await readFile(metadataPath, "utf8")) as Json);
   const bytes = await readFile(transcriptPath), hash = sha256(bytes);
   try {
     const saved = object(JSON.parse(await readFile(outputPath, "utf8")) as Json, "prepared");
     const file = object(saved.transcriptFile, "transcriptFile"), collector = object(saved.collector, "collector");
-    if (saved.sourceId !== source.sourceId || saved.demoRun !== source.demoRun || file.sha256 !== hash || file.byteLength !== bytes.length
+    if (!preparedMetadataMatches(saved, source) || file.sha256 !== hash || file.byteLength !== bytes.length
       || collector.principalId !== who.principalId) throw new Error("prepared_manifest_mismatch");
     const id = text(file.id, "file_id"); await verifyFile(id, bytes);
     console.log(JSON.stringify({ prepared: outputPath, sourceId: source.sourceId, fileId: id, sha256: hash,
@@ -115,7 +130,7 @@ async function prepare(transcriptPath: string, metadataPath: string, outputPath:
 async function handoff(transcriptPath: string, preparedPath: string) {
   const who = await identity(), source = metadata(JSON.parse(await readFile(preparedPath, "utf8")) as Json);
   const prepared = object(JSON.parse(await readFile(preparedPath, "utf8")) as Json, "prepared");
-  const file = object(prepared.transcriptFile, "transcriptFile"), collector = object(prepared.collector, "collector");
+  const { file, collector, provenance, runId, eventCursor } = handoffEvidence(prepared);
   if (collector.principalId !== who.principalId) throw new Error("prepared_principal_mismatch");
   const bytes = await readFile(transcriptPath), hash = sha256(bytes), fileId = text(file.id, "file_id");
   if (file.sha256 !== hash || file.byteLength !== bytes.length) throw new Error("local_transcript_mismatch");
@@ -143,8 +158,7 @@ async function handoff(transcriptPath: string, preparedPath: string) {
   const rows = row.rows; if (!Array.isArray(rows) || object(rows[0], "source_count").source_count !== 1) throw new Error("source_count_mismatch");
   const message = object(await bp(["queue", "get-message", "--queue", QUEUE, "--message-id", messageId]), "message");
   if (message.id !== messageId || message.producerPrincipalId !== PRINCIPAL || !equal(object(message.payload, "payload"), payload)) throw new Error("message_verification_failed");
-  const provenance = object(prepared.provenance, "provenance");
-  const audit = object(await bp(["events", "read-audit", "--run-id", text(collector.runId, "run_id"), "--after", text(provenance.eventCursor, "event_cursor"), "--limit", "500"]), "audit");
+  const audit = object(await bp(["events", "read-audit", "--run-id", runId, "--after", eventCursor, "--limit", "500"]), "audit");
   const events = Array.isArray(audit.events) ? audit.events.map(event => { const e = object(event, "event"); return { position: e.position!, kind: e.kind!, objects: e.objects! }; }) : [];
   const once = [...(provenance.fileUploadedInRun === false ? [] : ["blob.put"]), "queue.send", "transaction.committed"];
   for (const kind of ["sql.execute", ...once]) if (!events.some(event => event.kind === kind)) throw new Error(`audit_event_missing:${kind}`);
@@ -153,7 +167,9 @@ async function handoff(transcriptPath: string, preparedPath: string) {
     transactionPosition: committed.position, retryResponseIdentical: true, sourceRows: 1, messageRows: 1, events, nextEventCursor: audit.nextAfter }));
 }
 
-const [command, transcript, input, output] = process.argv.slice(2);
-if (command === "prepare" && transcript && input && output) await prepare(transcript, input, output);
-else if (command === "handoff" && transcript && input && !output) await handoff(transcript, input);
-else throw new Error("usage: collector.ts prepare TRANSCRIPT METADATA PREPARED | handoff TRANSCRIPT PREPARED");
+if (import.meta.main) {
+  const [command, transcript, input, output] = process.argv.slice(2);
+  if (command === "prepare" && transcript && input && output) await prepare(transcript, input, output);
+  else if (command === "handoff" && transcript && input && !output) await handoff(transcript, input);
+  else throw new Error("usage: collector.ts prepare TRANSCRIPT METADATA PREPARED | handoff TRANSCRIPT PREPARED");
+}
