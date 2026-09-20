@@ -229,8 +229,11 @@ test("MCP workflow diverges from executable CLI examples", async () => {
     expect(failed[0]).toMatchObject({ error: "assertion_failed", status: 422 });
     for (const f of fixtures) {
       expect(await f.pool`SELECT id FROM queue.messages WHERE idempotency_key='rolled-back'`).toHaveLength(0);
-      const folder = join(f.env.BP_DATA_DIR, "cli", "runs"), file = join(folder, (await readdir(folder)).find((n) => n.endsWith(".json"))!);
-      const cache = JSON.parse(await readFile(file, "utf8"));
+      const folder = join(f.env.BP_DATA_DIR, "cli", "runs");
+      const caches = await Promise.all((await readdir(folder)).filter((name) => name.endsWith(".json")).map(async (name) => {
+        const file = join(folder, name); return { file, cache: JSON.parse(await readFile(file, "utf8")) };
+      }));
+      const { file, cache } = caches.find((entry) => entry.cache.principalId === f.principalId)!;
       await writeFile(file, JSON.stringify({ ...cache, id: "00000000-0000-4000-8000-000000000001" }));
     }
     await both(() => command(["queue", "create-queue"], { name: "recovered" }));
