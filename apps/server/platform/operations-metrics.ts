@@ -1,3 +1,4 @@
+import { capabilityStates } from "./capability-types.ts";
 // Fixed gauge families; queue labels aggregate every Queue in a listed Workspace.
 import { type decideOperations, statuses, deliveryStates } from "./operations.ts";
 export function operationsMetrics(result: ReturnType<typeof decideOperations>): string {
@@ -36,6 +37,10 @@ export function operationsMetrics(result: ReturnType<typeof decideOperations>): 
   gauge("backup_completed_timestamp_seconds",d.backup.completedAt,{},d.backup.completedAt.value ? Date.parse(d.backup.completedAt.value)/1000 : null);
   gauge("backup_age_seconds",d.backup.ageSeconds); gauge("archive_lag_seconds",d.backup.archiveLagSeconds); gauge("restore_gate_active",d.restoreGate.active);
   gauge("restore_workspaces",d.restoreGate.released,{state:"released"}); gauge("restore_workspaces",d.restoreGate.pending,{state:"pending"});
+  for (const [capability, observation] of Object.entries(d.capabilities)) {
+    for (const state of capabilityStates) emit("capability_state", Number(observation.state === state), { capability, state });
+    emit("capability_observed_timestamp_seconds", observation.observedAt ? Date.parse(observation.observedAt) / 1000 : null, { capability });
+  }
   for (const status of statuses) emit("operations_status",Number(d.status===status),{status});
   const walk=(v:unknown,path:string)=>{
     if (!v || typeof v!=="object") return;

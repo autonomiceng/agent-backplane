@@ -1,3 +1,4 @@
+import { capabilityProbe } from "../../apps/server/platform/capability-probe.ts";
 // Explicit PG gate against the actual supervisor prototype or newly built Bun/workerd artifact.
 // The old workerd-only artifact cannot satisfy the five-file control identity. No Docker mutations here.
 import { afterAll, expect, test } from "bun:test";
@@ -15,6 +16,7 @@ test("effective runtime identity preserves deployer authority and refuses a wron
   const pool = createPool(await migratedDatabase());
   let listener: Bun.Server<undefined> | undefined;
   try {
+    expect((await capabilityProbe(pool, undefined, compute)()).functions).toMatchObject({ state: "healthy", backend: "workerd" });
     const fixture = await principalFixture(pool, {}, afterAll);
     const { workspaceId, principalId, cookie } = fixture;
     const key = await issueKey(fixture.app, cookie, workspaceId, principalId);
@@ -33,6 +35,7 @@ test("effective runtime identity preserves deployer authority and refuses a wron
     const wrong = createComputeLauncher({ url: Bun.env.BP_COMPUTE_URL, token: Bun.env.BP_COMPUTE_TOKEN,
       runtimeDigest: "workerd-binary-sha256:" + "0".repeat(64) });
     if (!wrong) throw Error("launcher missing");
+    expect((await capabilityProbe(pool, undefined, wrong)()).functions.state).toBe("unavailable");
     const badApp = await testApp(pool, { compute: wrong }, afterAll);
     const refusedId = crypto.randomUUID();
     listener = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: request => badApp.handle(request) });
