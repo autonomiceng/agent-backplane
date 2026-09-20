@@ -70,7 +70,8 @@ async function scenario() {
     return new Promise<IncomingMessage>((accept, reject) => {
       const request = (url.protocol === "https:" ? httpsRequest : httpRequest)({ protocol: url.protocol,
         // This local deployment contract must not depend on host DNS for *.localhost.
-        hostname: "127.0.0.1", servername: url.hostname.replace(/^\[|\]$/g, ""),
+        hostname: (origin === direct ? url.hostname : Bun.env.BP_BIND_HOST || "127.0.0.1").replace(/^\[|\]$/g, ""),
+        servername: url.hostname.replace(/^\[|\]$/g, ""),
         port: url.port || (url.protocol === "https:" ? 443 : 80),
         path, method: bytes === undefined ? "GET" : "POST", ca, rejectUnauthorized: true, agent: false, signal,
         headers: { host: url.host, ...headers, ...(bytes === undefined ? {} : { "content-type": "application/json", "content-length": String(Buffer.byteLength(bytes)) }) },
