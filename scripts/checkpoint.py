@@ -378,7 +378,8 @@ def storage_admin(stack, *args):
 def prepare_restored_storage(stack, checkpoint, retain_unreferenced=False):
     if 'storage-init' not in stack.services:
         return
-    stack.dc('up', '-d', '--wait', '--no-build', '--pull', 'never', 'postgres')
+    stack.dc('up', '-d', '--wait', '--wait-timeout', str(startup_timeout(stack)),
+             '--no-build', '--pull', 'never', 'postgres')
     evidence = json.loads(storage_admin(stack, 'inspect', '--fenced'))
     if (evidence.get('intent') or {}).get('phase') != 'ready':
         raise RuntimeError('restored storage has an unfinished binding intent; keep the server stopped and retry its original operator command before starting')
