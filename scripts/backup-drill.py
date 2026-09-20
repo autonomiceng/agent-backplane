@@ -12,7 +12,7 @@ import time
 import sys
 import urllib.request
 import uuid
-from checkpoint import ROOT, Stack, backup, command, restore, inspect_storage, verify
+from checkpoint import ROOT, Stack, backup, command, restore, inspect_storage, verify, prove_root_credentials, storage_admin
 
 
 def drill(offline=False, s3=False):
@@ -23,6 +23,11 @@ def drill(offline=False, s3=False):
         project = 'bp-drill-' + uuid.uuid4().hex[:12]
         port = int(os.environ.get('BP_DRILL_PORT', '18301' if s3 else '18300'))
         origin = f'http://localhost:{port}'
+        health_probe = ('run', '--rm', '--no-deps', '-T', '--user',
+            str(65534 if host_uid != 65534 else 65533), '--entrypoint', 'bun', 'server', '-e',
+            "const fs=await import('node:fs/promises'); const receipt=JSON.parse(await fs.readFile('/backups/health.json','utf8')); "
+            "try { await fs.readFile('/backups/'+receipt.restorePoint.name+'/manifest.json'); throw new Error('manifest exposed'); } "
+            "catch(e) { if(e.code!=='EACCES') throw e; } console.log(JSON.stringify(receipt));")
         # Keep the same credentials and public origin across the recovery incarnation.
         values = {name: secrets.token_hex(32) for name in ('BP_AUTH_SECRET', 'BP_OPERATIONS_TOKEN', 'BP_POSTGRES_PASSWORD', 'BP_POSTGRES_ADMIN_PASSWORD')}
         values.update(BP_PORT=str(port), BP_PUBLIC_URL=origin, BP_VOLUME_PREFIX=project, BP_SERVER_IMAGE='agent-backplane-drill:' + project)
@@ -127,19 +132,20 @@ def drill(offline=False, s3=False):
             if offline:
                 stack.dc('stop', 'server')
                 if s3:
-                    # Exercise restored-IAM proof entrypoints without invoking mutating bootstrap.
-                    for service, key, entry in [
-                        ('blob-bootstrap', 'BP_RUSTFS_ROOT_PASSWORD', ['/checkpoint-proof.js']),
-                        ('storage-init', 'BP_BLOB_S3_SECRET_KEY', ['apps/server/blobs/storage-admin.ts', 'inspect', '--fenced']),
-                    ]:
-                        try:
-                            stack.dc('run', '--rm', '--no-deps', '-T', '--entrypoint', 'bun',
-                                     '-e', key + '=deliberately-wrong-drill-secret',
-                                     '-v', str(ROOT / 'scripts/s3-checkpoint-proof.js') + ':/checkpoint-proof.js:ro', service, *entry)
-                        except RuntimeError:
-                            pass
-                        else:
-                            raise ValueError('wrong credential passed the read-only proof')
+                    prove_root_credentials(stack)
+                    inspect_storage(stack)
+                    try:
+                        prove_root_credentials(stack, environment=('BP_RUSTFS_ROOT_PASSWORD=deliberately-wrong-drill-secret',))
+                    except RuntimeError as error:
+                        if str(error) != 'checkpoint_proof_authentication': raise
+                    else:
+                        raise ValueError('wrong root credential passed the read-only proof')
+                    try:
+                        storage_admin(stack, 'inspect', '--fenced', environment=('BP_BLOB_S3_SECRET_KEY=deliberately-wrong-drill-secret',))
+                    except RuntimeError as error:
+                        if str(error) != 'storage initialization refused: blob_binding_store_unavailable': raise
+                    else:
+                        raise ValueError('wrong scoped credential passed inspection')
                     retained = str(uuid.uuid4())
                     extra_proof = s3_object('extra', retained)
                     if extra_proof['sha256'] != hashlib.sha256(b'retained crash bytes').hexdigest():
@@ -153,7 +159,13 @@ def drill(offline=False, s3=False):
                 if offline:
                     stack.dc('stop', 'server')
                 source_proof = inspect_storage(stack) if s3 else None
+                stack.helper('chmod 0700 /backup/backups')
                 checkpoint = backup(stack, offline=offline, fenced=True)
+                receipt = json.loads(stack.dc(*health_probe))
+                doc = json.loads((checkpoint / 'manifest.json').read_text())
+                if receipt != dict(version=1, systemId=doc['after']['systemId'], completedAt=doc['completedAt'],
+                                   restorePoint=dict(name=doc['name'], lsn=doc['targetLsn'], timeline=doc['after']['timeline'])):
+                    raise ValueError('public health receipt differs from completed private checkpoint')
                 if s3 and (inspect_storage(stack) != source_proof or json.loads((checkpoint / 'manifest.json').read_text())['storage'] != source_proof):
                     raise ValueError('capture changed source storage')
                 if offline and 'server' in stack.dc('ps', '--status', 'running', '--services').split():
@@ -166,6 +178,7 @@ def drill(offline=False, s3=False):
                 command(['docker', 'volume', 'rm', *volumes])
                 copied = repository / 'backups' / checkpoint.name
                 shutil.copytree(checkpoint, copied)
+                copied.parent.chmod(0o700)
                 write_env(repository)
                 stack = Stack(env_file, copied)
                 started = time.monotonic()
@@ -182,6 +195,8 @@ def drill(offline=False, s3=False):
                     finally:
                         env['BP_RUSTFS_ROOT_PASSWORD'] = original
                 restore(stack, copied, retain_unreferenced=offline)
+                if json.loads(stack.dc(*health_probe)) != receipt:
+                    raise ValueError('restored health receipt changed the captured completion time or identity')
                 user_headers = {'content-type': 'application/json', 'origin': origin}
                 login_req = urllib.request.Request(origin + '/api/auth/sign-in/email', data=json.dumps({'email': 'drill@example.com', 'password': password}).encode(), headers=user_headers)
                 with urllib.request.urlopen(login_req, timeout=30) as response:
