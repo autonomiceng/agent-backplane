@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "demoRun": "platform-talk-20260920",
+  "sourceId": "fictional-reliable-agents-v1",
+  "fictional": true,
+  "title": "Reliable Delivery-Planning Agents",
+  "speakers": ["Mira Vale (fictional)"],
+  "talkDate": "2030-01-15",
+  "topicTags": ["agent-reliability", "evaluation", "idempotency"],
+  "videoUrl": null,
+  "transcriptUrl": null,
+  "mediaType": "text/plain; charset=utf-8",
+  "transcriptAccess": {
+    "checkedAt": "2026-09-20",
+    "method": "original-repository-fixture",
+    "status": "synthetic"
+  },
+  "license": {
+    "status": "original-fixture",
+    "note": "Original fictional fixture created for this demo; it does not quote or adapt a real talk.",
+    "sourceUrl": null
+  }
+}
