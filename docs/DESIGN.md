@@ -104,7 +104,7 @@ Hero view: the Run timeline, showing which harnesses touched which tables, queue
 
 ## Blobs and compute (optional overlays, experimental)
 
-Blobs: Workspace-scoped, provenance-stamped storage. Filesystem storage ships in the base deployment; the optional S3 overlay uses digest-pinned RustFS 1.0.0. Backend switches require explicit migration. See ADR-0009.
+Blobs: Workspace-scoped, provenance-stamped storage. Filesystem storage ships in the base deployment; the optional S3 overlay defaults to digest-pinned RustFS 1.0.0. Backend switches require explicit migration. See ADR-0009.
 
 Compute: single-node workerd, one isolate per submitted function, invoked over HTTP with the Workspace credential bound. Deployment and invocation provenance are recorded separately. The blobs and compute overlays can be omitted without affecting the base deployment.
 

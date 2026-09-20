@@ -1,7 +1,7 @@
 # Backup and recovery
 
 Use the Compose-aware scripts at the repository root. They require Docker Compose,
-Python 3 and the checked-out repository; PostgreSQL binaries run inside the pinned
+Python 3 and the checked-out repository; PostgreSQL binaries run inside the verified
 PostgreSQL container. `infra/backup/archive.sh` remains the continuous WAL archive
 command. The older `infra/backup/backup.sh` and `restore.sh` wrappers remain for
 operator-managed host clusters, not the Compose recovery flow.
@@ -35,6 +35,18 @@ and unchanged audit heads across the fenced backup, hashes all artifacts, writes
 the manifest last and resumes the services that it stopped. Incomplete checkpoints
 have no manifest and cannot be restored. Archive and filesystem errors fail closed.
 
+Capture compares configured image references with container content IDs, including migration and initialization helpers. PostgreSQL and Caddy need locally verified immutable references; an override without one is refused before fencing. Publish and pull that exact image, or select a reproducible image and reconcile the running deployment before retrying. PostgreSQL recovery requires version 18 and its existing data layout. The manifest keeps configured references, observed IDs and immutable recovery references separately; resolved environments remain private. The server archive is saved by content ID. Restore verifies recovered IDs before writing target volumes and starts with builds and pulls disabled. A mutable tag alone never establishes recovery identity. Older version-1 manifests retain support for their recorded digest pins and matching content IDs.
+
+Docker can attach RepoDigests to unpublished local builds and aliases. This proves local
+immutable identity, not publication or continued registry availability. Upstream image
+custody is separate from this data Checkpoint: retain the recorded references in a registry
+or a protected archive tested on the recovery host's Docker store type and platform.
+An archive loaded as tags without the recorded immutable references is unsupported;
+verify those references and content IDs before relying on the archive. Cross-store-type
+or cross-architecture recovery is not established by a same-host roundtrip. The server
+image is included in the Checkpoint; upstream PostgreSQL/Caddy images are not. Capture
+reports the external-custody obligation for mutable upstream configurations.
+
 ## Restore into empty volumes
 
 Fence the original project and its consumers first. Keep its volumes until the
@@ -45,7 +57,9 @@ Pass the same overlays and profiles as the deployment (`COMPOSE_FILE`, `COMPOSE_
 the script removes only the volumes in the rendered configuration, so a `blobs`
 deployment destroyed without its profile keeps `rustfs-data`.
 Use a new project, a new `BP_VOLUME_PREFIX` and alternate ports for recovery. Restore refuses existing containers
-and every non-empty target volume, including hidden files.
+and every non-empty target volume, including hidden files. Image settings follow native
+Compose precedence: exported `BP_*` values override `.env`; clear conflicting exports
+when restoring recorded references.
 
 1. Provision a new encrypted repository mount and a protected env file containing
    the original secrets. Set `BP_BACKUP_DIR` to the new repository. Its `archive`
@@ -53,9 +67,13 @@ and every non-empty target volume, including hidden files.
    incarnation's repository.
 2. Copy the selected complete checkpoint directory into the new repository under
    `backups/`. Restore verifies and loads the saved server image automatically, then
-   pulls the recorded upstream pins. Keep `BP_SERVER_IMAGE` at the recorded
-   reference (default `agent-backplane-server:local`); no locally cached server
-   image is required.
+   verifies locally loaded upstream recovery references, pulling only missing references,
+   and checks their content IDs before target writes. Keep
+   image settings at their recorded references. Local server tags are restored from
+   the archive; a server digest reference must also be available in the local Docker
+   store (pull that exact reference before restore). Restore rebinds tag references
+   to the recorded content, displacing an existing image tag of the same name on this host.
+   Use a dedicated recovery host or distinct tags; running containers retain their content.
 3. Set `COMPOSE_PROJECT_NAME`, a distinct `BP_VOLUME_PREFIX`, and alternate `BP_PORT`, `BP_HTTP_PORT` and
    `BP_HTTPS_PORT` as appropriate, then run:
 
@@ -118,9 +136,10 @@ Effect reconciliation and manual ingress trust remain separate recovery work.
 
 ## RustFS S3 overlay
 
-The optional overlay pins RustFS in `compose.blobs.yaml`. Set
-`BP_BLOB_BOOTSTRAP_IMAGE` to a digest-pinned server image built from this checkout.
-Bootstrap validates the server image digest format before RustFS starts. Release
+The optional overlay defaults to pinned RustFS in `compose.blobs.yaml`.
+`BP_RUSTFS_IMAGE` selects an experimental complete image reference. Blob helpers
+use the effective server image; `BP_BLOB_BOOTSTRAP_IMAGE` explicitly selects a
+different helper-code experiment. Release
 validation must associate the exact RustFS digest with all three passing scenarios in
 `mise exec -- bun tests/acceptance/rustfs.ts`; a digest alone proves no compatibility.
 Set separate root credentials (`BP_RUSTFS_ROOT_USER`, `BP_RUSTFS_ROOT_PASSWORD`)

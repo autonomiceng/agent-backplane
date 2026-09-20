@@ -1,9 +1,9 @@
-// Storage boundaries use real files and commands without a mocked database or Docker daemon.
+// Storage boundaries use real files; image preflights exercise the Docker command boundary.
 import { expect, test } from "bun:test";
 async function python(source:string) {
   const child=Bun.spawn(["python3","-c",source],{cwd:import.meta.dir,stdout:"pipe",stderr:"pipe",env:{...Bun.env,PYTHONDONTWRITEBYTECODE:"1"}});
   const [out,err]=await Promise.all([new Response(child.stdout).text(),new Response(child.stderr).text()]);
-  expect(await child.exited).toBe(0); expect(err).toBe(""); return out;
+  expect(await child.exited, err).toBe(0); expect(err).toBe(""); return out;
 }
 test("checkpoint manifest includes checksums and pins without environment values",async()=>{
   const out=await python(`import json, os, tempfile
@@ -58,4 +58,135 @@ test("destroy refuses a mismatched typed project before accessing Docker", async
   const stderr = await new Response(child.stderr).text();
   expect(await child.exited).toBe(1);
   expect(stderr).toContain("Destroy refused: project name does not match");
+});
+
+const imageFixture = `import json, tempfile
+from pathlib import Path
+import checkpoint as cp
+root = tempfile.TemporaryDirectory()
+p = Path(root.name)
+refs = {'postgres':'pg:experiment', 'server':'server:local', 'edge':'caddy:experiment',
+        'backup-init':'pg:experiment', 'migrate':'server:local', 'data-init':'server:local'}
+ids = {'pg:experiment':'sha256:pg', 'server:local':'sha256:server', 'caddy:experiment':'sha256:edge'}
+digests = {'pg:experiment':'pg@sha256:'+'a'*64, 'caddy:experiment':'caddy@sha256:'+'b'*64}
+ids.update({digest:ids[ref] for ref,digest in digests.items()})
+services = {name:{'image':ref} for name,ref in refs.items()}
+services['server']['environment'] = {}
+services['postgres']['volumes'] = [{'source':str(p),'target':'/backup'}]
+config = {'name':'fixture','services':services}
+running = True
+drift = None
+missing = None
+local_missing = set()
+pulled = []
+def command(args, env=None):
+ if args[:2] == ['docker','compose']:
+  if 'config' in args: return json.dumps(config)
+  if 'ps' in args: return args[-1] if running and args[-1] in refs else ''
+ elif args[:2] == ['docker','inspect']:
+  return 'sha256:drift' if args[-1] == drift else ids[refs[args[-1]]]
+ elif args[:3] == ['docker','image','inspect']:
+  ref = args[-1]
+  if ref == missing or ref in local_missing: raise RuntimeError('private registry diagnostics')
+  if '--format' in args: return ids[ref]
+  return json.dumps([{'Id':ids[ref], 'RepoDigests':[digests[ref]] if ref in digests else []}])
+ elif args[:2] == ['docker','pull']:
+  if args[-1] == missing: raise RuntimeError('private registry diagnostics')
+  pulled.append(args[-1]); local_missing.discard(args[-1]); return ''
+ elif args[:2] == ['docker','tag']:
+  ids[args[-1]] = args[-2]; return ''
+ raise AssertionError('unexpected mutation: '+str(args[:3]))
+cp.command = command
+`;
+
+test("checkpoint rejects runtime drift, helper drift and irreproducible images before fencing", async () => {
+  await python(imageFixture + `
+def refused(fragment):
+ try: cp.Stack(p/'.env')
+ except ValueError as error: assert fragment in str(error), str(error)
+ else: raise AssertionError('unsafe capture accepted')
+drift = 'postgres'
+refused('container differs')
+drift = None
+running = False
+services['data-init']['image'] = 'helper:other'; ids['helper:other'] = 'sha256:other'
+refused('helper must use the same content')
+services['data-init']['image'] = refs['data-init']
+saved = digests.pop('pg:experiment')
+refused('no verified RepoDigest')
+digests['pg:experiment'] = saved
+stack = cp.Stack(p/'.env')
+assert stack.images['postgres']['reference'] == 'pg:experiment'
+assert stack.images['postgres']['recoveryReference'] == saved
+assert stack.images['data-init']['id'] == stack.images['server']['id']
+running = True
+drift = 'postgres'
+try: cp.backup(stack)
+except ValueError as error: assert 'container differs' in str(error), str(error)
+else: raise AssertionError('reused Stack fenced without fresh container attestation')
+root.cleanup()
+`);
+});
+
+test("restore resolves recorded immutable content and rejects unavailable or different images before writes", async () => {
+  await python(imageFixture + `
+stack = cp.Stack(p/'.env'); recorded = stack.images
+running = False
+(p/'manifest.json').write_text(json.dumps({'images':recorded,'artifacts':{}}))
+def refused(fragment):
+ try: cp.Stack(p/'.env', p)
+ except ValueError as error:
+  assert fragment in str(error), str(error)
+  assert 'private registry diagnostics' not in str(error)
+ else: raise AssertionError('unsafe restore accepted')
+services['server']['image'] = 'other-server'
+refused('recorded image reference')
+services['server']['image'] = refs['server']
+recovery = recorded['postgres'].pop('recoveryReference')
+(p/'manifest.json').write_text(json.dumps({'images':recorded,'artifacts':{}}))
+refused('no immutable recovery image')
+recorded['postgres']['recoveryReference'] = recovery
+(p/'manifest.json').write_text(json.dumps({'images':recorded,'artifacts':{}}))
+missing = digests['pg:experiment']
+refused('pull or load the recorded image')
+missing = None
+ids[digests['pg:experiment']] = 'sha256:wrong-platform'
+refused('recovery image content differs')
+ids[digests['pg:experiment']] = recorded['postgres']['id']
+ids['pg:experiment'] = 'sha256:moved-tag'
+restored = cp.Stack(p/'.env', p)
+assert restored.images == recorded
+assert not pulled, 'already loaded immutable content should not need a registry'
+local_missing.add(recovery)
+cp.Stack(p/'.env', p)
+assert pulled == [recovery]
+# Version-1 manifests without recoveryReference still accept their original digest pins.
+for service in ('postgres','edge'):
+ ref = digests[refs[service]]
+ services[service]['image'] = ref
+ recorded[service] = {'reference':ref, 'id':recorded[service]['id']}
+ digests[ref] = ref
+services['backup-init']['image'] = services['postgres']['image']
+for helper in ('backup-init','migrate','data-init'): del recorded[helper]
+(p/'manifest.json').write_text(json.dumps({'images':recorded,'artifacts':{}}))
+cp.Stack(p/'.env', p)
+root.cleanup()
+`);
+});
+
+
+test("capture refuses a PostgreSQL 18 experiment with a different data directory before fencing", async () => {
+  await python(`from types import SimpleNamespace
+import checkpoint as cp
+calls = []
+def pg(sql):
+ calls.append(sql)
+ return {'SHOW server_version_num':'180006', 'SHOW data_directory':'/custom/data'}[sql]
+stack = SimpleNamespace(attest=lambda: calls.append('attest'), services={}, images={},
+ dc=lambda *args: 'postgres server', pg=pg)
+try: cp.backup(stack)
+except ValueError as error: assert 'data_directory=/var/lib/postgresql/18/docker' in str(error)
+else: raise AssertionError('unsupported data directory was captured')
+assert calls == ['attest', 'SHOW server_version_num', 'SHOW data_directory']
+`);
 });

@@ -5,7 +5,7 @@ x-logging: &logging
 
 services:
   blob-image-check:
-    image: ${BP_BLOB_BOOTSTRAP_IMAGE:?required digest-pinned server image}
+    image: ${BP_BLOB_BOOTSTRAP_IMAGE:-${BP_SERVER_IMAGE:-agent-backplane-server:local}}
     profiles: [blobs]
     entrypoint: ["bun", "/app/infra/init/blobs/bootstrap.js", "--images"]
     restart: "no"
@@ -13,11 +13,11 @@ services:
     read_only: true
     network_mode: none
     environment: &pins
-      BP_RUSTFS_IMAGE: rustfs/rustfs:1.0.0@sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff
-      BP_BLOB_BOOTSTRAP_IMAGE: ${BP_BLOB_BOOTSTRAP_IMAGE:?required digest}
+      BP_RUSTFS_IMAGE: ${BP_RUSTFS_IMAGE:-rustfs/rustfs:1.0.0@sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff}
+      BP_BLOB_BOOTSTRAP_IMAGE: ${BP_BLOB_BOOTSTRAP_IMAGE:-${BP_SERVER_IMAGE:-agent-backplane-server:local}}
 
   rustfs:
-    image: rustfs/rustfs:1.0.0@sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff
+    image: ${BP_RUSTFS_IMAGE:-rustfs/rustfs:1.0.0@sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff}
     profiles: [blobs]
     depends_on:
       blob-image-check:
@@ -45,7 +45,7 @@ services:
     networks: [blob-internal]
 
   blob-bootstrap:
-    image: ${BP_BLOB_BOOTSTRAP_IMAGE:?required digest-pinned server image}
+    image: ${BP_BLOB_BOOTSTRAP_IMAGE:-${BP_SERVER_IMAGE:-agent-backplane-server:local}}
     profiles: [blobs]
     depends_on:
       rustfs:

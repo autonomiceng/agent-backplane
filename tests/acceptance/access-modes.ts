@@ -1,7 +1,7 @@
 // Disposable Caddy probes, no application database or installed volumes.
 // Block public certificate requests through a closed loopback proxy.
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { request } from "node:https";
 import { checkServerIdentity } from "node:tls";
 import { tmpdir } from "node:os";
@@ -9,12 +9,16 @@ import { join, resolve } from "node:path";
 
 const root = resolve(import.meta.dir, "../.."), directory = await mkdtemp(join(tmpdir(), "bp-access-"));
 const project = `bp-access-${crypto.randomUUID()}`;
-const image = (await readFile(join(root, "compose.edge.yaml"), "utf8")).match(/image: (.+)/)?.[1];
+const imageConfig = await command(["docker", "compose", "--env-file", "/dev/null", "-f", join(root, "compose.edge.yaml"),
+  "--profile", "edge", "config", "--no-consistency", "--format", "json"]);
+const image: string = JSON.parse(imageConfig).services.edge.image;
 assert(image);
 const base = ["docker", "compose", "--project-name", project, "--project-directory", directory,
   "--env-file", "/dev/null", "-f", join(directory, "compose.json")];
 async function command(args: string[]) {
-  const child = Bun.spawn(args, { stdout: "pipe", stderr: "pipe" });
+  const child = Bun.spawn(args, { stdout: "pipe", stderr: "pipe",
+    env: { ...Object.fromEntries(Object.entries(Bun.env).filter(([key]) => !key.startsWith("BP_") && !key.startsWith("COMPOSE_"))),
+      BP_PUBLIC_URL: "http://localhost:3000" } });
   const timer = setTimeout(() => child.kill(), 30_000);
   try {
     const [out, err, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);

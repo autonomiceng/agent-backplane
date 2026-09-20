@@ -60,7 +60,7 @@ Optional profiles add S3 blob storage on RustFS, a workerd sandbox for small fun
 | Server (API, dashboard, audit stream) | volume for enrollment and migration projections |
 | RustFS, workerd, Caddy | optional profiles |
 
-Upstream images are pinned as `tag@sha256`; the server image is built from this checkout. Terms are in [CONTEXT.md](CONTEXT.md); guarantees in the [design](docs/DESIGN.md).
+Shipped upstream image defaults are pinned as `tag@sha256`; the server image is built from this checkout. Complete image references in `.env` select unvalidated experiments; see [preparation](infra/bootstrap/README.md). Terms are in [CONTEXT.md](CONTEXT.md); guarantees in the [design](docs/DESIGN.md).
 
 ## Built on
 
