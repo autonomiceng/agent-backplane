@@ -7,9 +7,11 @@ service together before activating the startup check. The shared-image initializ
 
 ## New installation
 
-Automatic Compose initialization is delivered with the separate startup activation
-slice. This checkout exposes the operator command explicitly. With PostgreSQL
-running, migrations applied, the data directory initialized, and all writers stopped,
+Normal preparation now runs the shared-image `storage-init` after migrations and
+data-directory setup, before `server`. It automatically initializes only an empty
+installation. The explicit operator command below also supports fenced inspection,
+adoption and reconciliation. With PostgreSQL running, migrations applied, the data
+directory initialized, and all writers stopped,
 use the deployment Compose selection described below. Place the matching
 PostgreSQL admin URL in a private owner-only file readable by the container's `bun`
 user. The URL must address PostgreSQL on the deployment's private network. Keep its
