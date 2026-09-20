@@ -15,7 +15,7 @@ target LSN, checksums and completion time, never resolved environment values.
 Restore needs the original database passwords and `BP_AUTH_SECRET`.
 
 ```sh
-scripts/backup.sh --env-file .env
+scripts/backup.sh --fenced --env-file .env
 # Reports $BP_BACKUP_DIR/backups/YYYYMMDDTHHMMSSffffffZ
 ```
 
@@ -23,8 +23,7 @@ Export `COMPOSE_FILE=compose.yaml:compose.edge.yaml` and `COMPOSE_PROFILES=edge`
 when the edge overlay is enabled; use the same overlay/profile settings for
 backup and restore. `COMPOSE_PROJECT_NAME` selects the project. Every active
 durable service must be running. Optional compute holds no durable local state.
-The scripts reject the S3 backend; coordinate RustFS snapshots separately using
-the procedure below.
+The shipped local single-volume RustFS layout is also supported with `COMPOSE_FILE=compose.yaml:compose.blobs.yaml` and `COMPOSE_PROFILES=blobs`; use the same selection during capture and restore. Other S3 layouts refuse. `--fenced` attests that external writers and mutating helpers remain excluded for the entire command.
 
 The checkpoint fences writes by stopping edge (when present) and server, including
 its retention and blob cleanup workers. It takes a PostgreSQL base backup and
@@ -238,9 +237,9 @@ data directory. Socket-only URLs and relocated or symlinked configuration are re
 before capture. These constraints do not alter the core Compose Checkpoint interface.
 
 For storage adoption or recovery when startup is blocked, stop server and edge
-writers, then use `bash scripts/backup.sh --offline --env-file PATH` with the same
+writers, then use `bash scripts/backup.sh --offline --fenced --env-file PATH` with the same
 Compose configuration. Offline capture requires PostgreSQL running and leaves the
 application stopped. It preserves hidden storage markers, publication candidates,
 and retained staging/orphan bytes. Store archives dereference hard links into
 regular entries for safe restore. Follow the [storage recovery procedure](../../docs/operations/storage-identity.md)
-before resuming the server. Automated S3 capture is still unsupported.
+before resuming the server. Offline S3 capture additionally requires RustFS running on entry, and always restores its running state after the physical capture.
