@@ -103,5 +103,8 @@ test("terminal lock exhaustion is repaired periodically and database delay consu
     await Bun.sleep(800); unlock.resolve(); await delay;
     const timed = await budgeted; expect(timed.status).toBe(504); expect(await timed.json()).toEqual({ error: "function_timeout" });
     const successor = await f.post("/functions/budget/invoke", { input: null }); expect(successor.status).toBe(200);
+    await f.deploy("long-budget", 'export default {async fetch(){await new Promise(r=>setTimeout(r,11000));return Response.json({ok:true})}}');
+    const long = await f.post("/functions/long-budget/invoke", { input: null, timeoutMs: 14000 });
+    expect(long.status).toBe(200); expect((await long.json()).result).toEqual({ ok: true });
   } finally { release.resolve(); await blocker; await f.close(); }
-}, 30000);
+}, 45000);

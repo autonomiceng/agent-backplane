@@ -58,7 +58,7 @@ One operation occupies the operation slot from admission through child reaping. 
 operations return `compute_unavailable` without spawning or queueing. Identity has one
 reserved, singleflight probe slot and no completed-result cache. It must complete a real
 loader identity round trip within the existing two-second budget, including under CPU
-load. N=1 is the initial bound; it has not been qualified under the container CPU cap.
+load. N=1 is the initial bound; the artifact gate exercises it under the container CPU cap.
 
 The admission deadline includes body reading, fresh child startup, execution and response
 buffering. Invocation sends the remaining server budget after the authority transaction
@@ -114,10 +114,10 @@ export BP_WORKERD_BINARY_SHA256=f31da6d248028d698806aa93d1b3aec28bbd4b4b7ddc31e9
 bun test ./tests/acceptance/workerd-lifecycle.ts
 
 # Start a separate prototype for the PG cases in one terminal; stop this captured process afterward.
-BP_COMPUTE_TOKEN=fixture-secret BP_TEST_API_ADDRESS=127.0.0.1:18081 BP_TEST_SUPERVISOR_PORT=18080 \
+BP_COMPUTE_TOKEN=fixture-secret BP_COMPUTE_TIMEOUT_MS=15000 BP_TEST_API_ADDRESS=127.0.0.1:18081 BP_TEST_SUPERVISOR_PORT=18080 \
   bun tests/acceptance/workerd-prototype.ts
 # In another terminal, using that prototype:
-BP_COMPUTE_URL=http://127.0.0.1:18080 BP_COMPUTE_TOKEN=fixture-secret \
+BP_COMPUTE_URL=http://127.0.0.1:18080 BP_COMPUTE_TOKEN=fixture-secret BP_COMPUTE_TIMEOUT_MS=15000 \
   BP_WORKERD_RUNTIME_ID=workerd-binary-sha256:$BP_WORKERD_BINARY_SHA256 BP_TEST_API_PORT=18081 \
   bun run test ./tests/acceptance/workerd-authority.ts ./tests/acceptance/workerd-identity.ts
 
@@ -135,7 +135,20 @@ checks child absence, no zombies, subsequent healthy invocation and cgroup memor
 within 64 MiB of baseline. The PG memory fixture checks terminal failure and token revocation.
 The artifact fixture also records two-second identity under its one-CPU limit and
 restart recovery after an injected lost exit observation in the owned control mount.
-The original helper is restored before asserting healthy recovery. These are executable
-fixtures awaiting root execution, not completed qualification.
+The original helper is restored before asserting healthy recovery. Run the artifact and PostgreSQL gates together for runtime qualification; a build alone is insufficient.
 
 Preparation imports bundles in a child with empty bindings and no outbound access. The compatibility date is `2026-01-01`; both server and loader hash the identical trusted Check source into the deployment tuple. Children receive no disk, loader, raw network or API bindings. Egress permits only Workspace paths at `http://server:3000` and exact declared HTTPS URLs over workerd's public-only network.
+
+
+Review follow-up: admitted supervisor requests and authenticated, parsed API invokes use
+Bun's per-request `server.timeout(request, 0)` while their operation deadline is active.
+Other requests retain the listener idle timeout. The pinned Elysia adapter defaults to
+30 seconds; raw Bun defaults to 10. The supervisor transport cap is one MiB above the
+handler cap so both limits are exercised. Bare transport 413s map to `function_failed`;
+forwarded function responses carry the supervisor-owned `x-backplane-response: proxied`
+header so an ordinary function 413 remains an ordinary result. The recovery pass has a
+five-second deadline covering reservation through lease release, and shutdown disables
+and aborts only that pool's recovery state. Interrupted artifact fixtures attempt
+ownership-checked cleanup on SIGINT/SIGTERM at bounded operation boundaries. SIGKILL
+cannot execute cleanup; `on-failure:10` bounds automatic failure retries and does not
+remove a leaked container.

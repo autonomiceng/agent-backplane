@@ -26,7 +26,7 @@ export async function workerdPgFixture() {
   const ownerId: string = (await owner.json()).id;
   const ownerKey = await issueKey(f.app, cookie, workspaceId, ownerId), ownerRun = await createRun(f.app, ownerKey, workspaceId);
   await applyMigration(f.app, ownerKey, ownerRun, workspaceId, "CREATE TABLE runtime_proof (id text PRIMARY KEY, value text)");
-  const compute = createComputeLauncher({ url: Bun.env.BP_COMPUTE_URL, token: Bun.env.BP_COMPUTE_TOKEN, runtimeDigest: Bun.env.BP_WORKERD_RUNTIME_ID });
+  const compute = createComputeLauncher({ url: Bun.env.BP_COMPUTE_URL, token: Bun.env.BP_COMPUTE_TOKEN, runtimeDigest: Bun.env.BP_WORKERD_RUNTIME_ID, timeoutMs: Bun.env.BP_COMPUTE_TIMEOUT_MS });
   if (!compute || !await compute.verify(AbortSignal.timeout(2000))) throw Error("actual runtime verification required");
   const app = await testApp(pool, { compute }, cleanup => { cleanups.push(cleanup); });
   const headers = (key = callerKey, run = callerRun) => ({ authorization: `Bearer ${key}`, "x-backplane-run": run, "content-type": "application/json" });
@@ -47,7 +47,7 @@ export async function workerdPgFixture() {
   }
   await start();
   const post = (path: string, body: unknown, actor = headers()) => fetch(new URL(`/api/v1/workspaces/${workspaceId}${path}`, address), {
-    method: "POST", headers: actor, body: JSON.stringify(body), signal: AbortSignal.timeout(15000) });
+    method: "POST", headers: actor, body: JSON.stringify(body), signal: AbortSignal.timeout(20000) });
   async function deploy(name: string, bundle: string, outboundUrls: string[] = []) {
     const id = crypto.randomUUID();
     expect((await post(`/functions/${name}/deployments`, { id, bundle, entryPoint: "default", outboundUrls }, headers(ownerKey, ownerRun))).status).toBe(201);

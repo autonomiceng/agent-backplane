@@ -7,6 +7,7 @@ import { createPool } from "../platform/pool.ts";
 import { migratedDatabase } from "../testing/postgres.ts";
 import { testApp, applyMigration, createRun, issueKey, principalFixture } from "../testing/session.ts";
 import { withRunContext } from "../runs/with-run-context.ts";
+import { reconcileInvocations } from "./reconcile-invocations.ts";
 import { finishInvocation } from "./finish-invocation.ts";
 import type { ComputeLauncher, Invocation } from "./compute-launcher.ts";
 
@@ -323,8 +324,11 @@ test("execution, response overflow and failed finalization leave unbounded autho
       expect(await f.pool<{ run_id: string }[]>`SELECT run_id FROM control.invocation_tokens WHERE run_id=${value.props.runId}`).toEqual([]);
     } finally { exhaustedRelease.resolve(); await exhaustedBlocker; }
     const exhausted = f.observed.at(-1)!;
+    await reconcileInvocations(f.pool);
+    const repaired = await f.pool<{ kind: string; metadata: unknown }[]>`SELECT kind,metadata FROM audit.events WHERE run_id=${exhausted.props.runId}`;
+    expect(repaired).toHaveLength(1); expect(repaired[0]?.kind).toBe("function.fail");
     await finishInvocation(f.pool, exhausted.props.runId, "function.complete", 1, 200);
-    expect(await f.pool<{ kind: string }[]>`SELECT kind FROM audit.events WHERE run_id=${exhausted.props.runId}`).toEqual([{ kind: "function.complete" }]);
+    expect(await f.pool<{ kind: string; metadata: unknown }[]>`SELECT kind,metadata FROM audit.events WHERE run_id=${exhausted.props.runId}`).toEqual(repaired);
     expect((await f.post("/functions/complete/invoke", { input: null })).status).toBe(200);
     expect(await f.pool<{ run_id: string }[]>`SELECT run_id FROM control.invocation_tokens`).toEqual([]);
     expect((await f.post("/sql", { statement: "SELECT 1", params: [] })).status).toBe(200);

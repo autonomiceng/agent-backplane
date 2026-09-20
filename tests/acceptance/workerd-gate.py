@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import secrets
 import socket
+import signal
 import subprocess
 import time
 import urllib.request
@@ -21,10 +22,17 @@ if not 1024 <= args.api_port <= 65535:
 
 token, owner = secrets.token_hex(32), str(uuid.uuid4())
 env = {**os.environ, 'BP_COMPUTE_TOKEN': token, 'BP_WORKERD_IMAGE': args.image,
+       'BP_COMPUTE_TIMEOUT_MS': '15000',
        'BP_WORKERD_BINARY_SHA256': 'f31da6d248028d698806aa93d1b3aec28bbd4b4b7ddc31e967408ab6406fa5aa'}
 
 
+interrupted_signal = None
+cleaning = False
+
+
 def docker(*command):
+    if interrupted_signal is not None and not cleaning:
+        raise SystemExit(128 + interrupted_signal)
     result = subprocess.run(['docker', *command], env=env, capture_output=True,
                             text=True, timeout=120, cwd=ROOT)
     if result.returncode:
@@ -34,6 +42,14 @@ def docker(*command):
 
 
 container = None
+
+def interrupted(signum, _frame):
+    global interrupted_signal
+    interrupted_signal = signum
+
+# SIGKILL cannot run cleanup; finite on-failure retries do not remove a leaked container.
+signal.signal(signal.SIGTERM, interrupted)
+signal.signal(signal.SIGINT, interrupted)
 try:
     context = docker('context', 'inspect', '--format', '{{.Endpoints.docker.Host}}')
     if not context.startswith('unix://') or os.environ.get('DOCKER_HOST', context) != context:
@@ -50,10 +66,10 @@ try:
                BP_WORKERD_RUNTIME_ID='workerd-binary-sha256:' + env['BP_WORKERD_BINARY_SHA256'])
     container = docker('create', '--name', 'bp-runtime-pg-' + owner,
         '--label', 'io.backplane.runtime-proof=' + owner, '--pull', 'never', '--read-only',
-        '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges:true', '--restart', 'unless-stopped',
+        '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges:true', '--restart', 'on-failure:10',
         '--memory', '512m', '--cpus', '1', '--pids-limit', '128', '--publish', '127.0.0.1::8080',
         '--mount', 'type=bind,src=' + str(ROOT / 'apps/server/compute/workerd') + ',dst=/compute,readonly',
-        '--env', 'BP_COMPUTE_TOKEN', '--env', 'BP_WORKERD_IMAGE', '--env', 'BP_WORKERD_HOST_IMAGE_ID',
+        '--env', 'BP_COMPUTE_TOKEN', '--env', 'BP_COMPUTE_TIMEOUT_MS', '--env', 'BP_WORKERD_IMAGE', '--env', 'BP_WORKERD_HOST_IMAGE_ID',
         '--env', 'BP_WORKERD_BINARY_SHA256', '--entrypoint', '/bin/sh', image_id, '/compute/start.sh',
         '--external-addr=api=' + gateway + ':' + str(args.api_port))
     docker('start', container)
@@ -74,11 +90,16 @@ try:
     result = subprocess.run(['bun', 'run', 'test', './tests/acceptance/workerd-authority.ts',
         './tests/acceptance/workerd-memory.ts', './tests/acceptance/workerd-identity.ts'],
         env=env, timeout=160, cwd=ROOT)
+    if interrupted_signal is not None:
+        raise SystemExit(128 + interrupted_signal)
     print(json.dumps({'gate': 'actual-runtime-postgres', 'exitCode': result.returncode,
                       'imageId': image_id, 'memory': '512m', 'cpus': 1}), flush=True)
     if result.returncode:
         raise RuntimeError('actual runtime PostgreSQL gate failed')
 finally:
+    cleaning = True
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
     if container is not None:
         observed = docker('inspect', '--format', '{{index .Config.Labels "io.backplane.runtime-proof"}}', container)
         if observed != owner:
