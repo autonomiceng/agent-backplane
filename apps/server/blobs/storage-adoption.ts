@@ -70,7 +70,12 @@ export async function adoptStorage(pool: Pool, store: BindingStore, options: Ado
       }
       return { intent, inventory };
     });
-    if (options.mode === "inspect") return { status: "inspected", ...prepared.inventory, intent: prepared.intent ? {
+    if (options.mode === "inspect") return { status: "inspected", ...prepared.inventory,
+      binding: prepared.intent ? {
+        databaseId: prepared.intent.database_id, storeId: prepared.intent.store_id,
+        generation: prepared.intent.generation, backend: prepared.intent.backend, phase: prepared.intent.phase,
+      } : null,
+      intent: prepared.intent ? {
       phase: prepared.intent.phase, operation: prepared.intent.intent_kind,
       checkpoint: prepared.intent.checkpoint_ref, retainUnreferenced: prepared.intent.retain_unreferenced,
     } : null };
