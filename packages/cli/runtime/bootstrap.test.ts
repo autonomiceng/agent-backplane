@@ -84,7 +84,7 @@ test("rerun overwrites secrets or repeats provisioning after an interrupted crea
     expect(profiles).toMatch(/^BP_RUSTFS_ROOT_USER=[a-f0-9]{20}$/m);
     expect(profiles).toMatch(/^BP_BLOB_S3_ACCESS_KEY=[a-f0-9]{20}$/m);
     expect(profiles).toMatch(/^BP_RUSTFS_ROOT_PASSWORD=[a-f0-9]{64}$/m);
-    expect(profiles).toMatch(/^BP_BLOB_S3_SECRET_KEY=[a-f0-9]{64}$/m);
+    expect(profiles).toMatch(/^BP_BLOB_S3_SECRET_KEY=[a-f0-9]{40}$/m);
     await prepare([...args, "--env-file", profilesPath, "--profile", "blobs", "--profile", "compute"], {}, runner);
     expect(await readFile(profilesPath, "utf8")).toBe(profiles);
     expect((await f.call([...f.argv, "--principal-id", "invalid"])).code).toBe(1);
