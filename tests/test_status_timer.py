@@ -158,6 +158,8 @@ class StatusTimerTests(unittest.TestCase):
                           unit_dir, lambda argv, **options: activation_calls.append(argv) or runner(argv, **options))
         self.assertEqual(before, {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in unit_dir.iterdir()})
 
+        self.assertIn(['systemctl', '--user', 'daemon-reload'], activation_calls)
+
         partial_dir = root / 'partial-units'
         runner.manager.unit_dir = partial_dir
         original_open = installer.os.open
