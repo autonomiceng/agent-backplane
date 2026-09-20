@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -9,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'scripts'))
 import status_io
 import status_config
 import status_observer as observer
+import install_status_timer as installer
 
 AT = '2026-09-20T12:00:00Z'
 OLD = '2026-09-20T11:57:59Z'
@@ -32,6 +34,84 @@ class StatusObserverTests(unittest.TestCase):
         self.root = Path(self.tmp.name)
         (self.root / '.env').write_text('BP_AUTH_SECRET=private\n')
         (self.root / 'compose.yaml').write_text('name: agent-backplane\nservices: {}\n')
+
+    def test_bootstrap_record_binds_saved_project_ordered_overlays_and_profiles(self):
+        selected = self.root / 'selected'
+        selected.mkdir()
+        env_file = selected / '.env'
+        overlay = selected / 'custom.yaml'
+        overlay.write_text('services: {}\n')
+        env_file.write_text("COMPOSE_PROJECT_NAME=original\n"
+                            "COMPOSE_FILE='../compose.yaml:custom.yaml'\n"
+                            "COMPOSE_PROFILES=blobs,compute\nBP_STATUS_DIR=data\n")
+        state = selected / 'data'
+        command = [sys.executable, str(Path(observer.__file__).with_name('record_status.py')),
+                   '--state-dir', str(state), '--checkout', str(self.root),
+                   '--env-file', str(env_file), '--started', AT, '--state', 'healthy']
+        subprocess.run(command, check=True, capture_output=True)
+        record = status_io.read_task(state, self.root, env_file)
+        self.assertEqual(record['selection'], {'project': 'original',
+                         'composeFiles': [str(self.root / 'compose.yaml'), str(overlay)],
+                         'profiles': ['blobs', 'compute']})
+        subprocess.run([*command, '--project-name', 'original',
+                        '--compose-file', str(self.root / 'compose.yaml'),
+                        '--compose-file', str(overlay), '--profile', 'compute', '--profile', 'blobs'],
+                       check=True, capture_output=True)
+        self.assertEqual(status_io.read_task(state, self.root, env_file), record)
+        mismatch = subprocess.run([*command, '--project-name', 'other'], capture_output=True, text=True)
+        self.assertEqual((mismatch.returncode, mismatch.stdout, mismatch.stderr),
+                         (1, '', 'status_selection_mismatch\n'))
+        self.assertEqual(status_io.read_task(state, self.root, env_file), record)
+        def runner(argv, **_options):
+            return json.dumps(config('original')) if 'config' in argv else ''
+        document = observer.observe(self.root, env_file=env_file, runner=runner, clock=lambda: AT)
+        bootstrap = next(row for row in document['components'] if row['id'] == 'bootstrap')
+        self.assertEqual((bootstrap['state'], bootstrap['lastExecutionAt']), ('healthy', AT))
+        self.assertNotIn('selection', json.dumps(document))
+        self.assertEqual(json.loads((state / 'console/status.json').read_text()), document)
+
+    def test_bootstrap_health_from_different_overlay_order_is_refused(self):
+        first, last = self.root / 'first.yaml', self.root / 'last.yaml'
+        first.write_text('services: {}\n')
+        last.write_text('services: {}\n')
+        files = [str(self.root / 'compose.yaml'), str(first), str(last)]
+        (self.root / '.env').write_text(f"COMPOSE_FILE={':'.join(files)}\nCOMPOSE_PROFILES=\n")
+        status_io.task_record(self.root / 'data', self.root, self.root / '.env', AT, 'healthy',
+                              {'project': 'agent-backplane', 'composeFiles': [files[0], files[2], files[1]],
+                               'profiles': []})
+        def runner(argv, **_options):
+            return json.dumps(config()) if 'config' in argv else ''
+        document = observer.observe(self.root, runner=runner, clock=lambda: AT)
+        bootstrap = next(row for row in document['components'] if row['id'] == 'bootstrap')
+        self.assertEqual((bootstrap['configured'], bootstrap['state'], bootstrap['lastExecutionAt']),
+                         (True, 'unknown', None))
+        self.assertEqual(document['configurationObservedAt'], AT)
+
+    def test_saved_empty_profiles_remain_empty_in_bare_observer_and_existing_timer(self):
+        env_file = self.root / '.env'
+        env_file.write_text('COMPOSE_PROJECT_NAME=agent-backplane\nCOMPOSE_FILE=compose.yaml\n'
+                            "COMPOSE_PROFILES=''\n")
+        bare = status_config.selection(self.root)
+        self.assertEqual(bare[-1], ())
+        service = installer.units(*bare, 'unix:///selected.sock', str(self.root / 'docker'),
+                                  '/usr/bin', self.root / 'data')[installer.NAME + '.service']
+        self.assertNotIn('--profile', service)
+        explicit = status_config.selection(self.root, env_file, 'agent-backplane', ['compose.yaml'], [''])
+        self.assertEqual(explicit, bare)
+        def runner(argv, **options):
+            effective_profiles = options['env'].get('COMPOSE_PROFILES', '')
+            rendered = config()
+            if effective_profiles:
+                rendered['services']['workerd'] = {}
+            return json.dumps(rendered) if 'config' in argv else ''
+        with patch.dict('os.environ', {'COMPOSE_PROFILES': 'compute'}, clear=False):
+            document = observer.observe(self.root, project='agent-backplane',
+                                        compose_files=['compose.yaml'], runner=runner, clock=lambda: AT)
+        functions = next(row for row in document['components'] if row['id'] == 'functions')
+        self.assertEqual((functions['configured'], functions['state']), (False, 'disabled'))
+        env_file.write_text(env_file.read_text().replace("COMPOSE_PROFILES=''", 'COMPOSE_PROFILES=compute'))
+        with self.assertRaises(status_io.Unavailable):
+            status_config.selection(self.root, profiles=[''])
 
     def test_explicit_custody_wrong_project_and_malformed_evidence_publish_unknown(self):
         calls = []

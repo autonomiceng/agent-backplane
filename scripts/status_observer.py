@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
-from status_config import configuration, environment, local_bridges, modes, selection
+from status_config import configuration, environment, local_bridges, modes, saved_settings, selection
 from status_io import Unavailable, directory, now, publish, read_json, read_task, regular, run
 from status_probes import capabilities, configured_image, probe
 
@@ -262,6 +262,9 @@ def collect(root, env_file, project, compose_files, profiles, state_dir, runner,
         try:
             at = clock()
             record = read_task(state_dir, root, env_file)
+            expected = {'project': project, 'composeFiles': list(map(str, compose_files)), 'profiles': list(profiles)}
+            if record.get('selection') != expected:
+                raise Unavailable()
             started = timestamp(record.get('lastExecutionAt'), at)
             if started and record.get('state') in ('healthy', 'unavailable', 'unknown'):
                 rows['bootstrap'].update(state=record['state'], observedAt=at,
@@ -273,12 +276,15 @@ def collect(root, env_file, project, compose_files, profiles, state_dir, runner,
             'telemetry': 'unknown', 'components': list(rows.values())}
 
 
-def observe(root, env_file=None, project='agent-backplane', compose_files=(), profiles=(),
+def observe(root, env_file=None, project=None, compose_files=(), profiles=None,
             state_dir=None, runner=run, clock=now):
     root, env_file, project, compose_files, profiles = selection(
         root, env_file, project, compose_files, profiles)
     # Keep explicit path components so descriptor walking can reject symlinks.
-    state_dir = Path(os.path.abspath(state_dir)) if state_dir else root / 'data'
+    if state_dir is None:
+        recorded_state = saved_settings(env_file).get('BP_STATUS_DIR')
+        state_dir = env_file.parent / recorded_state if recorded_state else root / 'data'
+    state_dir = Path(os.path.abspath(state_dir))
     env = environment()
     deadline = time.monotonic() + COLLECTION_TIMEOUT
 
@@ -313,9 +319,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--checkout', type=Path, required=True)
     parser.add_argument('--env-file', type=Path)
-    parser.add_argument('--project-name', default='agent-backplane')
+    parser.add_argument('--project-name')
     parser.add_argument('--compose-file', action='append', default=[])
-    parser.add_argument('--profile', action='append', default=[])
+    parser.add_argument('--profile', action='append', help="repeat for each selected profile; '' selects none")
     parser.add_argument('--state-dir', type=Path)
     args = parser.parse_args()
     try:

@@ -173,10 +173,10 @@ def publish(fd, name, document, mode=0o644, *, serialized=False):
             pass
 
 
-def task_record(state_dir, root, env_file, started, state):
+def task_record(state_dir, root, env_file, started, state, selection):
     with directory(state_dir / 'status', 0o700) as fd:
         publish(fd, 'bootstrap.json', {'checkout': str(root), 'envFile': str(env_file), 'state': state,
-                                      'lastExecutionAt': started}, 0o600)
+                                      'lastExecutionAt': started, 'selection': selection}, 0o600)
 
 
 def read_task(state_dir, root, env_file):
