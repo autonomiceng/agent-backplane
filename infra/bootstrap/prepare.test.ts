@@ -7,11 +7,15 @@ import { record as isRecord } from "../../packages/cli/runtime/http.ts";
 import { resolveAccess } from "../compose/validate-edge.ts";
 import { defaultWorkerdBinary } from "./workerd-image.ts";
 
+const probeContainers = new Map<string, string[]>();
 const fakeRunner: Runner = async (args, env) => {
+  if (args[0] === "create") { const id = crypto.randomUUID().replaceAll("-", "").repeat(2); probeContainers.set(id, args); return id; }
+  if (args[0] === "rm") { probeContainers.delete(args.at(-1) ?? ""); return ""; }
+  if (args[0] === "start") args = probeContainers.get(args.at(-1) ?? "") ?? [];
   if (args[0] === "context") return "unix:///var/run/docker.sock";
   if (args[0] === "info") return "amd64";
   if (args[0] === "image") return `sha256:${"a".repeat(64)} amd64`;
-  if (args[0] === "run") {
+  if (args[0] === "create") {
     const entrypoint = args.indexOf("--entrypoint");
     expect(args[entrypoint + 2]).toBe(`sha256:${"a".repeat(64)}`);
     if (args[entrypoint + 1] === "sha256sum") return `${defaultWorkerdBinary}  /usr/bin/workerd\na83d263767d839e4d2649ca8e35d07159c7afc99afdc96d731ced29e056dda0c  /usr/bin/bun`;
@@ -301,7 +305,7 @@ async function selectionFixture(check: (fixture: {
     });
   } finally { await rm(directory, { recursive: true, force: true }); }
 }
-const mutations = (calls: string[][]) => calls.filter(args => args.includes("create") || args.includes("up") || args[0] === "run");
+const mutations = (calls: string[][]) => calls.filter(args => (args[0] === "volume" || args[0] === "network") && args[1] === "create" || args.includes("up"));
 
 test("fresh full and minimal save native Compose selections, including independently selected ingress", async () => {
   for (const mode of [undefined, "full", "minimal"]) for (const ingress of [undefined, "edge", "gateway"]) await selectionFixture(async ({ path, args, runner, record, calls }) => {
@@ -316,8 +320,8 @@ test("fresh full and minimal save native Compose selections, including independe
     expect(saved).toContain(`BP_BLOB_BACKEND='${mode === "minimal" ? "filesystem" : "s3"}'`);
     expect(saved.includes("BP_COMPUTE_TOKEN=")).toBe(mode !== "minimal");
     expect(calls.some(call => call[0] === "build")).toBe(mode !== "minimal");
-    expect(calls.some(call => call[0] === "run")).toBe(mode !== "minimal");
-    expect(calls.findIndex(call => call.includes("config"))).toBeLessThan(calls.findIndex(call => call.includes("create")));
+    expect(calls.some(call => call[0] === "create")).toBe(mode !== "minimal");
+    expect(calls.findIndex(call => call.includes("config"))).toBeLessThan(calls.findIndex(call => call[0] === "volume" && call[1] === "create"));
   });
   for (const source of [undefined, "# retain operator settings\nBP_WORKERD_IMAGE=\n"]) await selectionFixture(async ({ directory, path, args, runner, record, calls, records }) => {
     if (source !== undefined) await writeFile(path, source);
