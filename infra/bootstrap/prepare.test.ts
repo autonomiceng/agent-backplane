@@ -57,3 +57,21 @@ test("prepare preserves complete image references and rejects ambiguous server a
     await expect(prepare(args, {}, runner)).rejects.toMatchObject({ error: "env_repair_required" });
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
+
+
+test("prepare refuses persisted internal image overrides before launch or env changes", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "bp-prepare-override-"));
+  const path = join(directory, ".env");
+  let calls = 0;
+  try {
+    for (const assignment of ["BP_WORKERD_EFFECTIVE_IMAGE=other:local", "export BP_WORKERD_EFFECTIVE_IMAGE=other:local", " BP_WORKERD_EFFECTIVE_IMAGE=", "BP_WORKERD_EFFECTIVE_IMAGE=''"]) {
+      const source = `BP_WORKERD_IMAGE=fixture:local\n${assignment}\n`;
+      await Bun.write(path, source);
+      await expect(prepare(["--env-file", path, "--capability-file", join(directory, "capability"), "--profile", "compute"], {}, async () => {
+        calls++; return "";
+      })).rejects.toMatchObject({ error: "workerd_effective_image_persisted" });
+      expect(await readFile(path, "utf8")).toBe(source);
+    }
+    expect(calls).toBe(0);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});

@@ -16,6 +16,10 @@ _Avoid_: Agent (when meaning the identity), bot, service account
 One invocation of a Principal. Every statement, message, blob and schema change is stamped with the Run that caused it. Carries harness, model and a label when the caller supplies them; extra facts live in open-ended metadata.
 _Avoid_: Session, job, execution, trace
 
+**Runtime Identity**:
+The measured executable bytes used to run a deployed function. Image packaging and control software are separate evidence and compatibility concerns.
+_Avoid_: Image digest, attestation
+
 **Harness**:
 The environment a Principal executes in, such as Claude Code, Codex, or a hosted bot. The backplane never controls a Harness; it only records which one a Run came from.
 _Avoid_: Runtime, client, platform

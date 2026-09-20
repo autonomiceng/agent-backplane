@@ -1,8 +1,9 @@
 // Local installation entrypoint; the injected runner lets tests exercise custody without Docker.
+import { persistWorkerdEvidence, verifyWorkerdImage } from "./workerd-image.ts";
 import { parseArgs } from "node:util";
 import { randomBytes } from "node:crypto";
 import { stat } from "node:fs/promises";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { privateRead, privateWrite, privateLock } from "../../packages/cli/runtime/credential-file.ts";
 import { CliError, type Environment } from "../../packages/cli/runtime/credentials.ts";
 import { resolveAccess } from "../compose/validate-edge.ts";
@@ -23,10 +24,11 @@ export async function prepare(argv: string[], env: Environment, run: Runner = do
   const unlock = await privateLock(`${path}.lock`);
   try {
     const source = await privateRead(path, true), entries: Record<string, string> = {};
-    const managed = new Set([...core, ...blobs, "BP_COMPUTE_TOKEN", "BP_PUBLIC_URL", "BP_PUBLIC_DOMAIN", "BP_SCHEME", "BP_TLS_ISSUER", "BP_EDGE_CA", "BP_PUBLIC_HOST", "BP_EDGE_BIND_HOST", "BP_ACCESS_MODE", "BP_AUTH_URL", "BP_PORT", "BP_BIND_HOST", "BP_HTTP_PORT", "BP_HTTPS_PORT", "BP_BACKUP_DIR", "BP_POSTGRES_IMAGE", "BP_SERVER_IMAGE", "BP_CADDY_IMAGE", "BP_RUSTFS_IMAGE", "BP_BLOB_BOOTSTRAP_IMAGE", "BP_WORKERD_REPOSITORY", "BP_WORKERD_DIGEST", "BP_PLATFORM_NETWORK", "BP_VOLUME_PREFIX", "BP_BACKUP_KEEP"]);
+    const managed = new Set([...core, ...blobs, "BP_COMPUTE_TOKEN", "BP_PUBLIC_URL", "BP_PUBLIC_DOMAIN", "BP_SCHEME", "BP_TLS_ISSUER", "BP_EDGE_CA", "BP_PUBLIC_HOST", "BP_EDGE_BIND_HOST", "BP_ACCESS_MODE", "BP_AUTH_URL", "BP_PORT", "BP_BIND_HOST", "BP_HTTP_PORT", "BP_HTTPS_PORT", "BP_BACKUP_DIR", "BP_POSTGRES_IMAGE", "BP_SERVER_IMAGE", "BP_CADDY_IMAGE", "BP_RUSTFS_IMAGE", "BP_BLOB_BOOTSTRAP_IMAGE", "BP_WORKERD_REPOSITORY", "BP_WORKERD_DIGEST", "BP_WORKERD_IMAGE", "BP_WORKERD_BINARY_SHA256", "BP_DATA_DIR", "BP_PLATFORM_NETWORK", "BP_VOLUME_PREFIX", "BP_BACKUP_KEEP"]);
     for (const line of (source ?? "").split("\n")) {
       if (!line.trim() || line.trimStart().startsWith("#")) continue;
       const name = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)/.exec(line)?.[1];
+      if (name === "BP_WORKERD_EFFECTIVE_IMAGE") throw new CliError("workerd_effective_image_persisted", 1);
       if (!name || !managed.has(name)) continue;
       const match = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line);
       if (match?.[1] && match[2] === "" && entries[match[1]] === undefined) continue;
@@ -63,8 +65,10 @@ export async function prepare(argv: string[], env: Environment, run: Runner = do
     const existingVolumes = await run(["volume", "ls", "--format", "{{.Name}}"], child);
     if ((volumes.trim() || existingVolumes.split("\n").some(v => v.startsWith(`${prefix}_`))) && keys.some(k => entries[k] === undefined)) throw new CliError("existing_volume_missing_secrets", 2);
     if (profiles.includes("compute")) {
-      if (!/^[a-f0-9]{64}$/.test(entries.BP_WORKERD_DIGEST ?? "") || !entries.BP_WORKERD_REPOSITORY) throw new CliError("workerd_image_pin_required", 1);
-      await run(["image", "inspect", `${entries.BP_WORKERD_REPOSITORY}@sha256:${entries.BP_WORKERD_DIGEST}`], child);
+      const identity = await verifyWorkerdImage(entries, child, run);
+      await persistWorkerdEvidence(resolve(dirname(path), entries.BP_DATA_DIR ?? "data"), identity);
+      child.BP_WORKERD_EFFECTIVE_IMAGE = identity.imageId;
+      child.BP_WORKERD_HOST_IMAGE_ID = identity.imageId;
     }
     for (const key of keys) if (entries[key] === undefined) {
       entries[key] = randomBytes(key === "BP_RUSTFS_ROOT_USER" || key === "BP_BLOB_S3_ACCESS_KEY" ? 10 : 32).toString("hex");

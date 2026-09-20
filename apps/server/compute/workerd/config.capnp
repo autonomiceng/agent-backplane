@@ -9,6 +9,10 @@ const config :W.Config = (
       bindings=[
         (name="LOADER", workerLoader=()),
         (name="TOKEN", fromEnvironment="BP_COMPUTE_TOKEN"),
+        (name="RUNTIME_ID", fromEnvironment="BP_WORKERD_RUNTIME_ID"),
+        (name="CONTROL_SHA256", fromEnvironment="BP_WORKERD_CONTROL_SHA256"),
+        (name="IMAGE_REFERENCE", fromEnvironment="BP_WORKERD_IMAGE"),
+        (name="HOST_IMAGE_ID", fromEnvironment="BP_WORKERD_HOST_IMAGE_ID"),
         (name="API", service="api")
       ]
     )),

@@ -18,7 +18,7 @@ const publicSettings = [
   "BP_HTTPS_PORT=8443",
 ];
 
-async function config(overlays: string[] = [], profile?: string, settings = publicSettings) {
+async function config(overlays: string[] = [], profile?: string, settings = publicSettings, failure?: string) {
   const directory = await mkdtemp(join(tmpdir(), "bp-compose-config-"));
   const backup = join(directory, "backup");
   await mkdir(backup);
@@ -40,6 +40,7 @@ async function config(overlays: string[] = [], profile?: string, settings = publ
     const [stdout, stderr, code] = await Promise.all([
       new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
     ]);
+    if (failure) { expect(code).not.toBe(0); expect(stderr).toContain(failure); return null; }
     expect(code, stderr).toBe(0);
     return JSON.parse(stdout);
   } finally { await rm(directory, { recursive: true, force: true }); }
@@ -99,7 +100,7 @@ test("every merged service uses journald without a Docker file cache or Alloy de
     `BP_BLOB_BOOTSTRAP_IMAGE=fixture@sha256:${"a".repeat(64)}`,
     "BP_RUSTFS_ROOT_USER=fixture", "BP_RUSTFS_ROOT_PASSWORD=fixture",
     "BP_BLOB_S3_ACCESS_KEY=fixture", "BP_BLOB_S3_SECRET_KEY=fixture",
-    "BP_COMPUTE_TOKEN=fixture", "BP_WORKERD_REPOSITORY=fixture", `BP_WORKERD_DIGEST=${"a".repeat(64)}`,
+    "BP_COMPUTE_TOKEN=fixture", "BP_WORKERD_IMAGE=fixture:local", `BP_WORKERD_BINARY_SHA256=${"a".repeat(64)}`,
   ]);
   for (const service of Object.values(rendered.services)) {
     expect(service).toMatchObject({ logging: { driver: "journald", options: { "cache-disabled": "true" } } });
@@ -115,4 +116,24 @@ test("every merged service uses journald without a Docker file cache or Alloy de
   expect(rendered.services.edge.networks.platform.aliases).toEqual(["bp-gateway"]);
   expect(rendered.services.edge.logging).toEqual({ driver: "journald", options: { "cache-disabled": "true" } });
   expect(rendered.services.postgres.networks.platform).toBeUndefined();
+});
+
+
+test("bare Compose requires a full reference and trusts effective image overrides", async () => {
+  const digest = "a".repeat(64);
+  const settings = ["BP_COMPUTE_TOKEN=fixture", "BP_WORKERD_IMAGE=fixture:local", `BP_WORKERD_BINARY_SHA256=${digest}`];
+  const tagged = await config(["compose.compute.yaml"], "compute", settings);
+  expect(tagged.services.workerd.image).toBe("fixture:local");
+  expect(tagged.services.workerd.environment.BP_WORKERD_HOST_IMAGE_ID).toBe("");
+  expect(tagged.services.workerd.pull_policy).toBe("never");
+  expect(tagged.services.workerd.entrypoint).toEqual(["/bin/sh", "/compute/start.sh"]);
+  expect(tagged.services.server.environment.BP_WORKERD_RUNTIME_ID).toBe(`workerd-binary-sha256:${digest}`);
+  const pinned = await config(["compose.compute.yaml"], "compute", [...settings, `BP_WORKERD_EFFECTIVE_IMAGE=sha256:${digest}`, `BP_WORKERD_HOST_IMAGE_ID=sha256:${digest}`]);
+  expect(pinned.services.workerd.image).toBe(`sha256:${digest}`);
+  expect(pinned.services.workerd.environment.BP_WORKERD_IMAGE).toBe("fixture:local");
+  expect(pinned.services.workerd.environment.BP_WORKERD_HOST_IMAGE_ID).toBe(`sha256:${digest}`);
+  const edited = await config(["compose.compute.yaml"], "compute", ["BP_COMPUTE_TOKEN=fixture", "BP_WORKERD_IMAGE=fixture:edited"]);
+  expect(edited.services.workerd.image).toBe("fixture:edited");
+  expect(edited.services.workerd.environment.BP_WORKERD_HOST_IMAGE_ID).toBe("");
+  for (const image of [[], ["BP_WORKERD_IMAGE="]]) await config(["compose.compute.yaml"], "compute", ["BP_COMPUTE_TOKEN=fixture", ...image], "BP_WORKERD_IMAGE");
 });

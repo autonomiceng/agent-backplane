@@ -14,6 +14,8 @@ export async function invokeFunction(pool: Pool, caller: RunContext, name: strin
   if (!launcher.invoke) throw new InvocationError("compute_unavailable");
   const token = `bp_i_${randomBytes(32).toString("hex")}`, hash = createHash("sha256").update(token).digest();
   const started = performance.now();
+  const evidence = await launcher.verify(AbortSignal.any([signal, AbortSignal.timeout(2000)]));
+  if (!evidence) throw new InvocationError("compute_unavailable");
   const invocation = await withRunContext(pool, caller, async (tx, emit) => {
     const [active] = await tx<{ id: string }[]>`SELECT id FROM control.deployments
       WHERE workspace_id=${caller.workspaceId} AND function_name=${name} AND status='active' FOR SHARE`;
@@ -27,7 +29,7 @@ export async function invokeFunction(pool: Pool, caller: RunContext, name: strin
     const manifest: Manifest = { version: 1, workspaceId: caller.workspaceId, functionName: name, id: active.id,
       bundle: deployment.bundle, bundleSha256: m.bundleSha256, entryPoint: m.entryPoint, compatibilityDate: m.compatibilityDate,
       outboundUrls: m.outboundUrls, keyRef: { workspaceId: caller.workspaceId, principalId: m.principalId }, runtimeDigest: m.runtimeDigest, configHash: m.configHash };
-    await emit("function.invoke", [name, active.id, child.runId], 1, { deploymentId: active.id, runId: child.runId });
+    await emit("function.invoke", [name, active.id, child.runId], 1, { deploymentId: active.id, runId: child.runId, artifact: evidence.artifact });
     await tx`SELECT control.sweep_invocation_tokens()`;
     return { ...child, manifest };
   });
@@ -48,7 +50,7 @@ export async function invokeFunction(pool: Pool, caller: RunContext, name: strin
       if (performance.now() >= deadline) throw new InvocationError("function_timeout");
       controller.signal.throwIfAborted();
       const response = await launcher.invoke?.({ manifest: invocation.manifest,
-        props: { token, runId: invocation.runId, workspaceId: caller.workspaceId }, input: body.input }, controller.signal);
+        props: { token, runId: invocation.runId, workspaceId: caller.workspaceId }, input: body.input }, controller.signal, evidence);
       if (!response) throw new InvocationError("compute_unavailable");
       if (controller.signal.aborted) { void response.body?.cancel().catch(() => {}); controller.signal.throwIfAborted(); }
       httpStatus = response.status;
