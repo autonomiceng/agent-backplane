@@ -2,6 +2,7 @@
 import type { Pool } from "../platform/pool.ts";
 import { blobUuid, type BlobRef, type BlobStore } from "./blob-store.ts";
 
+import { migrationGate } from "./storage-migration-gate.ts";
 import { storageLease } from "./storage-lease.ts";
 import { storageInventory, type StoredObject } from "./storage-inventory.ts";
 
@@ -24,6 +25,7 @@ export async function verifyStorageBinding(pool: Pool, store: BindingStore, onLe
   try {
     await lease.session.begin(async tx => {
       await tx`SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY`;
+      await migrationGate(tx);
       const rows = await tx<Binding[]>`SELECT database_id,store_id,generation,backend,phase FROM control.blob_storage_binding`;
       if (!rows.length) refuse("required");
       const binding = rows[0];
@@ -42,6 +44,7 @@ export async function verifyStorageBinding(pool: Pool, store: BindingStore, onLe
   } catch (error) {
     // Refusal remains authoritative if a disconnected session also fails cleanup.
     await lease.release().catch(() => {});
+    if (error instanceof Error && error.message === "blob_binding_migration_pending") throw error;
     if (error instanceof BindingError || error instanceof Error && /^blob_binding_(inventory_mismatch|content_mismatch)$/.test(error.message)) throw error;
     if (error instanceof Error && error.message === "blob_inventory_invalid") return refuse("store_invalid");
     return refuse("unavailable");
