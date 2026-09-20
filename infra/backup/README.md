@@ -98,7 +98,8 @@ when restoring recorded references.
    directory must be empty; a recovered timeline must not archive into the source
    incarnation's repository.
 2. Copy the selected complete checkpoint directory into the new repository under
-   `backups/`. Restore verifies and loads the saved server image automatically, then
+   `backups/`, preserving the manifest's checkpoint name. Misplaced or renamed inputs
+   are refused before target writes. Restore verifies and loads the saved server image automatically, then
    verifies locally loaded upstream recovery references, pulling only missing references,
    and checks their content IDs before target writes. Keep
    image settings at their recorded references. Local server tags are restored from
@@ -278,3 +279,8 @@ regular entries for safe restore. Follow the [storage recovery procedure](../../
 before resuming the server. Offline S3 capture additionally requires RustFS running on entry, and always restores its running state after the physical capture.
 
 Compose Checkpoints require `--fenced` to attest that external writers and mutating helpers remain stopped for the entire command. Local S3 capture and fresh-store restore use the [qualified RustFS procedure](../../docs/operations/s3-checkpoints.md); unsupported S3 layouts refuse before capture.
+
+If recovery completes but cannot publish its health receipt, the tool reports that
+separately and leaves restored Workspaces gated. Repair repository permissions or
+free space and take a new fenced Checkpoint. Do not repeat restore into the now
+non-empty target volumes. Invalid completion timestamps are refused before writes.
