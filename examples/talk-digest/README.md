@@ -24,8 +24,9 @@ Both SQL operations use `expectRows: 1`; the following operation acknowledges th
 Do not run this section until the demo gate is explicitly released. Use only the supplied collector credential file. The variables below make a unique private CLI cache for the actual Harness run.
 
 ```bash
-export BACKPLANE_REPO=/home/ilya-bb8/code/autonomiceng/agent-backplane/.devloop/worktrees/agent/talk-demo-20260920
-export BP_CREDENTIALS_FILE=/home/ilya-bb8/.backplane/platform-demo-20260920/collector.credentials.json
+export BACKPLANE_REPO=/absolute/path/to/agent-backplane
+export BP_CREDENTIALS_FILE=/absolute/private/collector.credentials.json
+export DEMO_WORKSPACE_ID=YOUR_WORKSPACE_UUID DEMO_PRINCIPAL_ID=YOUR_COLLECTOR_PRINCIPAL_UUID
 export DEMO_TOKEN="$(bun -e 'console.log(crypto.randomUUID())')"
 export BP_SESSION="collector-$DEMO_TOKEN"
 export BP_DATA_DIR="$BACKPLANE_REPO/.scratch/private/collector/$DEMO_TOKEN"
@@ -35,7 +36,7 @@ bp() { bun "$BACKPLANE_REPO/packages/cli/runtime/main.ts" "$@"; }
 bp auth whoami
 ```
 
-Require Workspace `fdb8bb55-8e32-4d41-aab9-7ce3d8de7fd7` and Principal `3cd028ae-b84a-440a-a6a6-f4a5077a4181`. Verify MCP initialization and `tools/list` with the same environment:
+Set the expected Workspace and collector Principal IDs supplied by the operator; require the `whoami` result to match them. Verify MCP initialization and `tools/list` with the same environment:
 
 ```bash
 printf '%s\n' \

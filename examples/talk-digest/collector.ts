@@ -4,8 +4,8 @@ import { mkdtemp, open, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 
-const WORKSPACE = "fdb8bb55-8e32-4d41-aab9-7ce3d8de7fd7";
-const PRINCIPAL = "3cd028ae-b84a-440a-a6a6-f4a5077a4181";
+const WORKSPACE = process.env.DEMO_WORKSPACE_ID;
+const PRINCIPAL = process.env.DEMO_PRINCIPAL_ID;
 const QUEUE = "platform-talks-v1";
 const CLI = resolve(import.meta.dir, "../../packages/cli/runtime/main.ts");
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
@@ -41,7 +41,7 @@ async function bp(args: string[], body?: Json): Promise<Json> {
   return stdout.trim() ? JSON.parse(stdout) as Json : null;
 }
 async function identity() {
-  for (const name of ["BP_CREDENTIALS_FILE", "BP_SESSION", "BP_DATA_DIR", "BP_HARNESS", "BP_MODEL", "BP_RUN_LABEL"])
+  for (const name of ["DEMO_WORKSPACE_ID", "DEMO_PRINCIPAL_ID", "BP_CREDENTIALS_FILE", "BP_SESSION", "BP_DATA_DIR", "BP_HARNESS", "BP_MODEL", "BP_RUN_LABEL"])
     if (!process.env[name]) throw new Error(`${name}_required`);
   if (process.env.BP_KEY || process.env.BP_USER_EMAIL || process.env.BP_USER_PASSWORD) throw new Error("file_principal_credentials_required");
   const who = object(await bp(["auth", "whoami"]), "whoami");
