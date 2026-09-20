@@ -379,7 +379,7 @@ def prepare_restored_storage(stack, checkpoint, retain_unreferenced=False):
     if 'storage-init' not in stack.services:
         return
     stack.dc('up', '-d', '--wait', '--no-build', '--pull', 'never', 'postgres')
-    evidence = json.loads(storage_admin(stack, 'inspect', '--fenced', '--checkpoint', checkpoint))
+    evidence = json.loads(storage_admin(stack, 'inspect', '--fenced'))
     if (evidence.get('intent') or {}).get('phase') != 'ready':
         raise RuntimeError('restored storage has an unfinished binding intent; keep the server stopped and retry its original operator command before starting')
     if any(ref['classification'] == 'unreferenced' for ref in evidence['objects']):

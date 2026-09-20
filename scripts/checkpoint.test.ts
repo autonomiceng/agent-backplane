@@ -219,6 +219,7 @@ calls=[]
 evidence={'intent':{'phase':'ready'},'objects':[{'classification':'unreferenced'}]}
 def dc(*args):
  calls.append(args)
+ if 'inspect' in args: assert args == ('inspect','--fenced'), args
  return json.dumps(evidence) if 'inspect' in args else ''
 stack=SimpleNamespace(services={'storage-init':{}}, dc=dc)
 cp.storage_admin=lambda stack,*args: dc(*args)
