@@ -18,6 +18,7 @@ jobs:
           bun-version: "1.4.2"
       - run: bun install --frozen-lockfile
       - run: bun run check
+      - run: python3 -m unittest discover -s tests -p 'test_status*.py'
       # Tests start embedded PostgreSQL; no service container is needed.
       # Host rollout acceptance stays separate; the isolated storage/runtime gates run below.
       - run: bun run test
