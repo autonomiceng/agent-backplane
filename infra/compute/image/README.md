@@ -35,13 +35,11 @@ This fixes build inputs; it does not claim bit-identical OCI output from differe
 Docker builders. Record `docker image inspect` content identity after building. A local
 image ID is not a registry manifest digest. Do not place it in the legacy `BP_WORKERD_DIGEST`. The [runtime identity contract](../runtime.md)
 accepts local tags through `BP_WORKERD_IMAGE` and verifies executable bytes against
-`BP_WORKERD_BINARY_SHA256` at startup. The locally qualified amd64 packaging artifact is
-`agent-backplane-workerd:1.20260918.1`, image ID
-`sha256:1b5694d34643f982d7e7a511f81afbb1f59ec49bce0a60685e88deff24bebe3f`.
-This local config ID is candidate evidence. With compute selected, bootstrap builds the
+`BP_WORKERD_BINARY_SHA256` at startup. Record the actual image ID from each build as candidate artifact evidence. With compute selected, bootstrap builds the
 recipe under this tag when `BP_WORKERD_IMAGE` is unset or empty, then verifies both
 workerd and Bun by resolved image ID. An explicit override must already exist locally;
-bootstrap neither builds over it nor pulls it. It requires the recipe's Bun 1.4.2 bytes and workerd version `2026-09-18`.
+bootstrap neither builds over it nor pulls it. It requires the recipe's Bun 1.4.2 bytes. Different workerd versions require an explicit
+binary checksum and their own runtime qualification.
 The default build refuses non-amd64 Docker hosts. Build inputs require network access
 and compatible Docker/BuildKit tooling; no installed compiler is needed.
 

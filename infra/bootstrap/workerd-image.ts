@@ -38,7 +38,8 @@ export async function verifyWorkerdImage(entries: Environment, env: Environment,
   if (observed !== `${binary}  /usr/bin/workerd\n${supervisorBinary}  /usr/bin/bun`) throw new CliError("workerd_binary_identity_mismatch", 1);
   const workerdVersion = (await run([...container, "/usr/bin/workerd", imageId, "--version"], env)).trim();
   const supervisorVersion = (await run([...container, "/usr/bin/bun", imageId, "--version"], env)).trim();
-  if (workerdVersion !== "workerd 2026-09-18" || supervisorVersion !== "1.4.2") throw new CliError("workerd_binary_incompatible", 1);
+  const compatibleWorkerd = binary === defaultWorkerdBinary ? workerdVersion === "workerd 2026-09-18" : /^workerd \d{4}-\d{2}-\d{2}$/.test(workerdVersion);
+  if (!compatibleWorkerd || supervisorVersion !== "1.4.2") throw new CliError("workerd_binary_incompatible", 1);
   return { reference, imageId, binarySha256: binary, supervisorBinarySha256: supervisorBinary,
     workerdVersion, supervisorVersion, architecture, observedAt: new Date().toISOString() };
 }

@@ -197,6 +197,7 @@ export async function prepare(argv: string[], env: Environment, run: Runner = do
     if (profiles.includes("compute")) {
       const identity = await verifyWorkerdImage(entries, child, run);
       await persistWorkerdEvidence(resolve(dirname(path), entries.BP_DATA_DIR ?? "data"), identity);
+      child.BP_WORKERD_IMAGE = identity.reference;
       child.BP_WORKERD_EFFECTIVE_IMAGE = identity.imageId;
       child.BP_WORKERD_HOST_IMAGE_ID = identity.imageId;
     }

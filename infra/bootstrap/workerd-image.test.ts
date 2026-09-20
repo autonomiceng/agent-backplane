@@ -86,6 +86,12 @@ test("invalid identity, missing supervisor and incompatible executables refuse l
   await expect(verifyWorkerdImage(entries, {}, run)).rejects.toMatchObject({ error: "workerd_binary_incompatible" });
   state.bunVersion = "1.4.2"; state.workerdVersion = "workerd 2026-09-19";
   await expect(verifyWorkerdImage(entries, {}, run)).rejects.toMatchObject({ error: "workerd_binary_incompatible" });
+  const custom = { ...entries, BP_WORKERD_BINARY_SHA256: "d".repeat(64) };
+  state.hashes = hashes.replace(defaultWorkerdBinary, custom.BP_WORKERD_BINARY_SHA256);
+  expect((await verifyWorkerdImage(custom, {}, run)).workerdVersion).toBe("workerd 2026-09-19");
+  expect(state.builds).toBe(0);
+  state.workerdVersion = "unexpected executable";
+  await expect(verifyWorkerdImage(custom, {}, run)).rejects.toMatchObject({ error: "workerd_binary_incompatible" });
 });
 
 test("verification and private launch evidence preserve the resolved image across retags", async () => {
