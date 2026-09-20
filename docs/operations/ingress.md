@@ -8,7 +8,7 @@ Choose `BP_ACCESS_MODE` in the environment file used by preparation:
 | Public (`public`) | Automatically renewed trusted HTTPS certificates for your own domain | Set `BP_PUBLIC_DOMAIN`, publish the edge on `BP_BIND_HOST=0.0.0.0`, and add `--profile edge`. |
 | Behind another gateway (`proxy`) | That gateway handles HTTPS; this stack receives HTTP internally | Set `BP_PUBLIC_URL` to the gateway's backplane URL and omit `--profile edge`. |
 
-Run preparation from this checkout with an existing encrypted backup mount:
+For local mode, run preparation from this checkout with an existing encrypted backup mount:
 
 ```sh
 bun infra/bootstrap/prepare.ts --access-mode local --profile edge \
@@ -42,9 +42,12 @@ Edge and server share the project network and external platform network. Trust t
 Local mode uses a self-signed root certificate to sign the server certificates. Public mode obtains and renews trusted certificates for your domain. Caddy stores certificates and private CA keys in `edge-data`, with configuration state in `edge-config`. Preserve and back up both securely. Automatic trust installation is disabled. Export only the public root certificate from the matching Compose project:
 
 ```sh
-docker compose --env-file .env -f compose.yaml -f compose.edge.yaml --profile edge \
+docker compose --env-file .env --project-name agent-backplane \
+  -f compose.yaml -f compose.edge.yaml --profile edge \
   cp edge:/data/caddy/pki/authorities/local/root.crt ./edge-root.crt
 ```
+
+Use the same environment file and project name as preparation: replace `.env` if you supplied `--env-file PATH`, and replace `agent-backplane` if you supplied `--compose-project NAME`.
 
 Verify and distribute that certificate through an authenticated channel, then install it into each browser, OS or runtime trust store. Never distribute `root.key` or disable certificate verification. If choosing a configured HTTPS address for local bootstrap, install trust before running the emitted `bp bootstrap` command. See [Caddy local HTTPS](https://caddyserver.com/docs/automatic-https#local-https).
 
