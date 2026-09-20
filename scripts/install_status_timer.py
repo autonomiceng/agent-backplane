@@ -2,6 +2,7 @@
 """Install periodic status publication for one explicit Compose deployment."""
 
 import argparse
+import fcntl
 import os
 import shutil
 import stat
@@ -51,18 +52,18 @@ def docker_authority(root, runner):
     return executable, endpoint, docker_config, selected_env
 
 
-def prepared_state(state_dir):
-    for path, public in ((state_dir / 'status', False), (state_dir / 'console', True)):
-        info = os.stat(path, follow_symlinks=False)
-        mode = stat.S_IMODE(info.st_mode)
-        unsafe_mode = mode != 0o755 if public else bool(mode & 0o022)
-        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or unsafe_mode:
-            raise Unavailable()
+def prepared_state(state_dir, *, allow_missing=False):
+    for path, public in ((state_dir, False), (state_dir / 'status', False), (state_dir / 'console', True)):
+        try:
+            with directory(path, create=False) as fd:
+                if public and stat.S_IMODE(os.fstat(fd).st_mode) != 0o755:
+                    raise Unavailable()
+        except FileNotFoundError:
+            if not allow_missing:
+                raise
 
 
 def installation(root, env_file, project, compose_files, profiles, state_dir=None, runner=run):
-    if profiles is None:
-        profiles = saved_settings(Path(env_file).resolve()).get('COMPOSE_PROFILES', '').split(',')
     root, env_file, project, compose_files, profiles = selection(
         root, env_file, project, compose_files, profiles)
     if 'edge' in profiles and 'gateway' in profiles:
@@ -140,38 +141,161 @@ WantedBy=timers.target
     return {NAME + '.service': service, NAME + '.timer': timer}
 
 
-def install(root, env_file, project, compose_files, profiles, state_dir, unit_dir, runner=run):
-    selected = installation(root, env_file, project, compose_files, profiles, state_dir, runner)
-    root, env_file, project, compose_files, profiles, _, _, _, state_dir = selected
+def read_pair(fd):
+    names = (NAME + '.service', NAME + '.timer')
+    result = {}
+    for name in names:
+        for drop_in in (name + '.d', name.rsplit('.', 1)[1] + '.d'):
+            try:
+                os.stat(drop_in, dir_fd=fd, follow_symlinks=False)
+            except FileNotFoundError:
+                pass
+            else:
+                raise Unavailable()
+        regular(fd, name)
+        try:
+            handle = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+        except FileNotFoundError:
+            continue
+        with os.fdopen(handle, 'rb') as stream:
+            info = os.fstat(stream.fileno())
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+                    or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) != 0o600
+                    or info.st_size > 65536):
+                raise Unavailable()
+            result[name] = stream.read(65537)
+    if result and set(result) != set(names):
+        raise Unavailable()
+    return result
+
+
+def existing_pair(unit_dir):
+    try:
+        with directory(unit_dir, create=False, ancestors=True) as fd:
+            return read_pair(fd)
+    except FileNotFoundError:
+        return {}
+
+
+def manager_check(unit_dir, present, runner, *, loaded=False):
+    runner(['systemctl', '--user', 'show', '--property=Version'], timeout=10)
+    for name in (NAME + '.service', NAME + '.timer'):
+        if not loaded:
+            try:
+                installed = runner(['systemctl', '--user', 'list-unit-files', name,
+                                    '--no-legend', '--no-pager'], timeout=10)
+                active = runner(['systemctl', '--user', 'list-units', '--all', name,
+                                 '--no-legend', '--no-pager'], timeout=10)
+            except Unavailable:
+                # An absent unit can make enumeration exit 1; show must establish absence.
+                pass
+            else:
+                if not installed.strip() and not active.strip():
+                    continue
+        evidence = runner(['systemctl', '--user', 'show', name, '--property=FragmentPath',
+                           '--property=DropInPaths', '--property=LoadState'], timeout=10)
+        fields = set(evidence.strip().splitlines())
+        if not loaded and fields == {'FragmentPath=', 'DropInPaths=', 'LoadState=not-found'}:
+            continue
+        expected = {'FragmentPath=' + str(unit_dir / name), 'DropInPaths=', 'LoadState=loaded'}
+        if not present or fields != expected:
+            raise Unavailable()
+
+
+def check_units(contents, unit_dir, runner):
+    actual = existing_pair(unit_dir)
+    expected = {name: text.encode('utf-8') for name, text in contents.items()}
+    if actual and actual != expected:
+        raise Unavailable()
+    manager_check(unit_dir, bool(actual), runner)
+    return actual
+
+
+def activate(contents, unit_dir, runner):
+    # Check the manager before creating even an absent destination. A system unit
+    # with this name must never be shadowed by a new per-user installation.
+    check_units(contents, unit_dir, runner)
+    with directory(unit_dir, 0o700, ancestors=True) as fd:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        actual = read_pair(fd)
+        expected = {name: text.encode('utf-8') for name, text in contents.items()}
+        if actual and actual != expected:
+            raise Unavailable()
+        if not actual:
+            written = []
+            try:
+                for name, payload in expected.items():
+                    handle = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                                     0o600, dir_fd=fd)
+                    written.append(name)
+                    with os.fdopen(handle, 'wb') as stream:
+                        os.fchmod(stream.fileno(), 0o600)
+                        stream.write(payload)
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                os.fsync(fd)
+            except (OSError, UnicodeError):
+                for name in written:
+                    os.unlink(name, dir_fd=fd)
+                os.fsync(fd)
+                raise
+        # Retain an exact pair after partial activation; the same selection can retry.
+        runner(['systemctl', '--user', 'daemon-reload'], timeout=10)
+        manager_check(unit_dir, True, runner, loaded=True)
+        runner(['systemctl', '--user', 'enable', '--now', NAME + '.timer'], timeout=10)
+        if runner(['systemctl', '--user', 'is-enabled', NAME + '.timer'], timeout=10).strip() != 'enabled':
+            raise Unavailable()
+        if runner(['systemctl', '--user', 'is-active', NAME + '.timer'], timeout=10).strip() != 'active':
+            raise Unavailable()
+
+
+def matching_contents(selected, profiles, unit_dir):
+    contents = units(*selected)
+    actual = existing_pair(unit_dir)
+    if not actual:
+        return contents
+    # Older installers preserved explicit profile order. Accept only complete
+    # bytes regenerated from a validated native selection or repeated arguments.
+    recorded = saved_settings(selected[1]).get('COMPOSE_PROFILES', '').split(',')
+    for original in (recorded, profiles or ()):
+        ordered = tuple(dict.fromkeys(profile for profile in original if profile))
+        if set(ordered) != set(selected[4]):
+            continue
+        candidate = units(*selected[:4], ordered, *selected[5:])
+        if actual == {name: text.encode('utf-8') for name, text in candidate.items()}:
+            return candidate
+    return contents
+
+
+def check(root, env_file, project, compose_files, profiles, state_dir, unit_dir, runner=run):
+    unit_dir = Path(os.path.abspath(unit_dir))
+    present = existing_pair(unit_dir)
+    selected = selection(root, env_file, project, compose_files, profiles, allow_missing_env=not present)
+    original_profiles = profiles
+    root, env_file, project, compose_files, profiles = selected
     if not (root / 'scripts/status_observer.py').is_file():
         raise Unavailable()
-    contents = units(*selected)
-    with directory(unit_dir, 0o700) as fd:
-        for name in contents:
-            regular(fd, name)
-            try:
-                os.stat(name, dir_fd=fd, follow_symlinks=False)
-            except FileNotFoundError:
-                continue
+    if present:
+        # Exact bytes include Docker authority and the effective mount. Existing
+        # units require the complete owning installation, never guessed defaults.
+        contents = matching_contents(installation(*selected, state_dir, runner), original_profiles, unit_dir)
+        check_units(contents, unit_dir, runner)
+    else:
+        saved = saved_settings(env_file) if env_file.exists() else {}
+        recorded_state = Path(os.path.abspath(env_file.parent / saved.get('BP_STATUS_DIR', 'data')))
+        effective_state = Path(os.path.abspath(state_dir)) if state_dir else recorded_state
+        if state_dir and 'BP_STATUS_DIR' in saved and effective_state != recorded_state:
             raise Unavailable()
-        written = []
-        try:
-            for name, contents_text in contents.items():
-                handle = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-                                 0o600, dir_fd=fd)
-                written.append(name)
-                with os.fdopen(handle, 'w', encoding='utf-8') as stream:
-                    stream.write(contents_text)
-                    stream.flush()
-                    os.fsync(stream.fileno())
-        except (OSError, UnicodeError):
-            for name in written:
-                os.unlink(name, dir_fd=fd)
-            raise
-    # Activation can partially succeed. Retain both units so the operator can inspect
-    # and explicitly disable the selected timer before removing them.
-    runner(['systemctl', '--user', 'daemon-reload'], timeout=10)
-    runner(['systemctl', '--user', 'enable', '--now', NAME + '.timer'], timeout=10)
+        prepared_state(effective_state, allow_missing=True)
+        manager_check(unit_dir, False, runner)
+
+
+def install(root, env_file, project, compose_files, profiles, state_dir, unit_dir, runner=run):
+    selected = installation(root, env_file, project, compose_files, profiles, state_dir, runner)
+    if not (selected[0] / 'scripts/status_observer.py').is_file():
+        raise Unavailable()
+    unit_dir = Path(os.path.abspath(unit_dir))
+    activate(matching_contents(selected, profiles, unit_dir), unit_dir, runner)
 
 
 def main():
@@ -182,24 +306,23 @@ def main():
     parser.add_argument('--compose-file', action='append', required=True)
     parser.add_argument('--profile', action='append')
     parser.add_argument('--state-dir', type=Path)
-    parser.add_argument('--install', action='store_true', required=True,
-                        help='write user units and enable the timer now')
+    action = parser.add_mutually_exclusive_group(required=True)
+    action.add_argument('--install', action='store_true', help='install or retry this exact timer pair')
+    action.add_argument('--check', action='store_true', help='check the selection and user units without writes')
     args = parser.parse_args()
     config = Path(os.environ.get('XDG_CONFIG_HOME', ''))
     if not config.is_absolute():
         config = Path.home() / '.config'
     unit_dir = config / 'systemd/user'
     try:
-        install(args.checkout, args.env_file, args.compose_project, args.compose_file,
-                args.profile, args.state_dir, unit_dir)
+        action = check if args.check else install
+        action(args.checkout, args.env_file, args.compose_project, args.compose_file,
+               args.profile, args.state_dir, unit_dir)
+        if args.check:
+            return 0
     except (OSError, UnicodeError, Unavailable):
-        service = unit_dir / (NAME + '.service')
-        timer = unit_dir / (NAME + '.timer')
-        if service.exists() or timer.exists():
-            print(f'status timer installation failed; run systemctl --user disable --now {NAME}.timer, '
-                  f'then remove {service} and {timer} before retrying', file=sys.stderr)
-        else:
-            print('status timer installation failed; no units were written', file=sys.stderr)
+        print(f"status timer {'check' if args.check else 'installation'} failed; preserve units and retry the same selection. "
+              'Foreign or partial pairs require inspection; no existing units were overwritten.', file=sys.stderr)
         return 1
     print('Status timer enabled. An active user manager with Docker access is required; '
           'enable lingering separately for observation after logout.')

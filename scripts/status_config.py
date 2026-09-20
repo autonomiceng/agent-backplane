@@ -40,10 +40,17 @@ def saved_settings(env_file):
     return saved
 
 
-def selection(root, env_file=None, project=None, compose_files=(), profiles=None):
+def selection(root, env_file=None, project=None, compose_files=(), profiles=None, *, allow_missing_env=False):
+    if env_file and Path(env_file).is_symlink() and not Path(env_file).exists():
+        raise Unavailable()
     root = Path(root).resolve()
     env_file = Path(env_file).resolve() if env_file else (root / '.env').resolve()
-    saved = saved_settings(env_file)
+    try:
+        saved = saved_settings(env_file)
+    except FileNotFoundError:
+        if not allow_missing_env:
+            raise
+        saved = {}
     if saved.get('COMPOSE_PATH_SEPARATOR', ':') != ':' or saved.get('COMPOSE_ENV_FILES'):
         raise Unavailable()
     recorded_files = saved.get('COMPOSE_FILE', '').split(':') if 'COMPOSE_FILE' in saved else []
@@ -54,9 +61,9 @@ def selection(root, env_file=None, project=None, compose_files=(), profiles=None
                   else (root / item).resolve() for item in compose_files)
     files = files or recorded_files or ((root / 'compose.yaml').resolve(),)
     recorded_profiles = saved.get('COMPOSE_PROFILES', '').split(',') if saved.get('COMPOSE_PROFILES') else []
-    # Existing timers pass explicit files and omit profile flags for an empty selection.
+    # Omission inherits the native selection; explicit empty still means core only.
     if profiles is None:
-        profiles = [] if compose_files else recorded_profiles
+        profiles = recorded_profiles
     profiles = () if list(profiles) == [''] else tuple(sorted(set(profiles)))
     project = project if project is not None else saved.get('COMPOSE_PROJECT_NAME', 'agent-backplane')
     if (not re.fullmatch(r'[a-z0-9][a-z0-9_-]{0,127}', project)
