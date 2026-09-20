@@ -118,12 +118,12 @@ BP_ACCESS_MODE=proxy
 BP_PUBLIC_URL=https://darkforge.tail694fe2.ts.net:8449
 BP_RUSTFS_CONSOLE=true
 BP_RUSTFS_URL=https://darkforge.tail694fe2.ts.net:8450
-BP_OPERATOR_ALLOW='100.100.1.2/32 fd7a:115c:a1e0::1/128'
+BP_RUSTFS_CONSOLE_ALLOW='100.100.1.2/32 fd7a:115c:a1e0::1/128'
 BP_TRUSTED_PROXIES='192.0.2.2/32'
 ```
 
 Replace the example IPs with actual operator addresses and the exact Platform
-Edge peer address observed by Caddy. `BP_OPERATOR_ALLOW` accepts space-separated
+Edge peer address observed by Caddy. `BP_RUSTFS_CONSOLE_ALLOW` accepts space-separated
 IP literals or CIDRs. `BP_TRUSTED_PROXIES` accepts only exact IPs or host routes
 (`/32` or `/128`); Docker and Tailnet ranges are never trusted proxy peers.
 Forwarded client IPs affect the console allowlist only when the direct peer is

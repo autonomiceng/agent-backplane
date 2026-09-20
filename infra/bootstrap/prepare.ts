@@ -39,7 +39,7 @@ export function resolveRustfsConsole(env: Environment, profiles: string[], acces
   if (url.host === browser.host || host === browser.hostname || host === access.host
     || ["localhost", "127.0.0.1"].includes(host))
     throw new CliError("rustfs_origin_conflict", 1);
-  const allow = env.BP_OPERATOR_ALLOW ?? "127.0.0.1/8 ::1", peers = env.BP_TRUSTED_PROXIES ?? "";
+  const allow = env.BP_RUSTFS_CONSOLE_ALLOW ?? "127.0.0.1/8 ::1", peers = env.BP_TRUSTED_PROXIES ?? "";
   for (const [value, exact] of [[allow, false], [peers, true]] as const) {
     if ((!value.trim() && !exact) || /[^a-fA-F0-9:./ ]/.test(value)) throw new CliError(exact ? "trusted_proxies_invalid" : "operator_allow_invalid", 1);
     for (const literal of value.split(" ").filter(Boolean)) {
@@ -66,7 +66,7 @@ export async function prepare(argv: string[], env: Environment, run: Runner = do
   const unlock = await privateLock(`${path}.lock`);
   try {
     const source = await privateRead(path, true), entries: Record<string, string> = {};
-    const managed = new Set([...core, ...blobs, "BP_COMPUTE_TOKEN", "BP_PUBLIC_URL", "BP_PUBLIC_DOMAIN", "BP_SCHEME", "BP_TLS_ISSUER", "BP_EDGE_CA", "BP_PUBLIC_HOST", "BP_EDGE_BIND_HOST", "BP_ACCESS_MODE", "BP_AUTH_URL", "BP_PORT", "BP_BIND_HOST", "BP_HTTP_PORT", "BP_HTTPS_PORT", "BP_BACKUP_DIR", "BP_POSTGRES_IMAGE", "BP_SERVER_IMAGE", "BP_CADDY_IMAGE", "BP_RUSTFS_IMAGE", "BP_BLOB_BOOTSTRAP_IMAGE", "BP_WORKERD_REPOSITORY", "BP_WORKERD_DIGEST", "BP_WORKERD_IMAGE", "BP_WORKERD_BINARY_SHA256", "BP_DATA_DIR", "BP_PLATFORM_NETWORK", "BP_VOLUME_PREFIX", "BP_BACKUP_KEEP", "BP_BLOB_BACKEND", "BP_RUSTFS_CONSOLE", "BP_RUSTFS_HOST", "BP_RUSTFS_URL", "BP_RUSTFS_URL_HOST", "BP_RUSTFS_AUTHORITY", "BP_OPERATOR_ALLOW", "BP_TRUSTED_PROXIES"]);
+    const managed = new Set([...core, ...blobs, "BP_COMPUTE_TOKEN", "BP_PUBLIC_URL", "BP_PUBLIC_DOMAIN", "BP_SCHEME", "BP_TLS_ISSUER", "BP_EDGE_CA", "BP_PUBLIC_HOST", "BP_EDGE_BIND_HOST", "BP_ACCESS_MODE", "BP_AUTH_URL", "BP_PORT", "BP_BIND_HOST", "BP_HTTP_PORT", "BP_HTTPS_PORT", "BP_BACKUP_DIR", "BP_POSTGRES_IMAGE", "BP_SERVER_IMAGE", "BP_CADDY_IMAGE", "BP_RUSTFS_IMAGE", "BP_BLOB_BOOTSTRAP_IMAGE", "BP_WORKERD_REPOSITORY", "BP_WORKERD_DIGEST", "BP_WORKERD_IMAGE", "BP_WORKERD_BINARY_SHA256", "BP_DATA_DIR", "BP_PLATFORM_NETWORK", "BP_VOLUME_PREFIX", "BP_BACKUP_KEEP", "BP_BLOB_BACKEND", "BP_RUSTFS_CONSOLE", "BP_RUSTFS_HOST", "BP_RUSTFS_URL", "BP_RUSTFS_URL_HOST", "BP_RUSTFS_AUTHORITY", "BP_RUSTFS_CONSOLE_ALLOW", "BP_TRUSTED_PROXIES"]);
     for (const line of (source ?? "").split("\n")) {
       if (!line.trim() || line.trimStart().startsWith("#")) continue;
       const name = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)/.exec(line)?.[1];

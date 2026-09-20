@@ -88,7 +88,7 @@ with tempfile.TemporaryDirectory(prefix='bp-console-proof-') as temporary:
                   '--env', 'BP_ACCESS_MODE=proxy', '--env', 'BP_PUBLIC_URL=https://backplane.example.test',
                   '--env', 'BP_RUSTFS_HOST=rustfs.localhost', '--env', 'BP_RUSTFS_URL_HOST=localhost',
                   '--env', 'BP_RUSTFS_AUTHORITY=' + authority, '--env', 'BP_TRUSTED_PROXIES=' + peer_ip,
-                  '--env', 'BP_OPERATOR_ALLOW=100.64.0.7/32']
+                  '--env', 'BP_RUSTFS_CONSOLE_ALLOW=100.64.0.7/32']
         gateway = create('--network-alias', 'gateway', *common, '--env', 'BP_RUSTFS_CONSOLE=true', CADDY)
         docker('start', gateway)
         direct = 'http://' + docker('port', gateway, '80').splitlines()[0]
