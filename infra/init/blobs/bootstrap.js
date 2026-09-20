@@ -21,9 +21,9 @@ function normalizePolicy(policy) {
 }
 
 async function main() {
-  step = "image_pin";
+  step = "image_reference";
   for (const name of ["BP_RUSTFS_IMAGE", "BP_BLOB_BOOTSTRAP_IMAGE"])
-    assert(/^[^\s@]+@sha256:[0-9a-f]{64}$/.test(env(name)));
+    assert(/^[^\s$]+$/.test(env(name)));
   if (process.argv.includes("--images")) return;
 
   step = "credentials";

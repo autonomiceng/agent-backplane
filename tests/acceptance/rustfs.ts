@@ -283,9 +283,6 @@ async function recoveryScenario() {
 
 async function orchestrate() {
   assert(Bun.which("docker"), "docker is required; RustFS acceptance never skips");
-  for (const name of ["BP_BLOB_BOOTSTRAP_IMAGE"]) {
-    assert(/^[^\s@]+@sha256:[0-9a-f]{64}$/.test(required(name)), `${name} must be a digest reference`);
-  }
   const root = resolve(import.meta.dir, "../.."), scratch = await mkdtemp(join(tmpdir(), "bp-rustfs-"));
   // The worker container runs as a different uid; the exchange directory must be writable to it.
   const exchangeDir = join(scratch, "exchange"); await mkdir(exchangeDir, { mode: 0o777 }); await chmod(exchangeDir, 0o777);

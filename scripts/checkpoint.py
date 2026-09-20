@@ -76,26 +76,55 @@ class Stack:
         self.keep = int(self.services['server']['environment'].get('BP_BACKUP_KEEP', '7'))
         if self.keep < 1:
             raise ValueError('BP_BACKUP_KEEP must be positive')
+        recorded = None
         if source is not None:
             if self.dc('ps', '-aq'):
                 raise ValueError('remove target containers before restore; leave the source fenced')
             doc = json.loads((source / 'manifest.json').read_text())
             if doc['artifacts'] != inventory(source):
                 raise ValueError('checkpoint artifacts or checksums differ')
-            if doc['images']['server']['reference'] != self.services['server']['image']:
-                raise ValueError('restore requires the recorded BP_SERVER_IMAGE reference')
+            recorded = doc['images']
             if 'server-image.tar' in doc['artifacts']:
                 command(['docker', 'load', '--input', str(source / 'server-image.tar')])
         self.images = {}
-        for service in ('postgres', 'server', *(['edge'] if 'edge' in self.services else [])):
-            ref = self.services[service].get('image', f'{self.project}-{service}')
-            if source is not None and service != 'server':
-                command(['docker', 'pull', ref])
-            image_id = command(['docker', 'image', 'inspect', '--format', '{{.Id}}', ref])
-            for container in self.dc('ps', '-q', service).split():
+        helpers = {'backup-init': 'postgres', 'migrate': 'server', 'data-init': 'server'}
+        for service in ('postgres', 'server', *(['edge'] if 'edge' in self.services else []), *helpers):
+            ref = self.services[service]['image']
+            expected = recorded.get(service, recorded.get(helpers.get(service))) if recorded is not None else None
+            try:
+                if recorded is not None:
+                    if expected is None or expected['reference'] != ref:
+                        raise ValueError(f'{service}: restore requires the recorded image reference in the env file')
+                    recovery = expected.get('recoveryReference', ref)
+                    if service not in helpers and service != 'server':
+                        if not re.fullmatch(r'[^\s@]+@sha256:[a-f0-9]{64}', recovery):
+                            raise ValueError(f'{service}: checkpoint has no immutable recovery image; recover the original image and capture a new Checkpoint')
+                        command(['docker', 'pull', recovery])
+                        if command(['docker', 'image', 'inspect', '--format', '{{.Id}}', recovery]) != expected['id']:
+                            raise ValueError(f'{service}: recovery image content differs; obtain the recorded image for this platform')
+                    # An ID-only server archive can restore tags without relying on the registry.
+                    if '@' not in ref and not ref.startswith('sha256:'):
+                        command(['docker', 'tag', expected['id'], ref])
+                info = json.loads(command(['docker', 'image', 'inspect', ref]))[0]
+            except RuntimeError:
+                raise ValueError(f'{service}: image unavailable; pull or load the recorded image on this Docker host and retry before fencing or restoring') from None
+            image_id = info['Id']
+            if expected is not None and image_id != expected['id']:
+                raise ValueError(f'{service}: image content differs; load the recorded image before restoring')
+            for container in self.dc('ps', '-aq', service).split():
                 if command(['docker', 'inspect', '--format', '{{.Image}}', container]) != image_id:
-                    raise ValueError('running service differs from the configured image pin')
+                    raise ValueError(f'{service}: container differs from configured image; reconcile the deployment before capture')
             self.images[service] = dict(reference=ref, id=image_id)
+            if service in helpers:
+                if image_id != self.images[helpers[service]]['id']:
+                    raise ValueError(f'{service}: helper must use the same content as {helpers[service]}')
+            elif service != 'server':
+                digests = info.get('RepoDigests') or []
+                recovery = next((d for d in digests if re.fullmatch(r'[^\s@]+@sha256:[a-f0-9]{64}', d)
+                    and command(['docker', 'image', 'inspect', '--format', '{{.Id}}', d]) == image_id), None)
+                if recovery is None:
+                    raise ValueError(f'{service}: no verified RepoDigest; publish and pull this exact image or select a reproducible image before capture')
+                self.images[service]['recoveryReference'] = recovery
 
     def dc(self, *args):
         return command(self.compose + list(args))
@@ -159,6 +188,8 @@ def backup(stack):
     running = stack.dc('ps', '--status', 'running', '--services').split()
     if not {'postgres', 'server', *(['edge'] if 'edge' in stack.services else [])} <= set(running):
         raise ValueError('backup requires running postgres and server')
+    if not 180000 <= int(stack.pg('SHOW server_version_num')) < 190000:
+        raise ValueError('Checkpoint recovery requires the PostgreSQL 18 data layout')
     if stack.pg('SHOW archive_mode') != 'on':
         raise ValueError('WAL archiving is required')
     if stack.pg("SELECT count(*) FROM pg_tablespace WHERE spcname NOT IN ('pg_default','pg_global')") != '0':
@@ -210,7 +241,7 @@ def backup(stack):
                 stack.helper('umask 077; tar -C /source -cf "$1" .', f'{target}/{volume}.tar',
                              mounts=('-v', f'{stack.volume(volume)}:/source:ro'))
         stack.helper('chown -R "$2:$3" "$1"; chmod -R u+rwX,go-rwx "$1"', target, str(os.getuid()), str(os.getgid()))
-        command(['docker', 'save', '--output', str(dest / 'server-image.tar'), stack.images['server']['reference']])
+        command(['docker', 'save', '--output', str(dest / 'server-image.tar'), stack.images['server']['id']])
         per_log = (1 << 32) // segment_bytes
         first_number = int(first[8:16], 16) * per_log + int(first[16:], 16)
         last_number = int(segment[8:16], 16) * per_log + int(segment[16:], 16)
@@ -247,7 +278,7 @@ def backup(stack):
 
 def verify(source, stack):
     doc = json.loads((source / 'manifest.json').read_text())
-    if doc['version'] != 1 or doc['images'] != stack.images or set(doc['volumes']) != set(stack.stores):
+    if doc['version'] != 1 or any(name not in stack.images or any(stack.images[name][key] != image[key] for key in ('reference', 'id')) for name, image in doc['images'].items()) or set(doc['volumes']) != set(stack.stores):
         raise ValueError('restore requires the same images and durable stores')
     if doc['before'] != doc['after'] or not re.fullmatch(r'[0-9]+', doc['after']['systemId']) or not re.fullmatch(r'[0-9]+(?:[.][0-9]+)*', doc['after']['pgmq']):
         raise ValueError('invalid database identity')
@@ -328,7 +359,7 @@ def restore(stack, source):
         rm -rf "$1/checkpoint-wal"
         mv "$1/checkpoint.auto.conf" "$1/postgresql.auto.conf"
     ''', data, gate, mounts=pgmount, user='postgres')
-    stack.dc('up', '-d', 'server')
+    stack.dc('up', '-d', '--no-build', '--pull', 'never', 'server')
     deadline = time.monotonic() + 120
     while time.monotonic() < deadline:
         try:
