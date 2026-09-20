@@ -22,6 +22,12 @@ with tempfile.TemporaryDirectory() as root:
                         config={'networks':{},'volumes':{}})
  doc={'captureMode':'offline','storage':{'backend':'filesystem','phase':'ready'},'images':copy.deepcopy(source_images),'artifacts':{}}
  (checkpoint/'manifest.json').write_text(json.dumps(doc))
+ private_state=p/'private-state'; private_state.mkdir(mode=0o700)
+ linked=p/'linked-state'; linked.symlink_to(private_state,target_is_directory=True)
+ try: op['run'](SimpleNamespace(state=linked))
+ except ValueError as error: assert str(error)=='migration state directory must be private and owned'
+ else: raise AssertionError('state symlink accepted')
+ assert not list(private_state.iterdir())
  args=SimpleNamespace(state=p/'state',env_file=env,target_env=target_env,action='migrate',checkpoint=checkpoint,budget=7100)
  g['stack_from_env']=lambda path:source if path==env else target
  g['target_identity']=lambda *args:{'volume':'rustfs-data','credentialsSha256':'fixed'}
@@ -30,6 +36,12 @@ with tempfile.TemporaryDirectory() as root:
   if stack is target: raise Boundary()
  g['check_writers']=writers
  g['verify']=lambda *args:doc
+ def corrupt_source(*args): raise RuntimeError('storage initialization refused: blob_binding_content_mismatch')
+ g['storage_admin']=corrupt_source
+ try: op['run'](args)
+ except ValueError as error: assert str(error)=='blob_binding_content_mismatch'
+ else: raise AssertionError('stable preflight refusal lost')
+ assert not args.state.exists() and not (repository/'backups/.pins').exists()
  g['storage_admin']=lambda *args:json.dumps({'objects':[{'classification':'unreferenced'}]})
  try: op['run'](args)
  except ValueError as error: assert str(error)=='blob_binding_migration_unreferenced_reconcile_required'
