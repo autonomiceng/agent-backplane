@@ -18,16 +18,18 @@ export function invokeFunctionRoute(pool: Pool, launcher?: ComputeLauncher) {
       return status(422, { error: "invalid_input" });
     }
   }).post("/api/v1/workspaces/:workspaceId/functions/:name/invoke",
-    async ({ request, run, params, body, status, admission }) => {
+    async ({ request, run, params, body, status, admission, server }) => {
       try {
         if (!launcher) return status(503, { error: "compute_disabled" });
+        // Parsing and authentication retain the listener idle timeout. Execution owns its deadline.
+        server?.timeout(request, 0);
         return await invokeFunction(pool, run, params.name, body, launcher, request.signal);
       } catch (error) {
         const reason = error instanceof Error && Object.hasOwn(invocationCodes, error.message) ? error.message : "compute_unavailable";
         const entry = Object.entries(invocationCodes).find(([code]) => code === reason);
         await recordRejection(pool, { context: run, kind: "function.invoke", objects: [params.name], reason, sqlstate: null });
         return status(entry?.[1] ?? 503, { error: reason });
-      } finally { admission.release(request); }
+      } finally { server?.timeout(request, 30); admission.release(request); }
     }, { run: true, parse: parseInvocationBody, error: computeValidation, body: invokeFunctionInput, params: functionParams,
       response: { 200: invocationResponse, 400: failure, 401: failure, 403: failure, 404: failure, 413: failure, 422: failure, 502: failure, 503: failure, 504: failure },
       detail: { operationId: "invokeFunction", tags: ["functions"], "x-backplane-auth": "principal", "x-backplane-run": "required" } });
