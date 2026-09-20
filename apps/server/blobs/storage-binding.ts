@@ -40,7 +40,8 @@ export async function verifyStorageBinding(pool: Pool, store: BindingStore, onLe
     if (onLeaseLost) lease.watch(onLeaseLost);
     return lease.release;
   } catch (error) {
-    await lease.release();
+    // Refusal remains authoritative if a disconnected session also fails cleanup.
+    await lease.release().catch(() => {});
     if (error instanceof BindingError || error instanceof Error && /^blob_binding_(inventory_mismatch|content_mismatch)$/.test(error.message)) throw error;
     if (error instanceof Error && error.message === "blob_inventory_invalid") return refuse("store_invalid");
     return refuse("unavailable");
