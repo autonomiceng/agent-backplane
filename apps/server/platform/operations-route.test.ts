@@ -188,7 +188,9 @@ test("reconciliation deadline releases its database lease and root readiness fai
       await tx`SELECT pg_advisory_unlock(112933,32)`;
     });
     const helper=join(dir,"proof.js");
-    await writeFile(helper,(await Bun.file(new URL("../../../scripts/s3-checkpoint-proof.js",import.meta.url)).text()).replaceAll("http://rustfs:9000",server.url.origin));
+    await writeFile(helper,(await Bun.file(new URL("../../../scripts/s3-checkpoint-proof.js",import.meta.url)).text())
+      .replace("../apps/server/blobs/s3-admin-request.ts",new URL("../blobs/s3-admin-request.ts",import.meta.url).href)
+      .replaceAll("http://rustfs:9000",server.url.origin));
     const proof=async()=>{
       const worker=Bun.spawn(["bun",helper],{stdout:"pipe",stderr:"pipe",env:{...Bun.env,
         BP_RUSTFS_ROOT_USER:"root",BP_RUSTFS_ROOT_PASSWORD:"private-root",BP_BLOB_S3_ACCESS_KEY:"scoped",BP_BLOB_S3_BUCKET:"bucket"}});
