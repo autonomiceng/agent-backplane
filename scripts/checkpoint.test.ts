@@ -73,6 +73,9 @@ ids.update({digest:ids[ref] for ref,digest in digests.items()})
 services = {name:{'image':ref} for name,ref in refs.items()}
 services['server']['environment'] = {}
 services['postgres']['volumes'] = [{'source':str(p),'target':'/backup'}]
+for name,destination in [('postgres-data','/var/lib/postgresql'),('server-data','/data'),('edge-data','/data'),('edge-config','/config')]:
+ services[name.split('-')[0]].setdefault('volumes',[]).append({'type':'volume','source':name,'target':destination})
+services['storage-init']['volumes']=[{'type':'volume','source':'server-data','target':'/data'}]
 config = {'name':'fixture','services':services}
 running = True
 drift = None
@@ -221,13 +224,13 @@ def dc(*args):
  calls.append(args)
  if 'inspect' in args: assert args == ('inspect','--fenced'), args
  return json.dumps(evidence) if 'inspect' in args else ''
-stack=SimpleNamespace(services={'storage-init':{}}, dc=dc)
+stack=SimpleNamespace(services={'storage-init':{}}, backend='filesystem', dc=dc)
 cp.storage_admin=lambda stack,*args: dc(*args)
 try: prepare_restored_storage(stack,'capture-1')
 except RuntimeError as error: assert 'cleanup leftovers' in str(error)
 else: raise AssertionError('leftovers admitted without consent')
 assert not any('reconcile' in call or 'server' in call for call in calls)
-assert calls[0] == ('up','-d','--wait','--wait-timeout','120','--no-build','--pull','never','postgres')
+assert calls[0] == ('up','-d','--wait','--wait-timeout','120','--no-build','--pull','never','--no-deps','postgres')
 calls.clear()
 prepare_restored_storage(stack,'capture-1',True)
 assert any('reconcile' in call and '--retain-unreferenced' in call for call in calls)
@@ -288,5 +291,251 @@ for diagnostic,expected in [('\n{"error":"blob_binding_content_mismatch"}\npriva
  except RuntimeError as error:
   assert expected in str(error) and 'private' not in str(error) and 'secret' not in str(error)
  else: raise AssertionError('storage refusal ignored')
+`);
+});
+
+const s3Fixture = imageFixture + `
+refs.update({'rustfs':'rustfs/rustfs:1.0.0@'+cp.RUSTFS_DIGEST, 'blob-bootstrap':'server:local', 'blob-image-check':'server:local'})
+ids[refs['rustfs']]='sha256:rustfs'; digests[refs['rustfs']]=refs['rustfs']
+services.update({name:{'image':refs[name]} for name in ('rustfs','blob-bootstrap','blob-image-check')})
+selection={'BP_BLOB_BACKEND':'s3','BP_BLOB_S3_ENDPOINT':'http://rustfs:9000','BP_BLOB_S3_REGION':'us-east-1',
+ 'BP_BLOB_S3_BUCKET':'private-bucket','BP_BLOB_S3_ACCESS_KEY':'scoped','BP_BLOB_S3_SECRET_KEY':'private-scoped-secret'}
+services['server']['environment']={**selection,'BP_DATABASE_URL':'postgres://bp_server:secret@postgres:5432/backplane'}
+services['storage-init']['environment']={**selection,'BP_ADMIN_DATABASE_URL':'postgres://postgres:secret@postgres:5432/backplane'}
+services['rustfs'].update(command=['/data'],volumes=[{'type':'volume','source':'rustfs-data','target':'/data'}],
+ environment={'RUSTFS_ADDRESS':':9000','RUSTFS_ACCESS_KEY':'root','RUSTFS_SECRET_KEY':'private-root-secret'})
+services['blob-bootstrap']['environment']={**selection,'BP_RUSTFS_ROOT_USER':'root','BP_RUSTFS_ROOT_PASSWORD':'private-root-secret'}
+`;
+
+test("S3 capture refuses remote, custom and inconsistent storage selections before volume helpers", async () => {
+  await python(s3Fixture + `
+assert cp.Stack(p/'.env').backend=='s3'
+for service,key,value in [('server','BP_BLOB_S3_ENDPOINT','https://remote.example'),('storage-init','BP_BLOB_S3_BUCKET','different'),
+                          ('blob-bootstrap','BP_BLOB_S3_SECRET_KEY','wrong')]:
+ old=services[service]['environment'][key]; services[service]['environment'][key]=value
+ try: cp.Stack(p/'.env')
+ except ValueError: pass
+ else: raise AssertionError('different storage selection accepted')
+ services[service]['environment'][key]=old
+services['rustfs']['command']=['/data','/other']
+try: cp.Stack(p/'.env')
+except ValueError: pass
+else: raise AssertionError('distributed layout accepted')
+root.cleanup()
+`);
+});
+
+test("independent bootstrap images require immutable custody and recover without forced server equality", async () => {
+  await python(s3Fixture + `
+stack=cp.Stack(p/'.env')
+assert 'recoveryReference' not in stack.images['blob-bootstrap']
+for name in ('blob-bootstrap','blob-image-check'):
+ refs[name]='bootstrap:custom'; services[name]['image']=refs[name]
+ids['bootstrap:custom']='sha256:independent'
+try: cp.Stack(p/'.env')
+except ValueError as error: assert 'no verified RepoDigest' in str(error)
+else: raise AssertionError('unrecoverable helper admitted')
+digests['bootstrap:custom']='bootstrap@sha256:'+'c'*64
+ids[digests['bootstrap:custom']]='sha256:independent'
+recorded=cp.Stack(p/'.env').images
+assert recorded['blob-bootstrap']['id']!=recorded['server']['id']
+running=False
+(p/'manifest.json').write_text(json.dumps({'images':recorded,'artifacts':{}}))
+local_missing.add(digests['bootstrap:custom'])
+restored=cp.Stack(p/'.env',p)
+assert restored.images==recorded and pulled==[digests['bootstrap:custom']]
+root.cleanup()
+`);
+});
+
+test("wrong volume prefix and missing volumes fail before any auto-creating helper for every durable store", async () => {
+  await python(`import json
+import checkpoint as cp
+stack=cp.Stack.__new__(cp.Stack)
+stack.stores={'postgres-data':'/var/lib/postgresql','server-data':'/data','rustfs-data':'/data','edge-data':'/data','edge-config':'/config'}
+stack.config={'volumes':{name:{'name':'expected_'+name} for name in stack.stores}}
+stack.services={}
+for name,dest in stack.stores.items():
+ service=name.split('-')[0]
+ stack.services.setdefault(service,{'volumes':[]})['volumes'].append({'type':'volume','source':name,'target':dest})
+stack.dc=lambda *args: args[-1]
+stack.images={'rustfs':{'id':'rustfs-image'}}
+wrong=None; missing=None
+calls=[]
+def command(args):
+ calls.append(args)
+ if args[:3]==['docker','volume','inspect']:
+  if args[-1]==missing: raise RuntimeError('volume absent')
+  return '{}'
+ if args[:3]==['docker','image','inspect']: return json.dumps([{'Config':{}}])
+ if args[:2]==['docker','inspect']:
+  return json.dumps([{'Config':{'Cmd':['/data']},'Mounts':[{'Type':'volume','Destination':v['target'],'Name':('wrong_' if v['source']==wrong else 'expected_')+v['source']} for v in stack.services[args[-1]]['volumes']]}])
+ raise AssertionError('helper started before volume proof')
+cp.command=command
+assert len(stack.attest_mounts())==5
+for name in stack.stores:
+ wrong=name
+ try: stack.attest_mounts()
+ except ValueError as error: assert 'actual durable mount differs' in str(error)
+ else: raise AssertionError('wrong mount archived')
+wrong=None; missing='expected_rustfs-data'
+try: stack.attest_mounts()
+except RuntimeError: pass
+else: raise AssertionError('missing volume auto-created')
+assert all('run' not in call for call in calls)
+`);
+});
+
+test("unclean RustFS stop or physical capture failure refuses publication and resumes RustFS before server", async () => {
+  await python(`import json, tempfile
+from pathlib import Path
+from types import SimpleNamespace
+import checkpoint as cp
+for exit_code in (137,0):
+ calls=[]; running={'postgres','server','rustfs'}
+ with tempfile.TemporaryDirectory() as root:
+  def dc(*args):
+   calls.append(args)
+   if args[:3]==('ps','--status','running'): return ' '.join(running)
+   if args[:2]==('ps','-aq'): return 'rustfs-container'
+   if args[0]=='stop': running.remove(args[-1]); return ''
+   if args[0]=='start': running.add(args[-1]); return ''
+   if 'pg_basebackup' in ' '.join(args): raise RuntimeError('injected physical capture failure')
+   raise AssertionError(args)
+  stack=SimpleNamespace(backend='s3',services={'server':{}},images={'server':{'id':'server'}},backups=Path(root),
+   stores={'postgres-data':'/var/lib/postgresql','rustfs-data':'/data'},attest=lambda:None,attest_mounts=lambda:{},dc=dc,
+   helper=lambda script,*args,**kwargs: 'GNU tar --xattrs --numeric-owner' if 'tar --version' in script else '1',
+   volume=lambda name:name,snapshot=lambda:{'timeline':1})
+  stack.pg=lambda sql: {'SHOW server_version_num':'180006','SHOW data_directory':'/var/lib/postgresql/18/docker','SHOW archive_mode':'on'}.get(sql,'0')
+  cp.command=lambda args: json.dumps([{'State':{'Running':False,'ExitCode':exit_code}}]) if args[:2]==['docker','inspect'] else '1'
+  cp.qualify_tar=lambda stack: None
+  cp.prove_root_credentials=lambda stack: None
+  cp.inspect_storage=lambda *args: {'backend':'s3'}
+  cp.shutil.disk_usage=lambda path: SimpleNamespace(free=10**15)
+  try: cp.backup(stack,fenced=True)
+  except (ValueError,RuntimeError) as error:
+   assert ('did not stop cleanly' if exit_code else 'injected physical capture failure') in str(error)
+  else: raise AssertionError('failed capture published')
+  assert not list(Path(root).rglob('manifest.json'))
+  starts=[call[-1] for call in calls if call[0]=='start']
+  assert starts==['rustfs','server'],starts
+`);
+});
+
+const evidenceFixture = `import copy, json, uuid
+from types import SimpleNamespace
+import checkpoint as cp
+calls=[]
+evidence={'binding':{'databaseId':str(uuid.uuid4()),'storeId':str(uuid.uuid4()),'generation':str(uuid.uuid4()),'backend':'s3','phase':'ready'},
+ 'intent':{'phase':'ready'},'digest':'a'*64,'objects':[{'classification':'unreferenced'}]}
+stack=SimpleNamespace(backend='s3',services={'storage-init':{},'server':{'environment':{'BP_BLOB_S3_BUCKET':'private-bucket'}}},
+ dc=lambda *args:calls.append(args))
+cp.prove_root_credentials=lambda stack: calls.append(('root-proof',))
+cp.storage_admin=lambda stack,*args: (calls.append(args),json.dumps(evidence))[1]
+captured=cp.storage_evidence(stack,evidence)
+`;
+
+test("restore proves credentials and source equality before reconciling extras or starting bootstrap", async () => {
+  await python(evidenceFixture + `
+for failure in ('root','scoped','marker_missing','body_missing','body_changed','store_changed','extra_missing'):
+ calls.clear(); current=copy.deepcopy(evidence)
+ def root(stack):
+  if failure=='root': raise RuntimeError('root proof refused')
+ def admin(stack,*args):
+  calls.append(args)
+  if failure in ('scoped','marker_missing','body_missing','body_changed'): raise RuntimeError('storage proof refused')
+  return json.dumps(current)
+ cp.prove_root_credentials=root; cp.storage_admin=admin
+ if failure=='store_changed': current['binding']['storeId']=str(uuid.uuid4())
+ if failure=='extra_missing': current['objects']=[]; current['digest']='b'*64
+ try: cp.prepare_restored_storage(stack,'capture',True,captured)
+ except RuntimeError: pass
+ else: raise AssertionError(failure+' admitted')
+ assert not any('reconcile' in call or 'blob-bootstrap' in call or 'server' in call for call in calls)
+ assert all('--no-deps' in call for call in calls if call[0]=='up')
+cp.prove_root_credentials=lambda stack: None
+cp.storage_admin=lambda stack,*args: (calls.append(args),json.dumps(evidence))[1]
+cp.prepare_restored_storage(stack,'capture',True,captured)
+assert any('reconcile' in call for call in calls)
+evidence['objects'][0]['classification']='retained'
+assert cp.storage_evidence(stack,evidence)==captured
+`);
+});
+
+test("offline S3 inspection failure refuses a checkpoint while filesystem forensic capture remains available", async () => {
+  await python(evidenceFixture + `
+def fail(*args): raise RuntimeError('blob_binding_marker_missing')
+cp.storage_admin=fail
+try: cp.inspect_storage(stack,True)
+except RuntimeError as error: assert 'marker_missing' in str(error)
+else: raise AssertionError('unverified S3 checkpoint admitted')
+stack.backend='filesystem'
+assert cp.inspect_storage(stack,True)=={'backend':'filesystem','inspection':'failed','servable':False}
+try: cp.inspect_storage(stack,False)
+except RuntimeError: pass
+else: raise AssertionError('normal filesystem capture bypassed proof')
+`);
+});
+
+test("capture and restore archive validator rejects symlinks and traversal while retaining xattr records", async () => {
+  await python(`import io, tarfile, tempfile
+from pathlib import Path
+from checkpoint import validate_archives
+with tempfile.TemporaryDirectory() as root:
+ p=Path(root); name='rustfs-data.tar'
+ for unsafe in ('link','../escape'):
+  with tarfile.open(p/name,'w') as archive:
+   member=tarfile.TarInfo(unsafe)
+   if unsafe=='link': member.type=tarfile.SYMTYPE; member.linkname='/outside'
+   archive.addfile(member)
+  try: validate_archives(p,{name:{}})
+  except ValueError as error: assert 'unsafe archive member' in str(error)
+  else: raise AssertionError('unsafe capture or restore admitted')
+ with tarfile.open(p/name,'w',format=tarfile.PAX_FORMAT) as archive:
+  member=tarfile.TarInfo('./object'); member.size=4; member.uid=1000
+  member.pax_headers={'SCHILY.xattr.user.checkpoint':'retained'}
+  archive.addfile(member,io.BytesIO(b'body'))
+ validate_archives(p,{name:{}})
+ with tarfile.open(p/name) as archive:
+  member=archive.getmember('./object')
+  assert member.uid==1000 and member.pax_headers['SCHILY.xattr.user.checkpoint']=='retained'
+`);
+});
+
+test("S3 restore rejects changed credential commitment and nonempty targets before extraction", async () => {
+  await python(s3Fixture + `
+import subprocess
+stack=cp.Stack(p/'.env')
+name='bp_'+'a'*32
+proof=cp.credentials_digest(stack,name)
+snapshot={'systemId':'1','postgres':'180006','schema':32,'pgmq':'1','timeline':1,'heads':[]}
+(p/'manifest.json').write_text(json.dumps({'version':1,'name':name,'targetLsn':'0/1','segment':'0'*24,
+ 'before':snapshot,'after':snapshot,'images':stack.images,'volumes':list(stack.stores),'artifacts':{},'credentialsSha256':proof}))
+stack.services['blob-bootstrap']['environment']['BP_RUSTFS_ROOT_PASSWORD']='different-root-secret'
+try: cp.verify(p,stack)
+except ValueError as error: assert 'captured RustFS root and scoped credentials' in str(error)
+else: raise AssertionError('wrong root credentials admitted before restore')
+assert 'private' not in proof
+cp.verify=lambda *args:{'name':'capture'}
+stack.dc=lambda *args:''
+stack.volume=lambda name:name
+stack.project='owned-project'
+(p/'.existing').write_text('preserve')
+mutations=[]
+def cmd(args):
+ if args[:3]==['docker','volume','create']: mutations.append(args); return ''
+ if args[:2]==['docker','ps']: return ''
+ raise AssertionError('unexpected command')
+cp.command=cmd
+def helper(script,*args,**kwargs):
+ assert script==cp.EMPTY_TARGET_CHECK,'extraction started before all targets were empty'
+ result=subprocess.run(['sh','-ec',script,'sh',str(p)],capture_output=True)
+ if result.returncode: raise RuntimeError('nonempty target')
+stack.helper=helper
+try: cp.restore(stack,p)
+except RuntimeError as error: assert 'nonempty target' in str(error)
+else: raise AssertionError('nonempty restore admitted')
+assert (p/'.existing').read_text()=='preserve'
+root.cleanup()
 `);
 });

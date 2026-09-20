@@ -54,7 +54,7 @@ For filesystem storage with the offline-capable helper, capture while stopped:
 ```sh
 deployment_compose stop server
 # Also stop edge if that service is configured.
-bash scripts/backup.sh --offline --env-file .env
+bash scripts/backup.sh --offline --fenced --env-file .env
 ```
 
 Use the same env file and `COMPOSE_FILE`/`COMPOSE_PROFILES` for capture as the
