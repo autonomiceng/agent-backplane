@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from status_io import Unavailable, directory, task_record
+from status_config import selection
 
 
 def prepare(state_dir):
@@ -22,19 +23,28 @@ def main():
     parser.add_argument('--checkout', type=Path)
     parser.add_argument('--env-file', type=Path)
     parser.add_argument('--started')
+    parser.add_argument('--project-name')
+    parser.add_argument('--compose-file', action='append')
+    parser.add_argument('--profile', action='append')
     parser.add_argument('--state', choices=('healthy', 'unavailable'))
     args = parser.parse_args()
     try:
         prepare(args.state_dir)
         record = (args.checkout, args.env_file, args.started, args.state)
         if args.prepare:
-            if any(value is not None for value in record):
+            if any(value is not None for value in (*record, args.project_name, args.compose_file, args.profile)):
                 raise Unavailable()
         elif any(value is None for value in record):
             raise Unavailable()
         else:
-            task_record(args.state_dir, args.checkout.resolve(), args.env_file.resolve(),
-                        args.started, args.state)
+            try:
+                root, env_file, project, files, profiles = selection(
+                    args.checkout, args.env_file, args.project_name, args.compose_file or (), args.profile)
+            except Unavailable:
+                print('status_selection_mismatch', file=sys.stderr)
+                return 1
+            task_record(args.state_dir, root, env_file, args.started, args.state,
+                        {'project': project, 'composeFiles': list(map(str, files)), 'profiles': list(profiles)})
     except Unavailable:
         print('status_path_unsafe', file=sys.stderr)
         return 1

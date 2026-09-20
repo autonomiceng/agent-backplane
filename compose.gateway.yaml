@@ -18,3 +18,7 @@ volumes:
   edge-config:
     external: true
     name: ${BP_VOLUME_PREFIX:-agent-backplane}_edge-config
+
+networks:
+  blob-internal:
+    internal: true

@@ -1,6 +1,51 @@
 // Pure operator boundaries: real private files, no PostgreSQL or Docker processes.
 import { expect, test } from "bun:test";
 
+test("migration accepts bootstrap-quoted Compose files and refuses ambiguous selectors before Stack", async () => {
+  const child = Bun.spawn(["python3", "-c", String.raw`import os, runpy, tempfile
+from pathlib import Path
+from types import SimpleNamespace
+op=runpy.run_path('storage-migrate.py'); g=op['stack_from_env'].__globals__
+with tempfile.TemporaryDirectory() as root:
+ p=Path(root); env=p/'install.env'; base=str(p/'compose.yaml'); overlay=str(p/'custom overlay.yaml')
+ os.environ['COMPOSE_FILE']='retained-parent-selection'
+ def boundary(path): return SimpleNamespace(compose=[], selected=os.environ['COMPOSE_FILE'], env_file=path)
+ g['Stack']=boundary
+ def selected(assignment, files):
+  source="COMPOSE_PROJECT_NAME='agent-backplane'\n"+assignment+"\nCOMPOSE_PROFILES=''\n"
+  env.write_text(source); env.chmod(0o600)
+  stack=op['stack_from_env'](env)
+  assert stack.selected==os.pathsep.join(files) and stack.env_file==env
+  assert stack.compose==[arg for name in files for arg in ('-f',name)]
+  assert env.read_text()==source and env.stat().st_mode & 0o777==0o600
+  assert os.environ['COMPOSE_FILE']=='retained-parent-selection'
+ selected("COMPOSE_FILE='"+base+"'", [base])
+ selected('COMPOSE_FILE="'+base+os.pathsep+overlay+'"', [base,overlay])
+ selected('COMPOSE_FILE='+overlay+os.pathsep+base, [overlay,base])
+ def forbidden(path): raise AssertionError('invalid selector reached Stack/Docker')
+ g['Stack']=forbidden
+ def refused(source):
+  env.write_text(source); env.chmod(0o600)
+  try: op['stack_from_env'](env)
+  except ValueError as error: assert str(error)=='private env requires one explicit COMPOSE_FILE with absolute paths'
+  else: raise AssertionError('invalid selector accepted')
+  assert env.read_text()==source and os.environ['COMPOSE_FILE']=='retained-parent-selection'
+ refused('COMPOSE_FILE="/tmp/'+chr(36)+'{OVERLAY}.yaml"\n')
+ refused('COMPOSE_FILE=/tmp/'+chr(96)+'overlay'+chr(96)+'\n')
+ refused('COMPOSE_FILE='+base+'\nCOMPOSE_FILE=\n')
+ refused('COMPOSE_FILE='+base+'\n export COMPOSE_FILE=/other.yaml\n')
+ refused('COMPOSE_FILE='+base+'::/last.yaml\n')
+ refused("COMPOSE_FILE='"+base+':relative.yaml'+"'\n")
+ refused("COMPOSE_FILE='"+base+'"\n')
+ refused('COMPOSE_FILE ='+base+'\n')
+ refused('COMPOSE_FILE='+base+' # comment\n')
+ refused('COMPOSE_FILE='+base+'\\escape\n')
+`], { cwd: import.meta.dir, stdout: "pipe", stderr: "pipe", env: { ...Bun.env, PYTHONDONTWRITEBYTECODE: "1" } });
+  const [out, err] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text()]);
+  expect(await child.exited, err).toBe(0);
+  expect(out + err).toBe("");
+});
+
 test("migration preflight leaves no custody debris and retries freeze budget and both source and target image roles", async () => {
   const child = Bun.spawn(["python3", "-c", `import copy, hashlib, json, runpy, tempfile
 from pathlib import Path

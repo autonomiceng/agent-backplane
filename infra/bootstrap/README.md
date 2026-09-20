@@ -11,11 +11,59 @@ bp bootstrap --url http://localhost:3000 --email user@example.com \
 
 Preparation writes absent secrets to the repository-root `.env`, creates the external network selected by `BP_PLATFORM_NETWORK` (default `platform`) and durable volumes named with `BP_VOLUME_PREFIX` (default `agent-backplane`), starts the core services with `up --wait`, and exports the pending enrollment capability. `--env-file PATH` selects another environment file; `--compose-project NAME` selects the local Compose project. Its subprocess output is captured privately. `BP_ACCESS_MODE` defaults to `local`. Add `--profile edge` for local HTTP and self-signed HTTPS, with no domain needed. For Platform Edge, use `--access-mode proxy --profile gateway --public-url <browser-url>` to include an internal Caddy without host ports. For public access or use behind another gateway, follow [access setup](../../docs/operations/ingress.md). Preparation chooses and validates the browser URL before creating resources. Use `--access-mode local|public|proxy` to select a mode, or set it in the selected environment file.
 
+Preparation records `COMPOSE_PROJECT_NAME`, `COMPOSE_FILE` and `COMPOSE_PROFILES` in
+the selected env file. A fresh installation still defaults to core only. Omitted
+profile flags reuse the recorded selection; repeated `--profile NAME` flags select
+the complete profile set. `--profile ''` explicitly selects no optional profiles,
+and a recorded empty `COMPOSE_PROFILES` has that same meaning. Edge and gateway
+are mutually exclusive. Conflicting CLI or shell Compose selectors are rejected.
+Preparation preserves existing project, volume, network, secret and image values.
+It refuses profile changes and a rendered Files backend that differs from the saved
+`BP_BLOB_BACKEND`; use an explicit storage migration for backend changes.
+
+`COMPOSE_FILE` is an ordered, colon-separated list. Existing custom overlays retain
+their order. Relative entries resolve beside the selected env file and are saved as
+absolute paths; relative paths inside Compose files resolve from the first file's
+directory, as with native Compose. Only the native Linux `:` separator is supported.
+Set custom overlays in `COMPOSE_FILE` before preparation. With the default `.env`,
+`docker compose up -d` reuses the saved selection. With a custom env file, use
+`docker compose --env-file /absolute/path/to/.env up -d`.
+
+An installation with resources or secrets and incomplete recorded selection requires
+`--confirm-existing-selection`, an explicit `--compose-project`, and explicit
+`--profile` flags. Restore the original custom `COMPOSE_FILE` first, if applicable.
+This flag confirms the original selection, including its rendered Files backend;
+it does not authorize changing or migrating an installation. For an original core-only
+installation, for example:
+
+```bash
+bun infra/bootstrap/prepare.ts --env-file /path/to/.env \
+  --confirm-existing-selection --compose-project original-project --profile '' \
+  --capability-file "$HOME/.bp-enrollment"
+```
+
+Run `--help` for the selection flags. Successful local resource inventory and Compose
+configuration validation precede network or volume mutation. Selection and secrets
+are published together by atomic replacement before durable volumes are created,
+so an interrupted preparation reuses the same identities on its next run. An
+inventory failure refuses preparation. Bootstrap status records the actual project,
+ordered Compose files and profile set. The observer reports bootstrap health only
+when that selection matches; older records without selection remain unknown until
+preparation records another outcome.
+
+`python3 scripts/status_observer.py --checkout "$PWD" --env-file /path/to/.env`
+reads the saved native Compose selection and `BP_STATUS_DIR`. Explicit observer or
+timer selectors must agree with recorded values. `--profile ''` explicitly selects
+no optional profiles. Existing timers supply project and file arguments; omitted
+profile flags with explicit files retain their original empty-selection meaning.
+Without recorded settings, the observer retains its core-only and checkout `data`
+defaults. `--state-dir` still explicitly selects the publication directory.
+
 Add `--profile blobs` to use RustFS and bootstrap helpers from the effective server image. `BP_BLOB_BOOTSTRAP_IMAGE` remains an explicit helper-code experiment override. Add `--profile compute` to build the pinned amd64 workerd recipe locally when `BP_WORKERD_IMAGE` is unset or empty. This requires build network access and compatible Docker/BuildKit; default promotion remains gated on H-PROOF/F-GATE. An explicit full `BP_WORKERD_IMAGE` must already exist locally, with its expected `BP_WORKERD_BINARY_SHA256` and the pinned Bun supervisor. Explicit overrides are never built over or implicitly pulled. Bootstrap resolves tags for each launch, verifies both executable hashes and version output, and saves private launch evidence under `BP_DATA_DIR/compute` (default `data/compute` beside the env file). The effective image override exists only in the child environment. Compose defaults to the same local tag for preflight and later native startup with the saved selection; a later bare Compose deployment may resolve the tag again. Workerd has no Compose build stanza, so `up --build` cannot rebuild an explicit workerd override. Rerun preparation if the local default image is absent. See [runtime identity](../compute/runtime.md); legacy repository/digest configuration requires migration. Core generates auth, database and operations secrets; blobs generates independent root and service credentials; compute generates its token. Preparation does not provision backup storage.
 
 Set complete image references in the selected `.env`: `BP_POSTGRES_IMAGE`, `BP_SERVER_IMAGE`, `BP_CADDY_IMAGE`, and `BP_RUSTFS_IMAGE` accept tags, digests and local images. Empty or unset settings retain the shipped defaults. PostgreSQL shares its image with backup initialization; server shares its image with migration, data initialization and blob helpers. Prebuilt server images must contain this checkout's helper entrypoints; pull or load them before preparation, which disables Compose builds when `BP_SERVER_IMAGE` is set. The default workerd build remains independent. The default server image is built locally. Overrides are unvalidated experiments; preserve PostgreSQL 18's layout, helper users, extension compatibility and RustFS's unversioned storage contract. Use fresh storage and explicit migration for incompatible stateful images. See [checkpoint prerequisites](../backup/README.md).
 
-Existing environment values and unrelated lines are preserved. Use literal assignments, quoting values containing spaces. Empty managed assignments are preparation placeholders. Duplicate nonempty, interpolated or malformed managed assignments require repair. Unrelated lines, including duplicate assignments and interpolations, remain verbatim. Existing data volumes with missing secrets require restoration of the original secrets. Preparation rejects remote Docker endpoints and unsafe files. Owned `.env` files are tightened to mode `0600`.
+Existing environment values and unrelated lines are preserved. Use literal assignments, quoting values containing spaces. Empty managed assignments are preparation placeholders, except `COMPOSE_PROFILES`, whose empty value selects core only. Duplicate, interpolated or malformed managed assignments require repair, including duplicate empty placeholders. Unrelated lines, including duplicate assignments and interpolations, remain verbatim. Existing data volumes with missing secrets require restoration of the original secrets. Preparation rejects remote Docker endpoints and unsafe files. Owned `.env` files are tightened to mode `0600`.
 
 Bootstrap reads the password from the terminal with echo disabled, or `BP_BOOTSTRAP_PASSWORD` for noninteractive use. Passwords never appear in arguments. The first Workspace and Principal are named `default`. Successful output is JSON containing their IDs and an MCP configuration:
 

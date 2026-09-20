@@ -1,11 +1,13 @@
 ---
 name: backplane
-description: Use the bp CLI to share Workspace state, consume Queues, complete atomic handoffs, and recover unresolved Effects.
+description: Connect an agent to an existing Backplane, use Files and Functions, share Workspace state, consume Queues, complete atomic handoffs, and recover unresolved Effects.
 ---
 
 Configure BP_URL, BP_KEY and BP_WORKSPACE_ID in the environment. Keep credentials out of command bodies. Use a stable BP_SESSION per Harness invocation; the CLI defaults to "default", while bp mcp defaults to its process PID. BP_DATA_DIR controls local Run cache storage. BP_HARNESS, BP_MODEL and BP_RUN_LABEL describe lazily created Runs.
 
 Commands return JSON; failures write an error envelope to stderr and exit nonzero. Read command schemas with --help. bp mcp serves the same agent operations over stdio. streamAudit collects for at most one second or 100 frames, aborts the request, and returns an array; use readAudit for polling.
+
+When asked to connect this repository to an existing Backplane, read [agent client setup](references/client-setup.md). That path attaches one supplied Principal credential and exercises Files and Functions. It does not install or enroll a server.
 
 ## First installation
 

@@ -43,15 +43,24 @@ def atomic_private(path, content, expected=None):
 
 def stack_from_env(path):
     content = private_read(path).decode()
-    matches = re.findall(r'^COMPOSE_FILE=(.+)$', content, re.M)
-    if len(matches) != 1 or any(not Path(name).is_absolute() for name in matches[0].split(os.pathsep)):
+    lines = [line for line in content.split('\n') if re.match(r'\s*(?:export\s+)?COMPOSE_FILE\b', line)]
+    match = re.fullmatch(r'COMPOSE_FILE=(.*)', lines[0]) if len(lines) == 1 else None
+    if match is None:
+        raise ValueError('private env requires one explicit COMPOSE_FILE with absolute paths')
+    value = match[1]
+    if len(value) >= 2 and value[0] in "'\"" and value[-1] == value[0]:
+        value = value[1:-1]
+    elif value != value.strip() or re.search(r'\s+#', value):
+        raise ValueError('private env requires one explicit COMPOSE_FILE with absolute paths')
+    files = value.split(os.pathsep)
+    if re.search(r'''['"\\$`\x00-\x1f\x7f]''', value) or any(not Path(name).is_absolute() for name in files):
         raise ValueError('private env requires one explicit COMPOSE_FILE with absolute paths')
     old = os.environ.get('COMPOSE_FILE')
     try:
-        os.environ['COMPOSE_FILE'] = matches[0]
+        os.environ['COMPOSE_FILE'] = value
         stack = Stack(path)
         # Freeze selection in argv; later environment replacement cannot change this stack.
-        stack.compose += [arg for name in matches[0].split(os.pathsep) for arg in ('-f', name)]
+        stack.compose += [arg for name in files for arg in ('-f', name)]
         return stack
     finally:
         if old is None:
