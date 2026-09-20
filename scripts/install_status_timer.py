@@ -94,11 +94,11 @@ def installation(root, env_file, project, compose_files, profiles, state_dir=Non
         effective_state = selected_state
     prepared_state(effective_state)
     return (root, env_file, project, compose_files, profiles, endpoint,
-            executable, docker_config, effective_state)
+            executable, docker_config, selected_env.get('PATH', str(Path(executable).parent)), effective_state)
 
 
 def units(root, env_file, project, compose_files, profiles, endpoint,
-          executable, docker_config, state_dir):
+          executable, docker_config, search_path, state_dir):
     argv = [sys.executable, root / 'scripts/status_observer.py', '--checkout', root,
             '--env-file', env_file, '--project-name', project]
     for path in compose_files:
@@ -115,7 +115,7 @@ Type=oneshot
 ExecStart={command}
 Environment={quote('DOCKER_HOST=' + endpoint).replace('$$', '$')}
 Environment={quote('DOCKER_CONFIG=' + docker_config).replace('$$', '$')}
-Environment={quote('PATH=' + str(Path(executable).parent)).replace('$$', '$')}
+Environment={quote('PATH=' + search_path).replace('$$', '$')}
 UnsetEnvironment=DOCKER_CONTEXT DOCKER_TLS DOCKER_TLS_VERIFY DOCKER_CERT_PATH
 TimeoutStartSec=120
 UMask=0022
@@ -140,7 +140,7 @@ WantedBy=timers.target
 
 def install(root, env_file, project, compose_files, profiles, state_dir, unit_dir, runner=run):
     selected = installation(root, env_file, project, compose_files, profiles, state_dir, runner)
-    root, env_file, project, compose_files, profiles, _, _, _, state_dir = selected
+    root, env_file, project, compose_files, profiles, _, _, _, _, state_dir = selected
     if not (root / 'scripts/status_observer.py').is_file():
         raise Unavailable()
     contents = units(*selected)
@@ -193,8 +193,11 @@ def main():
     except (OSError, UnicodeError, Unavailable):
         service = unit_dir / (NAME + '.service')
         timer = unit_dir / (NAME + '.timer')
-        print(f'status timer installation failed; run systemctl --user disable --now {NAME}.timer, '
-              f'then remove {service} and {timer} before retrying', file=sys.stderr)
+        if service.exists() or timer.exists():
+            print(f'status timer installation failed; run systemctl --user disable --now {NAME}.timer, '
+                  f'then remove {service} and {timer} before retrying', file=sys.stderr)
+        else:
+            print('status timer installation failed; no units were written', file=sys.stderr)
         return 1
     print('Status timer enabled. An active user manager with Docker access is required; '
           'enable lingering separately for observation after logout.')

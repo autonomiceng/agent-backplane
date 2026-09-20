@@ -227,3 +227,9 @@ RustFS, and workerd version/probe parsers, capability projection and token priva
 task timestamps, frozen-file expiry, and rootless/remote refusal. The pinned workerd
 binary was checked directly and prints `workerd 2026-09-18`; that does not qualify
 the selected running container or the complete collector.
+
+Timer installation requires a rootful local Unix Docker daemon and refuses rootless
+Docker. The timer retains the search path used during installation so Docker
+credential helpers remain available. Before any unit is written, a failed install
+reports that no units were written; after a partial activation it gives cleanup
+instructions for the retained units.

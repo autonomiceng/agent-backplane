@@ -71,7 +71,7 @@ class StatusTimerTests(unittest.TestCase):
         config_line = next(line for line in service.splitlines() if line.startswith('Environment="DOCKER_CONFIG='))
         self.assertIn('%%$', config_line)
         self.assertNotIn('$$', config_line)
-        self.assertIn('Environment="PATH=/selected/bin"', service)
+        self.assertIn('Environment="PATH=/selected/bin:/usr/bin"', service)
         self.assertIn('UnsetEnvironment=DOCKER_CONTEXT DOCKER_TLS DOCKER_TLS_VERIFY DOCKER_CERT_PATH', service)
         with patch.dict(os.environ, selected_environment, clear=True), \
                 patch.object(installer.shutil, 'which', return_value='/selected/bin/docker'):
