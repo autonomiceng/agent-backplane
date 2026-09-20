@@ -85,3 +85,14 @@ separate from Runtime Identity and the authenticated control protocol. Local ima
 remain distinct from registry manifest digests. This claims neither registry release nor
 arm64 qualification and leaves the trusted operator/enrolled-agent authority boundary
 unchanged. Default promotion on another architecture requires its actual runtime gate.
+
+Amended 2026-09-20 (B-PROMOTE preparation, pending H-PROOF): Fresh full bootstrap selects
+Functions and uses the existing pinned local-build path for a missing/blank image override.
+Minimal mode omits workerd. Existing selections and explicit artifacts remain authoritative;
+mode flags do not silently activate Functions on an installed system. Bootstrap success
+requires the existing authenticated operations capability sampler to report fresh healthy
+Files and selected Functions with matching backends, in addition to core readiness. The
+bounded sampler reads the storage binding/marker and verifies Runtime Identity with a
+loader round trip, creating no Workspace writes or invocation Runs. It establishes current
+readiness only. H-PROOF/F-GATE, host console/runtime confirmation by root, architecture
+qualification and the trusted operator/enrolled-agent boundary remain unchanged.
