@@ -2,25 +2,36 @@
 import { persistWorkerdEvidence, verifyWorkerdImage } from "./workerd-image.ts";
 import { parseArgs } from "node:util";
 import { randomBytes } from "node:crypto";
-import { stat } from "node:fs/promises";
+import { open, rename, rm, stat } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { privateRead, privateWrite, privateLock } from "../../packages/cli/runtime/credential-file.ts";
 import { CliError, type Environment } from "../../packages/cli/runtime/credentials.ts";
 import { resolveAccess } from "../compose/validate-edge.ts";
+import { record } from "../../packages/cli/runtime/http.ts";
 export type Runner = (args: string[], env: Environment) => Promise<string>;
 export type StatusRecorder = (args: string[]) => Promise<void>;
 const core = ["BP_AUTH_SECRET", "BP_POSTGRES_ADMIN_PASSWORD", "BP_POSTGRES_PASSWORD", "BP_OPERATIONS_TOKEN"];
 const blobs = ["BP_RUSTFS_ROOT_USER", "BP_RUSTFS_ROOT_PASSWORD", "BP_BLOB_S3_ACCESS_KEY", "BP_BLOB_S3_SECRET_KEY"];
+const selectors = ["COMPOSE_PROJECT_NAME", "COMPOSE_FILE", "COMPOSE_PROFILES"];
+const help = `Usage: bun infra/bootstrap/prepare.ts --capability-file PATH [options]
+  --env-file PATH                 Environment file (default: checkout .env)
+  --compose-project NAME         Select the original Compose project
+  --profile NAME                 Repeat for blobs, compute, edge or gateway; '' selects none
+  --confirm-existing-selection   Confirm original selection for an incomplete existing installation
+                                 Requires --compose-project and --profile (use '' for none).
+                                 Set COMPOSE_FILE in the env file for original custom overlays.
+  --access-mode local|public|proxy  --public-url URL  --backup-dir PATH
+Omitted selectors reuse recorded COMPOSE_PROJECT_NAME, COMPOSE_FILE and COMPOSE_PROFILES.
+Fresh installations default to core only. Existing selections and backends cannot be changed here.
+`;
 export async function prepare(argv: string[], env: Environment, run: Runner = docker, recordStatus: StatusRecorder = statusRecorder): Promise<string> {
   const { values } = parseArgs({ args: argv, allowPositionals: false, options: {
     "access-mode": { type: "string" }, "public-url": { type: "string" }, "backup-dir": { type: "string" }, "env-file": { type: "string" },
     "capability-file": { type: "string" }, "compose-project": { type: "string" }, profile: { type: "string", multiple: true },
+    "confirm-existing-selection": { type: "boolean" }, help: { type: "boolean" },
   } });
-  const profiles = [...new Set(values.profile ?? [])];
-  if (profiles.some(p => !["blobs", "compute", "edge", "gateway"].includes(p)) || !values["capability-file"]) throw new CliError("invalid_arguments", 1);
-  if (profiles.includes("edge") && profiles.includes("gateway")) throw new CliError("choose_one_gateway", 1);
-  const project = values["compose-project"] ?? "agent-backplane";
-  if (!/^[a-z0-9][a-z0-9_-]*$/.test(project)) throw new CliError("invalid_compose_project", 1);
+  if (values.help) return help;
+  if (!values["capability-file"] || values["confirm-existing-selection"] && (!values["compose-project"] || !values.profile)) throw new CliError("invalid_arguments", 1);
   const path = resolve(values["env-file"] ?? resolve(import.meta.dir, "../../.env"));
   const root = resolve(import.meta.dir, "../..");
   const unlock = await privateLock(`${path}.lock`);
@@ -28,75 +39,120 @@ export async function prepare(argv: string[], env: Environment, run: Runner = do
     let source = await privateRead(path, true);
     const originalSource = source, entries: Record<string, string> = {}, lines = (source ?? "").split("\n");
     const managed = new Set([...core, ...blobs, "BP_COMPUTE_TOKEN", "BP_PUBLIC_URL", "BP_PUBLIC_DOMAIN", "BP_SCHEME", "BP_TLS_ISSUER", "BP_EDGE_CA", "BP_PUBLIC_HOST", "BP_EDGE_BIND_HOST", "BP_ACCESS_MODE", "BP_AUTH_URL", "BP_PORT", "BP_BIND_HOST", "BP_HTTP_PORT", "BP_HTTPS_PORT", "BP_BACKUP_DIR", "BP_POSTGRES_IMAGE", "BP_SERVER_IMAGE", "BP_CADDY_IMAGE", "BP_RUSTFS_IMAGE", "BP_BLOB_BOOTSTRAP_IMAGE", "BP_WORKERD_REPOSITORY", "BP_WORKERD_DIGEST", "BP_WORKERD_IMAGE", "BP_WORKERD_BINARY_SHA256", "BP_DATA_DIR", "BP_STATUS_DIR", "BP_PLATFORM_NETWORK", "BP_VOLUME_PREFIX", "BP_BACKUP_KEEP"]);
-    let statusLine: number | undefined;
+    for (const key of [...selectors, "COMPOSE_PATH_SEPARATOR", "COMPOSE_ENV_FILES", "BP_BLOB_BACKEND"]) managed.add(key);
+    const assignments = new Map<string, number>();
     for (const [index, line] of lines.entries()) {
       if (!line.trim() || line.trimStart().startsWith("#")) continue;
       const name = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)/.exec(line)?.[1];
       if (name === "BP_WORKERD_EFFECTIVE_IMAGE") throw new CliError("workerd_effective_image_persisted", 1);
       if (!name || !managed.has(name)) continue;
-      if (name === "BP_STATUS_DIR") {
-        if (statusLine !== undefined) throw new CliError("env_repair_required", 1);
-        statusLine = index;
-      }
+      if (assignments.has(name)) throw new CliError("env_repair_required", 1);
+      assignments.set(name, index);
       const match = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line);
-      if (match?.[1] && match[2] === "" && entries[match[1]] === undefined) continue;
-      if (!match?.[1] || !match[2] || entries[match[1]] !== undefined || /[$`\r]/.test(match[2])) throw new CliError("env_repair_required", 1);
+      if (!match?.[1] || match[2] === undefined || /[$`\r]/.test(match[2])) throw new CliError("env_repair_required", 1);
       let value = match[2];
       if (/^(['"]).*\1$/.test(value)) value = value.slice(1, -1);
       else if (/[\s#]/.test(value)) throw new CliError("env_repair_required", 1);
-      if (!value || /['"\\\n]/.test(value)) throw new CliError("env_repair_required", 1);
-      entries[match[1]] = value;
+      if (/['"\\\n]/.test(value)) throw new CliError("env_repair_required", 1);
+      if (value || name === "COMPOSE_PROFILES") entries[name] = value;
     }
+    const select = (key: string, explicit: string | undefined, fallback: string) => {
+      const normalize = (value: string) => key === "COMPOSE_PROFILES" ? [...new Set(value.split(","))].sort().join(",")
+        : key === "COMPOSE_FILE" ? value.split(":").map(file => file ? resolve(dirname(path), file) : "").join(":") : value;
+      const selected = entries[key] ?? explicit ?? env[key] ?? fallback;
+      if ([explicit, env[key]].some(value => value !== undefined && normalize(value) !== normalize(selected))) throw new CliError("selection_conflict", 1);
+      return selected;
+    };
+    const project = select("COMPOSE_PROJECT_NAME", values["compose-project"], "agent-backplane");
+    if (!/^[a-z0-9][a-z0-9_-]*$/.test(project)) throw new CliError("invalid_compose_project", 1);
+    const profileSelection = select("COMPOSE_PROFILES", values.profile?.join(","), "");
+    const profiles = profileSelection === "" ? [] : [...new Set(profileSelection.split(","))];
+    if (profiles.some(p => !["blobs", "compute", "edge", "gateway"].includes(p)) || values.profile?.includes("") && values.profile.length !== 1) throw new CliError("invalid_arguments", 1);
+    if (profiles.includes("edge") && profiles.includes("gateway")) throw new CliError("choose_one_gateway", 1);
+    if ([entries.COMPOSE_PATH_SEPARATOR, env.COMPOSE_PATH_SEPARATOR].some(value => value !== undefined && value !== ":")
+      || entries.COMPOSE_ENV_FILES || env.COMPOSE_ENV_FILES) throw new CliError("selection_conflict", 1);
+    const files = select("COMPOSE_FILE", undefined, [resolve(root, "compose.yaml"), ...profiles.map(p => resolve(root, `compose.${p}.yaml`))].join(":"))
+      .split(":").map(file => file ? resolve(dirname(path), file) : "");
+    for (const file of files) if (!file || /[\n\r$`'"\\:]/.test(file) || !(await stat(file).catch(() => undefined))?.isFile()) throw new CliError("invalid_compose_file", 1);
+    const completeSelection = selectors.every(key => entries[key] !== undefined) && entries.BP_BLOB_BACKEND !== undefined;
     const keys = [...core, ...(profiles.includes("blobs") ? blobs : []), ...(profiles.includes("compute") ? ["BP_COMPUTE_TOKEN"] : [])];
-    const additions: string[] = [];
+    const save = (key: string, value: string) => {
+      entries[key] = value;
+      const assignment = `${key}='${value}'`, index = assignments.get(key);
+      if (index === undefined) { assignments.set(key, lines.length); lines.push(assignment); }
+      else lines[index] = assignment;
+    };
     const statusDir = resolve(dirname(path), entries.BP_STATUS_DIR ?? "data");
     if (statusDir === "/" || /[\n\r$`'"\\]/.test(statusDir)) throw new CliError("unsafe_status_directory", 1);
-    entries.BP_STATUS_DIR = statusDir;
-    const statusAssignment = `BP_STATUS_DIR='${statusDir}'`;
-    if (statusLine === undefined) additions.push(statusAssignment);
-    else { lines[statusLine] = statusAssignment; source = lines.join("\n"); }
+    save("BP_STATUS_DIR", statusDir);
     for (const [key, value] of [["BP_ACCESS_MODE", values["access-mode"]], ["BP_PUBLIC_URL", values["public-url"]], ["BP_BACKUP_DIR", values["backup-dir"]]]) {
       if (!key || value === undefined) continue;
       if (/[\n\r$`'"\\]/.test(value) || entries[key] !== undefined && entries[key] !== value) throw new CliError("env_conflict", 1);
-      if (entries[key] === undefined) { entries[key] = value; additions.push(`${key}='${value}'`); }
+      if (entries[key] === undefined) save(key, value);
     }
     const access = resolveAccess(entries, profiles.includes("edge")), url = access.origin;
     if (profiles.includes("gateway") && access.mode !== "proxy") throw new CliError("gateway_requires_proxy_mode", 1);
     for (const [key, value] of [["BP_ACCESS_MODE", access.mode], ["BP_PUBLIC_URL", url]]) {
-      if (key && value && entries[key] === undefined) { entries[key] = value; additions.push(`${key}='${value}'`); }
+      if (key && value && entries[key] === undefined) save(key, value);
     }
     if (!entries.BP_BACKUP_DIR || !(await stat(entries.BP_BACKUP_DIR).catch(() => undefined))?.isDirectory()) throw new CliError("backup_directory_required", 1);
-    await recordStatus(["--state-dir", statusDir, "--prepare"]);
-    const child = Object.fromEntries(Object.entries(env).filter(([k]) => !k.startsWith("BP_") && !["COMPOSE_FILE", "COMPOSE_PROFILES", "COMPOSE_PROJECT_NAME", "COMPOSE_ENV_FILES"].includes(k)));
+    const child = Object.fromEntries(Object.entries(env).filter(([k]) => !k.startsWith("BP_") && !k.startsWith("COMPOSE_")));
     if (env.DOCKER_HOST && !env.DOCKER_HOST.startsWith("unix://")) throw new CliError("remote_docker_unsupported", 1);
     const endpoint = (await run(["context", "inspect", "--format", "{{.Endpoints.docker.Host}}"], child)).trim();
     if (!endpoint.startsWith("unix://")) throw new CliError("remote_docker_unsupported", 1);
-    const started = new Date().toISOString();
-    const statusRecord = ["--state-dir", statusDir, "--checkout", root, "--env-file", path, "--started", started];
-    await recordStatus([...statusRecord, "--state", "unavailable"]);
     const network = entries.BP_PLATFORM_NETWORK ?? "platform", prefix = entries.BP_VOLUME_PREFIX ?? "agent-backplane";
     if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(network)) throw new CliError("invalid_platform_network", 1);
     if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(prefix)) throw new CliError("invalid_volume_prefix", 1);
-    try { await run(["network", "inspect", network], child); }
-    catch { await run(["network", "create", network], child); }
     const volumes = await run(["volume", "ls", "--filter", `label=com.docker.compose.project=${project}`, "--format", "{{.Name}}"], child);
     const existingVolumes = await run(["volume", "ls", "--format", "{{.Name}}"], child);
-    if ((volumes.trim() || existingVolumes.split("\n").some(v => v.startsWith(`${prefix}_`))) && keys.some(k => entries[k] === undefined)) throw new CliError("existing_volume_missing_secrets", 2);
+    const containers = await run(["ps", "--all", "--filter", `label=com.docker.compose.project=${project}`, "--format", "{{.ID}}"], child);
+    const networks = await run(["network", "ls", "--filter", `label=com.docker.compose.project=${project}`, "--format", "{{.Name}}"], child);
+    const resources = Boolean(volumes.trim() || containers.trim() || networks.trim() || existingVolumes.split("\n").some(v => v.startsWith(`${prefix}_`)));
+    const existing = resources || [...core, ...blobs, "BP_COMPUTE_TOKEN"].some(key => entries[key] !== undefined);
+    if (existing && !completeSelection && !values["confirm-existing-selection"]) throw new CliError("existing_selection_confirmation_required", 2);
+    if (resources && keys.some(k => entries[k] === undefined)) throw new CliError("existing_volume_missing_secrets", 2);
+    for (const key of keys) if (entries[key] === undefined) {
+      // RustFS service-account creation accepts at most 40 characters.
+      const bytes = key === "BP_RUSTFS_ROOT_USER" || key === "BP_BLOB_S3_ACCESS_KEY" ? 10 : key === "BP_BLOB_S3_SECRET_KEY" ? 20 : 32;
+      save(key, randomBytes(bytes).toString("hex"));
+    }
+    save("COMPOSE_PROJECT_NAME", project); save("COMPOSE_FILE", files.join(":")); save("COMPOSE_PROFILES", profiles.join(","));
+    for (const [key, value] of [["BP_VOLUME_PREFIX", prefix], ["BP_PLATFORM_NETWORK", network]]) if (key && value && entries[key] === undefined) save(key, value);
+    Object.assign(child, entries);
+    // Interpolate the prospective env in memory; a fresh env file does not exist yet.
+    const compose = ["compose", "--project-name", project, "--project-directory", dirname(files[0]!), "--env-file", path,
+      ...files.flatMap(file => ["-f", file]), ...profiles.flatMap(p => ["--profile", p])];
+    const preflight = [...compose];
+    preflight[preflight.indexOf("--env-file") + 1] = originalSource === undefined ? "/dev/null" : path;
+    const config: unknown = JSON.parse(await run([...preflight, "config", "--format", "json"], child));
+    if (!record(config) || !record(config.services) || !record(config.services.server) || !record(config.services.server.environment)
+      || !record(config.services["storage-init"]) || !record(config.services["storage-init"].environment)) throw new CliError("invalid_compose_config", 1);
+    const backend = config.services.server.environment.BP_BLOB_BACKEND ?? "filesystem";
+    if (backend !== "filesystem" && backend !== "s3" || entries.BP_BLOB_BACKEND !== undefined && entries.BP_BLOB_BACKEND !== backend
+      || (config.services["storage-init"].environment.BP_BLOB_BACKEND ?? "filesystem") !== backend) throw new CliError("backend_change_requires_migration", 2);
+    save("BP_BLOB_BACKEND", backend);
+    await recordStatus(["--state-dir", statusDir, "--prepare"]);
+    source = lines.join("\n");
+    if (!source.endsWith("\n")) source += "\n";
+    if (source !== originalSource) {
+      const temporary = `${path}.${crypto.randomUUID()}`;
+      try {
+        await privateWrite(temporary, source);
+        await rename(temporary, path);
+        const parent = await open(dirname(path), "r");
+        try { await parent.sync(); } finally { await parent.close(); }
+      } finally { await rm(temporary, { force: true }); }
+    }
+    const statusRecord = ["--state-dir", statusDir, "--checkout", root, "--env-file", path, "--started", new Date().toISOString()];
+    await recordStatus([...statusRecord, "--state", "unavailable"]);
     if (profiles.includes("compute")) {
       const identity = await verifyWorkerdImage(entries, child, run);
       await persistWorkerdEvidence(resolve(dirname(path), entries.BP_DATA_DIR ?? "data"), identity);
       child.BP_WORKERD_EFFECTIVE_IMAGE = identity.imageId;
       child.BP_WORKERD_HOST_IMAGE_ID = identity.imageId;
     }
-    for (const key of keys) if (entries[key] === undefined) {
-      // RustFS service-account creation accepts at most 40 characters.
-      const bytes = key === "BP_RUSTFS_ROOT_USER" || key === "BP_BLOB_S3_ACCESS_KEY" ? 10 : key === "BP_BLOB_S3_SECRET_KEY" ? 20 : 32;
-      entries[key] = randomBytes(bytes).toString("hex");
-      additions.push(`${key}=${entries[key]}`);
-    }
-    if (source === undefined || source !== originalSource || additions.length) await privateWrite(path, (source ?? "") + (source && !source.endsWith("\n") ? "\n" : "") + additions.join("\n") + "\n", source !== undefined);
-    const compose = ["compose", "--project-name", project, "--project-directory", root, "--env-file", path, "-f", resolve(root, "compose.yaml"),
-      ...profiles.flatMap(p => ["-f", resolve(root, `compose.${p}.yaml`)]), ...profiles.flatMap(p => ["--profile", p])];
+    try { await run(["network", "inspect", network], child); }
+    catch { await run(["network", "create", network], child); }
     for (const volume of ["postgres-data", "server-data", "edge-data", "edge-config", ...(profiles.includes("blobs") ? ["rustfs-data"] : [])]) {
       await run(["volume", "create", "--label", `com.docker.compose.project=${project}`, `${prefix}_${volume}`], child);
     }
