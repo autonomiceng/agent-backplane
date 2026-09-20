@@ -141,10 +141,13 @@ def require_empty(path):
 
 
 class Stack:
-    def __init__(self, env_file, source=None):
+    def __init__(self, env_file, source=None, *, compose_files=None):
         self.env_file = env_file.resolve()
-        self.compose = ['docker', 'compose', '--project-directory', str(ROOT), '--env-file', str(self.env_file)]
-        if not os.environ.get('COMPOSE_FILE'):
+        project_directory = Path(compose_files[0]).parent if compose_files else ROOT
+        self.compose = ['docker', 'compose', '--project-directory', str(project_directory), '--env-file', str(self.env_file)]
+        if compose_files:
+            self.compose += [arg for name in compose_files for arg in ('-f', str(name))]
+        elif not os.environ.get('COMPOSE_FILE'):
             self.compose += ['-f', str(ROOT / 'compose.yaml')]
         self.config = json.loads(self.dc('config', '--format', 'json'))
         self.project = self.config['name']
