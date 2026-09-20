@@ -141,6 +141,11 @@ test("status recorder exposes only stable diagnostics and reports a missing Pyth
       .rejects.toMatchObject({ error: "status_path_unavailable" });
     await expect(statusRecorder(["--state-dir", target, "--prepare"], ""))
       .rejects.toMatchObject({ error: "status_python_required" });
+    const envFile = join(directory, ".env");
+    await writeFile(envFile, "COMPOSE_PROJECT_NAME=recorded\n", { mode: 0o600 });
+    await expect(statusRecorder(["--state-dir", target, "--checkout", directory, "--env-file", envFile,
+      "--project-name", "other", "--started", "2026-09-20T12:00:00Z", "--state", "healthy"]))
+      .rejects.toMatchObject({ error: "status_selection_mismatch" });
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
@@ -251,8 +256,14 @@ test("incomplete existing selection requires original confirmation; failed inven
 test("conflicting selectors, ambiguous assignments and backend changes refuse before mutations", async () => {
   await selectionFixture(async ({ path, args, runner, record, calls, records }) => {
     await expect(prepare([...args, "--profile", "edge", "--profile", "gateway"], {}, runner, record)).rejects.toMatchObject({ error: "choose_one_gateway" });
+    const base = resolve(import.meta.dir, "../../compose.yaml"), overlay = resolve(import.meta.dir, "../../compose.blobs.yaml");
+    await expect(prepare(args, { COMPOSE_PROJECT_NAME: "shell-project" }, runner, record)).rejects.toMatchObject({ error: "selection_conflict" });
+    await expect(prepare(args, { COMPOSE_PROFILES: "blobs" }, runner, record)).rejects.toMatchObject({ error: "selection_conflict" });
+    await expect(prepare(args, { COMPOSE_FILE: `${base}:${overlay}` }, runner, record)).rejects.toMatchObject({ error: "selection_conflict" });
     expect(calls).toEqual([]);
-    await prepare(args, {}, runner, record);
+    expect(records).toEqual([]);
+    await expect(lstat(path)).rejects.toMatchObject({ code: "ENOENT" });
+    await prepare(args, { COMPOSE_PROJECT_NAME: "agent-backplane", COMPOSE_FILE: base, COMPOSE_PROFILES: "" }, runner, record);
     const saved = await readFile(path, "utf8");
     for (const flags of [["--compose-project", "other"], ["--profile", "blobs"], ["--profile", "edge", "--profile", "gateway"]]) {
       calls.length = 0; records.length = 0;
@@ -276,10 +287,16 @@ test("conflicting selectors, ambiguous assignments and backend changes refuse be
 });
 
 test("custom overlay order and meaningful empty profiles survive custom env directories", async () => {
-  await selectionFixture(async ({ directory, path, args, runner, record, calls }) => {
+  await selectionFixture(async ({ directory, path, args, runner, record, calls, records }) => {
     const base = resolve(import.meta.dir, "../../compose.yaml"), overlay = join(directory, "logging override.yaml"), last = join(directory, "last.yaml");
     await writeFile(overlay, "services: {}\n"); await writeFile(last, "services: {}\n");
     const unrelated = "# keep formatting\nOTHER=${KEEP}\nOTHER=second\n";
+    await symlink(overlay, join(directory, "linked.yaml"));
+    const linked = `${unrelated}COMPOSE_FILE='${base}:linked.yaml:last.yaml'\nCOMPOSE_PROFILES=\n`;
+    await writeFile(path, linked);
+    await expect(prepare(args, {}, runner, record)).rejects.toMatchObject({ error: "invalid_compose_file" });
+    expect(await readFile(path, "utf8")).toBe(linked);
+    expect(calls).toEqual([]); expect(records).toEqual([]);
     await writeFile(path, `${unrelated}COMPOSE_FILE='${base}:logging override.yaml:last.yaml'\nCOMPOSE_PROFILES=\n`);
     await prepare(args, {}, runner, record);
     const saved = await readFile(path, "utf8");

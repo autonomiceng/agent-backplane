@@ -37,8 +37,12 @@ def main():
         elif any(value is None for value in record):
             raise Unavailable()
         else:
-            root, env_file, project, files, profiles = selection(
-                args.checkout, args.env_file, args.project_name, args.compose_file or (), args.profile)
+            try:
+                root, env_file, project, files, profiles = selection(
+                    args.checkout, args.env_file, args.project_name, args.compose_file or (), args.profile)
+            except Unavailable:
+                print('status_selection_mismatch', file=sys.stderr)
+                return 1
             task_record(args.state_dir, root, env_file, args.started, args.state,
                         {'project': project, 'composeFiles': list(map(str, files)), 'profiles': list(profiles)})
     except Unavailable:

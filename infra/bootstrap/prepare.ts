@@ -2,7 +2,7 @@
 import { persistWorkerdEvidence, verifyWorkerdImage } from "./workerd-image.ts";
 import { parseArgs } from "node:util";
 import { randomBytes } from "node:crypto";
-import { open, rename, rm, stat } from "node:fs/promises";
+import { lstat, open, rename, rm, stat } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { privateRead, privateWrite, privateLock } from "../../packages/cli/runtime/credential-file.ts";
 import { CliError, type Environment } from "../../packages/cli/runtime/credentials.ts";
@@ -59,7 +59,7 @@ export async function prepare(argv: string[], env: Environment, run: Runner = do
     const select = (key: string, explicit: string | undefined, fallback: string) => {
       const normalize = (value: string) => key === "COMPOSE_PROFILES" ? [...new Set(value.split(","))].sort().join(",")
         : key === "COMPOSE_FILE" ? value.split(":").map(file => file ? resolve(dirname(path), file) : "").join(":") : value;
-      const selected = entries[key] ?? explicit ?? env[key] ?? fallback;
+      const selected = entries[key] ?? explicit ?? fallback;
       if ([explicit, env[key]].some(value => value !== undefined && normalize(value) !== normalize(selected))) throw new CliError("selection_conflict", 1);
       return selected;
     };
@@ -73,7 +73,7 @@ export async function prepare(argv: string[], env: Environment, run: Runner = do
       || entries.COMPOSE_ENV_FILES || env.COMPOSE_ENV_FILES) throw new CliError("selection_conflict", 1);
     const files = select("COMPOSE_FILE", undefined, [resolve(root, "compose.yaml"), ...profiles.map(p => resolve(root, `compose.${p}.yaml`))].join(":"))
       .split(":").map(file => file ? resolve(dirname(path), file) : "");
-    for (const file of files) if (!file || /[\n\r$`'"\\:]/.test(file) || !(await stat(file).catch(() => undefined))?.isFile()) throw new CliError("invalid_compose_file", 1);
+    for (const file of files) if (!file || /[\n\r$`'"\\:]/.test(file) || !(await lstat(file).catch(() => undefined))?.isFile()) throw new CliError("invalid_compose_file", 1);
     const completeSelection = selectors.every(key => entries[key] !== undefined) && entries.BP_BLOB_BACKEND !== undefined;
     const keys = [...core, ...(profiles.includes("blobs") ? blobs : []), ...(profiles.includes("compute") ? ["BP_COMPUTE_TOKEN"] : [])];
     const save = (key: string, value: string) => {
@@ -204,7 +204,7 @@ export async function statusRecorder(args: string[], searchPath = process.env.PA
         let offset = 0;
         for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
         const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes).trim();
-        return ["status_path_unsafe", "status_path_unavailable", "status_record_invalid"].includes(text)
+        return ["status_path_unsafe", "status_path_unavailable", "status_record_invalid", "status_selection_mismatch"].includes(text)
           ? text : "status_record_failed";
       } catch { return "status_record_failed"; }
     })();

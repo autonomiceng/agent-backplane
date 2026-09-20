@@ -58,6 +58,10 @@ class StatusObserverTests(unittest.TestCase):
                         '--compose-file', str(overlay), '--profile', 'compute', '--profile', 'blobs'],
                        check=True, capture_output=True)
         self.assertEqual(status_io.read_task(state, self.root, env_file), record)
+        mismatch = subprocess.run([*command, '--project-name', 'other'], capture_output=True, text=True)
+        self.assertEqual((mismatch.returncode, mismatch.stdout, mismatch.stderr),
+                         (1, '', 'status_selection_mismatch\n'))
+        self.assertEqual(status_io.read_task(state, self.root, env_file), record)
         def runner(argv, **_options):
             return json.dumps(config('original')) if 'config' in argv else ''
         document = observer.observe(self.root, env_file=env_file, runner=runner, clock=lambda: AT)
