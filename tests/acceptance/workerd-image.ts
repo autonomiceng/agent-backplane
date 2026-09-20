@@ -56,7 +56,7 @@ let failed = false;
 try {
   await mkdir(controlDirectory, { mode: 0o755 });
   await chmod(controlDirectory, 0o755);
-  for (const file of ["loader.js", "config.capnp", "start.sh"]) {
+  for (const file of ["loader.js", "config.capnp", "start.sh", "supervisor.ts", "child-process.ts"]) {
     await copyFile(`${root}/apps/server/compute/workerd/${file}`, join(controlDirectory, file));
     await chmod(join(controlDirectory, file), 0o644);
   }
@@ -68,7 +68,7 @@ try {
   async function start(hostObservedImageId: string, reference = identity) {
     const container = await docker("create", "--name", name, "--label", `io.backplane.artifact-probe=${owner}`,
       "--pull", "never", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true",
-      "--memory", "512m", "--cpus", "1", "--pids-limit", "128", "--publish", "127.0.0.1::8080", "--env", "BP_COMPUTE_TOKEN",
+      "--restart", "unless-stopped", "--memory", "512m", "--cpus", "1", "--pids-limit", "128", "--publish", "127.0.0.1::8080", "--env", "BP_COMPUTE_TOKEN",
       "--mount", `type=bind,src=${controlDirectory},dst=/compute,readonly`,
       "--env", `BP_WORKERD_IMAGE=${image}`, "--env", `BP_WORKERD_HOST_IMAGE_ID=${hostObservedImageId}`,
       "--env", `BP_WORKERD_BINARY_SHA256=${binary}`, "--entrypoint", "/bin/sh",
@@ -79,6 +79,16 @@ try {
   let container = await start(identity);
   assert.equal(await docker("inspect", "--format", "{{.Image}}", container), identity);
   assert.equal(await docker("exec", container, "/usr/bin/workerd", "--version"), "workerd 2026-09-18");
+  assert.equal(await docker("exec", container, "/usr/bin/bun", "--version"), "1.4.2");
+  const bunHashes = new Map([
+    ["amd64", "a83d263767d839e4d2649ca8e35d07159c7afc99afdc96d731ced29e056dda0c"],
+    ["arm64", "616f267a34278ff5ac282df37ffdfba1d7141f4f6926bca99af2cd6ef3ad32b1"],
+  ]);
+  assert.equal((await docker("exec", container, "sha256sum", "/usr/bin/bun")).split(" ")[0], bunHashes.get(architecture));
+  assert.equal((await docker("exec", container, "sha256sum", "/usr/share/licenses/bun/LICENSE")).split(" ")[0],
+    "b9caf52728691b4057e371232c221a132883198be2f3d2ddf92c90404c984b1a");
+  assert.equal((await docker("exec", container, "sha256sum", "/usr/share/licenses/bun/THIRD-PARTY.md")).split(" ")[0],
+    "1fac2ad9eac5ba9e1e0ef0d2893108e7d7a17fae5afac60f4bb0bd403087f3ec");
   assert.equal(await docker("exec", container, "id", "-u"), "65534");
   assert.equal(await docker("exec", container, "id", "-g"), "65534");
   const digest = (await docker("exec", container, "sha256sum", "/usr/bin/workerd")).split(" ")[0];
@@ -191,6 +201,88 @@ try {
   await waitIdentity(controlHash);
   assert.deepEqual(await bare.verify(AbortSignal.timeout(5000)), bareEvidence);
   assert((await bare.prepare(value, AbortSignal.timeout(5000), bareEvidence)).ok, "restored control surface must accept the original deployment without redeploy");
+  if (Bun.argv.includes("--lifecycle")) {
+    // Case 10: real aggregate memory failure and recovery in this owned 512 MiB container.
+    operationEvidence = await bare.verify(AbortSignal.timeout(2000)) ?? undefined;
+    assert(operationEvidence);
+    const spin = manifest('export default {fetch(){while(true){}}}', runtimeDigest);
+    const spinning = fetch(`http://${address}/invoke`, { method: "POST", headers: {
+      authorization: `Bearer ${token}`, "content-type": "application/json", "x-backplane-runtime": runtimeDigest,
+      "x-backplane-control": operationEvidence.controlHash, "x-backplane-artifact": JSON.stringify(operationEvidence.artifact),
+      "x-backplane-budget-ms": "3500",
+    }, body: JSON.stringify({ manifest: spin, props, input: null }), signal: AbortSignal.timeout(6000) });
+    let ownedChild = "";
+    const spawnDeadline = performance.now() + 2000;
+    while (!ownedChild && performance.now() < spawnDeadline) ownedChild = await docker("exec", container, "cat", "/proc/1/task/1/children");
+    assert.match(ownedChild, /^\d+$/, "expected exactly one operation child of the owned PID 1");
+    const probeStarted = performance.now();
+    const busyProbe = await bare.verify(AbortSignal.timeout(2000));
+    assert(busyProbe, "identity failed under one-CPU container load");
+    const identityUnderLoadMs = Math.ceil(performance.now() - probeStarted);
+    assert(identityUnderLoadMs < 2000);
+    const timedOut = await spinning;
+    assert.equal(timedOut.headers.get("x-backplane-error"), "function_timeout");
+    await timedOut.body?.cancel();
+    assert.equal((await command(["exec", container, "test", "-e", `/proc/${ownedChild}`])).code, 1, "captured child survived deadline response");
+    console.log(JSON.stringify({ gate: "identity-under-cpu", identityUnderLoadMs, capturedChildExited: true }));
+    const baseline = Number(await docker("exec", container, "cat", "/sys/fs/cgroup/memory.current"));
+    const beforeEvents = await docker("exec", container, "cat", "/sys/fs/cgroup/memory.events");
+    const memoryRestartsBefore = Number(await docker("inspect", "--format", "{{.RestartCount}}", container));
+    const bomb = manifest('export default {fetch(){const retained=[];while(true){const bytes=new Uint8Array(16*1024*1024);bytes.fill(1);retained.push(bytes)}}}', runtimeDigest);
+    const pending = fetch(`http://${address}/invoke`, { method: "POST", headers: {
+      authorization: `Bearer ${token}`, "content-type": "application/json", "x-backplane-runtime": runtimeDigest,
+      "x-backplane-control": operationEvidence.controlHash, "x-backplane-artifact": JSON.stringify(operationEvidence.artifact),
+      "x-backplane-budget-ms": "10000",
+    }, body: JSON.stringify({ manifest: bomb, props, input: null }), signal: AbortSignal.timeout(12000), redirect: "manual" })
+      .then(async response => { await response.body?.cancel(); return { status: response.status, reason: response.headers.get("x-backplane-error") }; })
+      .catch(error => { if (error instanceof Error && error.name === "TimeoutError") throw error; return null; });
+    const outcome = await pending;
+    assert(outcome === null || outcome.status === 502 && outcome.reason === "function_failed", "memory fixture timed out or returned an ordinary response");
+    address = (await docker("port", container, "8080")).split("\n")[0];
+    await waitIdentity(controlHash);
+    if (outcome === null) assert(Number(await docker("inspect", "--format", "{{.RestartCount}}", container)) > memoryRestartsBefore, "connection failure has no container-restart evidence");
+    const recovered = await request("/invoke", { manifest: value, props, input: null });
+    assert.equal(recovered.status, 200);
+    assert.equal(await docker("exec", container, "cat", "/proc/1/task/1/children"), "", "supervisor retained a child after response");
+    const zombies = await docker("exec", container, "sh", "-c", 'for state in /proc/[0-9]*/status; do while read -r key value rest; do if [ "$key" = State: ] && [ "$value" = Z ]; then echo "$state"; fi; done < "$state"; done');
+    assert.equal(zombies, "", "container retained zombies");
+    const afterEvents = await docker("exec", container, "cat", "/sys/fs/cgroup/memory.events");
+    let recoveredBytes = Infinity;
+    const memoryDeadline = performance.now() + 5000;
+    while (performance.now() < memoryDeadline) {
+      recoveredBytes = Number(await docker("exec", container, "cat", "/sys/fs/cgroup/memory.current"));
+      if (recoveredBytes <= baseline + 64 * 1048576) break;
+      await Bun.sleep(100);
+    }
+    assert(recoveredBytes <= baseline + 64 * 1048576, "aggregate memory did not recover after child exit");
+    console.log(JSON.stringify({ gate: "memory-container", baseline, recoveredBytes, outcome, beforeEvents, afterEvents,
+      restartCount: await docker("inspect", "--format", "{{.RestartCount}}", container) }));
+    // Inject a lost exit observation into this owned mount, then exercise actual PID 1 restart.
+    const helper = join(controlDirectory, "child-process.ts");
+    const originalHelper = await Bun.file(helper).text();
+    const injectedHelper = originalHelper.replace("await child.exited;", "await new Promise(() => {});");
+    assert.notEqual(injectedHelper, originalHelper, "reap fault injection did not match the implementation");
+    try {
+      await Bun.write(helper, injectedHelper);
+      await docker("restart", container);
+      address = (await docker("port", container, "8080")).split("\n")[0];
+      const restartsBefore = Number(await docker("inspect", "--format", "{{.RestartCount}}", container));
+      const restartDeadline = performance.now() + 10000;
+      let restarts = restartsBefore;
+      while (restarts <= restartsBefore && performance.now() < restartDeadline) {
+        await fetch(`http://${address}/identity`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(2000) }).catch(() => null);
+        restarts = Number(await docker("inspect", "--format", "{{.RestartCount}}", container));
+        await Bun.sleep(100);
+      }
+      assert(restarts > restartsBefore, "fatal reap fallback did not restart owned PID 1");
+    } finally { await Bun.write(helper, originalHelper); }
+    await docker("restart", container);
+    address = (await docker("port", container, "8080")).split("\n")[0];
+    await waitIdentity(controlHash);
+    assert.equal((await request("/invoke", { manifest: value, props, input: null })).status, 200);
+    assert.equal(await docker("exec", container, "cat", "/proc/1/task/1/children"), "");
+    console.log(JSON.stringify({ gate: "fatal-reap-restart", recovered: true }));
+  }
   console.log(JSON.stringify({ configuredReference: image, imageId: identity, binarySha256: digest, architecture, runtimeDigest, controlHash, result: identityOnly ? "runtime identity and mismatch refusal passed; attribution requires PG gate" : "artifact identity, restrictions and protocol passed; full runtime qualification remains separate" }));
 } catch (error) {
   failed = true;

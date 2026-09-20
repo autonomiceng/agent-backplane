@@ -50,7 +50,7 @@ export async function invokeFunction(pool: Pool, caller: RunContext, name: strin
       if (performance.now() >= deadline) throw new InvocationError("function_timeout");
       controller.signal.throwIfAborted();
       const response = await launcher.invoke?.({ manifest: invocation.manifest,
-        props: { token, runId: invocation.runId, workspaceId: caller.workspaceId }, input: body.input }, controller.signal, evidence);
+        props: { token, runId: invocation.runId, workspaceId: caller.workspaceId }, input: body.input }, controller.signal, evidence, Math.max(1, Math.floor(deadline - performance.now())));
       if (!response) throw new InvocationError("compute_unavailable");
       if (controller.signal.aborted) { void response.body?.cancel().catch(() => {}); controller.signal.throwIfAborted(); }
       httpStatus = response.status;

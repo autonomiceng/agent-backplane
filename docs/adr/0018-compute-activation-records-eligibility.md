@@ -53,3 +53,16 @@ future images. Direct Compose reports a null image ID unless the trusted operato
 supplies a declaration. Use an immutable reference for repeatability. There is no
 shipped image default until runtime qualification, publication and B-DEFAULT approval.
 The known amd64 binary hash alone does not qualify another architecture or image.
+
+
+Amended runtime lifecycle, pending artifact qualification: the authenticated Bun
+supervisor runs as PID 1 and creates a disposable workerd process per prepare/invoke.
+One operation slot and a separate singleflight identity probe bound process count.
+Identity includes an actual loader round trip. Deadlines kill and reap captured children;
+successful responses are released only after exit, ending background work. Reap failure
+exits the parent for container restart. This supersedes the initializer-termination
+limitation above for the supervisor protocol once qualified; standalone workerd limits
+still do not establish CPU termination. The control hash includes `supervisor.ts` and
+`child-process.ts` in addition to the original three files. Artifact identity remains
+host-declared, and the new Bun packaging and resource gates remain release requirements.
+

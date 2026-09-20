@@ -8,10 +8,10 @@ import { readArtifactEvidence, readControlSurfaceHash, type ArtifactEvidence } f
 test("Bun and POSIX shell agree on control identity; changing any mounted control file changes it", async () => {
   const directory = await mkdtemp(join(tmpdir(), "bp-control-")), url = pathToFileURL(directory + "/");
   try {
-    const names = ["loader.js", "config.capnp", "start.sh"];
+    const names = ["loader.js", "config.capnp", "start.sh", "supervisor.ts", "child-process.ts"];
     for (const name of names) await copyFile(new URL(`./workerd/${name}`, import.meta.url), join(directory, name));
     const original = await readControlSurfaceHash(url);
-    const child = Bun.spawn(["sh", "-ec", 'cd "$1"; control=$(sha256sum loader.js config.capnp start.sh); printf "%s\\n" "$control" | sha256sum', "control", directory], { stdout: "pipe", stderr: "pipe" });
+    const child = Bun.spawn(["sh", "-ec", 'cd "$1"; control=$(sha256sum loader.js config.capnp start.sh supervisor.ts child-process.ts); printf "%s\\n" "$control" | sha256sum', "control", directory], { stdout: "pipe", stderr: "pipe" });
     const [out, code] = await Promise.all([new Response(child.stdout).text(), child.exited]);
     expect(code).toBe(0);
     expect(out.split(" ")[0]).toBe(original);

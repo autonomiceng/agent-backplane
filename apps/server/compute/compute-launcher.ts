@@ -1,9 +1,10 @@
 // Operations verify before opening a transaction; each dispatch carries that observation for the loader to compare.
+import { InvocationError } from "./invoke-function-input.ts";
 import { computeFailure, computeSuccess, type ComputeResult } from "./compute-error.ts";
 import { readArtifactEvidence, readControlSurfaceHash, type ArtifactEvidence, type RuntimeEvidence } from "./runtime-identity.ts";
 import type { Manifest } from "./deployment-config.ts";
 export type Invocation = { manifest: Manifest; props: { token: string; runId: string; workspaceId: string }; input: unknown };
-export type ComputeLauncher = { runtimeDigest: string; timeoutMs?: number; verify(signal: AbortSignal): Promise<RuntimeEvidence | null>; invoke?(invocation: Invocation, signal: AbortSignal, evidence: RuntimeEvidence): Promise<Response>; prepare(manifest: Manifest, signal: AbortSignal, evidence: RuntimeEvidence): Promise<ComputeResult<ArtifactEvidence>> };
+export type ComputeLauncher = { runtimeDigest: string; timeoutMs?: number; verify(signal: AbortSignal): Promise<RuntimeEvidence | null>; invoke?(invocation: Invocation, signal: AbortSignal, evidence: RuntimeEvidence, remainingMs?: number): Promise<Response>; prepare(manifest: Manifest, signal: AbortSignal, evidence: RuntimeEvidence): Promise<ComputeResult<ArtifactEvidence>> };
 export function createComputeLauncher(config: { url: string | undefined; token: string | undefined; runtimeDigest: string | undefined; timeoutMs?: string | undefined }): ComputeLauncher | undefined {
   if (!config.url) return undefined;
   const { token, runtimeDigest = "" } = config;
@@ -34,20 +35,22 @@ export function createComputeLauncher(config: { url: string | undefined; token: 
       return null;
     }
   };
-  return { runtimeDigest, verify, timeoutMs: endpoint ? timeoutMs : 10000, async invoke(invocation, signal, evidence) {
+  return { runtimeDigest, verify, timeoutMs: endpoint ? timeoutMs : 10000, async invoke(invocation, signal, evidence, remainingMs = timeoutMs) {
     if (!endpoint || invocation.manifest.runtimeDigest !== runtimeDigest || evidence.runtimeDigest !== runtimeDigest) throw new Error("compute_unavailable");
     try {
       const response = await fetch(new URL(endpoint.href.replace(/\/prepare$/, "/invoke")), { method: "POST",
-        headers: { authorization: `Bearer ${token}`, "content-type": "application/json",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json", "x-backplane-budget-ms": String(Math.max(1, Math.floor(remainingMs))),
           "x-backplane-runtime": evidence.runtimeDigest, "x-backplane-control": evidence.controlHash, "x-backplane-artifact": JSON.stringify(evidence.artifact) },
         body: JSON.stringify(invocation), signal, redirect: "manual" });
-      if (response.status === 503 && response.headers.get("x-backplane-error") === "compute_unavailable") {
+      const reason = response.headers.get("x-backplane-error");
+      if ((response.status === 503 && reason === "compute_unavailable") || (response.status === 502 && reason === "function_failed")
+        || (response.status === 504 && reason === "function_timeout")) {
         await response.body?.cancel();
-        throw new Error("compute_unavailable");
+        throw new InvocationError(reason);
       }
       return response;
     } catch (error) {
-      if (signal.aborted) throw error;
+      if (signal.aborted || error instanceof InvocationError) throw error;
       throw new Error("compute_unavailable");
     }
   }, async prepare(manifest, signal, evidence) {
