@@ -86,7 +86,7 @@ bp() { bun "$BACKPLANE_REPO/packages/cli/runtime/main.ts" "$@"; }
 bun "$BACKPLANE_REPO/examples/talk-digest/analyst.ts" discover
 ```
 
-`discover` checks `whoami`, creates the attributed Run, and performs MCP initialization plus `tools/list`. Claim only when an analyst is ready to work. The command downloads the File by ID, verifies its byte count and SHA-256, then saves the transcript and Receipt-bearing state privately.
+`discover` checks `whoami` and performs MCP initialization plus `tools/list`. Claim only when an analyst is ready to work. `claim` creates the attributed Run, downloads the File by ID, verifies its byte count and SHA-256, then saves the transcript and Receipt-bearing state privately.
 
 ```bash
 bun "$BACKPLANE_REPO/examples/talk-digest/analyst.ts" claim \
@@ -103,7 +103,7 @@ Read the private transcript and author `$BP_DATA_DIR/summary.json` yourself. No 
 }
 ```
 
-Renew while the Receipt is live if analysis takes time. `complete` also renews when fewer than two minutes remain and refuses an expired Receipt. It first submits a deliberately wrong `expectRows`, verifies the SQL rollback and still-leased Delivery, then uses a fresh idempotency key for the correct SQL-plus-ack transaction. It repeats the identical successful request and requires one joined result. The standalone HTML escapes all source and summary text, accepts only HTTP(S) source links, labels fixture versus real material, and is stored as a File.
+Renew while the Receipt is live if analysis takes time. `complete` first checks for an existing matching digest without renewing or using the Receipt. A completed retry reuses its matching private proof, or reports that work is already complete when the proof is unavailable. Pending work renews when fewer than two minutes remain and refuses an expired Receipt. It first submits a deliberately wrong `expectRows`, verifies the SQL rollback and still-leased Delivery, then uses a fresh idempotency key for the correct SQL-plus-ack transaction. It repeats the identical successful request and requires one joined result. The standalone HTML escapes all source and summary text, accepts only HTTP(S) source links, labels fixture versus real material, and is stored as a File.
 
 ```bash
 bun "$BACKPLANE_REPO/examples/talk-digest/analyst.ts" renew "$BP_DATA_DIR/claim.json"

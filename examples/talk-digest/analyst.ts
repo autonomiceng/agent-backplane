@@ -2,6 +2,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { chmod, open, readFile, rename } from "node:fs/promises";
 import { resolve } from "node:path";
+import { keySegment } from "./key-segment.ts";
 
 const QUEUE = "platform-talks-v1", FUNCTION = "talk-digest-review";
 const CLI = resolve(import.meta.dir, "../../packages/cli/runtime/main.ts");
@@ -25,6 +26,47 @@ const canonical = (value: Json): string => Array.isArray(value) ? `[${value.map(
   : typeof value === "object" && value !== null ? `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical(value[key]!)}`).join(",")}}`
   : JSON.stringify(value);
 const same = (left: Json, right: Json) => canonical(left) === canonical(right);
+function json(value: Json | undefined, name: string): Json {
+  if (typeof value !== "string") return value ?? null;
+  try { return JSON.parse(value) as Json; } catch { throw new Error(`${name}_invalid`); }
+}
+
+type CompletionExpected = { sourceFileId: string; sourceSha256: string; sourceBytes: number; digest: string; points: string[];
+  metadata: Obj; principalId: string; runId: string };
+export function completionDecision(row: Obj, expected: CompletionExpected) {
+  const sourceMatches = row.transcript_file_id === expected.sourceFileId && row.transcript_sha256 === expected.sourceSha256
+    && row.transcript_bytes === String(expected.sourceBytes);
+  if (!sourceMatches) throw new Error("completed_source_mismatch");
+  if (row.analysis_state === "pending" && row.digest_count === 0) return "pending" as const;
+  const contentMatches = row.analysis_state === "complete" && row.digest_count === 1 && row.digest_text === expected.digest
+    && same(json(row.key_points, "key_points"), expected.points) && same(json(row.analysis_metadata, "analysis_metadata"), expected.metadata)
+    && row.digest_principal_id === expected.principalId && row.digest_run_id === expected.runId;
+  if (!contentMatches) throw new Error("completed_result_mismatch");
+  return "completed" as const;
+}
+
+export function auditProofEvent(value: unknown): Obj {
+  const event = object(value, "event"), objects = event.objects;
+  if (!Array.isArray(objects) || objects.some(value => typeof value !== "string")) throw new Error("event_objects_invalid");
+  const principal = event.principal_id, run = event.run_id;
+  if (principal !== null && typeof principal !== "string" || run !== null && typeof run !== "string") throw new Error("event_actor_invalid");
+  return { position: text(event.position, "event_position"), kind: text(event.kind, "event_kind"), objects,
+    principal_id: principal ?? null, run_id: run ?? null };
+}
+
+export async function findInvocationEvent(after: string, invocationRunId: string, readPage: (after: string) => Promise<Obj>) {
+  while (true) {
+    const page = await readPage(after), raw = page.events;
+    const events = Array.isArray(raw) ? raw.map(event => object(event, "event")) : [];
+    const found = events.find(event => event.kind === "function.invoke"
+      && object(event.metadata, "event_metadata").runId === invocationRunId);
+    if (found) return found;
+    const next = text(page.nextAfter, "event_cursor");
+    if (events.length < 500) return;
+    if (next === after) throw new Error("audit_cursor_stalled");
+    after = next;
+  }
+}
 
 async function bpResult(args: string[], body?: Json) {
   const child = Bun.spawn(["bun", CLI, ...args], { env: process.env,
@@ -131,7 +173,7 @@ async function liveReceipt(statePath: string, state: Obj) {
 async function renew(statePath: string) { await identity(); const state = await liveReceipt(statePath, await readObject(statePath, "claim_state")); console.log(JSON.stringify({ deliveryId: state.deliveryId, leaseExpiresAt: state.leaseExpiresAt })); }
 
 async function complete(transcriptPath: string, statePath: string, summaryPath: string, htmlPath: string, proofPath: string) {
-  const who = await identity(), state = await liveReceipt(statePath, await readObject(statePath, "claim_state"));
+  const who = await identity(), state = await readObject(statePath, "claim_state");
   const source = sourcePayload(state.payload), file = object(source.transcriptFile, "transcript_file"), bytes = await readFile(transcriptPath);
   if (bytes.length !== file.byteLength || sha256(bytes) !== file.sha256) throw new Error("transcript_file_mismatch");
   const authored = summary(JSON.parse(await readFile(summaryPath, "utf8")) as Json, text(source.sourceId, "source_id"));
@@ -139,6 +181,29 @@ async function complete(transcriptPath: string, statePath: string, summaryPath: 
   const metadata: Obj = { collectionDate, attribution: "Backplane analyst Principal", summaryWords: authored.words,
     sourceType: source.fictional ? "fixture" : "real", claimsVerified: false };
   const sourceId = text(source.sourceId, "source_id"), demoRun = text(source.demoRun, "demo_run");
+  const analyst = object(state.analyst, "analyst"), expected: CompletionExpected = { sourceFileId: text(file.id, "file_id"),
+    sourceSha256: text(file.sha256, "file_sha256"), sourceBytes: Number(file.byteLength), digest: authored.digest, points: authored.points,
+    metadata, principalId: text(analyst.principalId, "analyst_principal_id"), runId: text(analyst.runId, "analyst_run_id") };
+  if (expected.principalId !== who.principalId) throw new Error("claim_identity_mismatch");
+  const inspect = async () => {
+    const response = object(await bp(["sql", "execute-sql", "--body", "-"], { statement: "SELECT s.analysis_state,s.transcript_file_id::text AS transcript_file_id,s.transcript_sha256,s.transcript_bytes::text AS transcript_bytes,d.digest_text,d.key_points,d.analysis_metadata,d.principal_id::text AS digest_principal_id,d.run_id::text AS digest_run_id,(SELECT count(*)::int FROM talk_digests c WHERE c.source_id=s.source_id) AS digest_count FROM talk_sources s LEFT JOIN talk_digests d USING(source_id) WHERE s.source_id=$1", params: [sourceId] }), "completion_check");
+    return object((response.rows as Json[])?.[0], "completion_row");
+  };
+  if (completionDecision(await inspect(), expected) === "completed") {
+    let proof: Obj | undefined;
+    try { proof = await readObject(proofPath, "proof"); }
+    catch (error) { if (!(typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT")) throw error; }
+    if (!proof) { console.log(JSON.stringify({ sourceId, alreadyCompleted: true, reused: false, proofAvailable: false })); return; }
+    const transaction = object(proof.transaction, "proof_transaction");
+    if (proof.sourceId !== sourceId || proof.sourceFileId !== file.id || proof.analystPrincipalId !== expected.principalId
+      || proof.analystRunId !== expected.runId || transaction.expectedFailure !== "assertion_failed" || transaction.rollbackState !== "pending"
+      || transaction.rollbackDigestCount !== 0 || transaction.ackUncommitted !== true || transaction.identicalRetry !== true
+      || transaction.resultCount !== 1 || typeof transaction.committedPosition !== "string" || typeof proof.outputFileId !== "string")
+      throw new Error("completed_proof_mismatch");
+    console.log(JSON.stringify({ sourceId, alreadyCompleted: true, reused: true, proof: proofPath, outputFileId: proof.outputFileId }));
+    return;
+  }
+  await liveReceipt(statePath, state);
   const update = "UPDATE talk_sources SET analysis_state='complete' WHERE source_id=$1 AND analysis_state='pending'";
   const insert = "INSERT INTO talk_digests (source_id,digest_text,key_points,analysis_metadata,completed_at) VALUES ($1,$2,$3::jsonb,$4::jsonb,CURRENT_TIMESTAMP)";
   const operations = (expectRows: number): Json[] => [
@@ -150,8 +215,7 @@ async function complete(transcriptPath: string, statePath: string, summaryPath: 
   const failure = object(failed.failure, "expected_failure");
   const failureDetails = object(failure.details, "expected_failure_details");
   if (failed.code === 0 || failure.error !== "assertion_failed" || failureDetails.operationIndex !== 0) throw new Error("expected_assertion_failure_missing");
-  const rollback = object(await bp(["sql", "execute-sql", "--body", "-"], { statement: "SELECT s.analysis_state,(SELECT count(*)::int FROM talk_digests d WHERE d.source_id=s.source_id) AS digest_count FROM talk_sources s WHERE s.source_id=$1", params: [sourceId] }), "rollback_check");
-  const rollbackRow = object((rollback.rows as Json[])?.[0], "rollback_row");
+  const rollbackRow = await inspect();
   const deliveries = object(await bp(["queue", "list-deliveries", "--queue", QUEUE, "--state", "leased", "--limit", "100"]), "deliveries");
   const ackUncommitted = Array.isArray(deliveries.items) && deliveries.items.some(item => object(item, "delivery").id === state.deliveryId);
   if (rollbackRow.analysis_state !== "pending" || rollbackRow.digest_count !== 0 || !ackUncommitted) throw new Error("failure_did_not_roll_back");
@@ -163,13 +227,14 @@ async function complete(transcriptPath: string, statePath: string, summaryPath: 
   const verified = object(await bp(["sql", "execute-sql", "--body", "-"], { statement: "SELECT count(*)::int AS result_count FROM talk_sources s JOIN talk_digests d USING(source_id) WHERE s.source_id=$1 AND s.analysis_state='complete'", params: [sourceId] }), "result_check");
   if (object((verified.rows as Json[])?.[0], "result_row").result_count !== 1) throw new Error("result_count_mismatch");
   const html = renderPage(source, authored, collectionDate); await Bun.write(htmlPath, html);
-  const upload = object(await bp(["blobs", "put-blob", "--key", `talk-digest/${demoRun.replaceAll(/[^A-Za-z0-9._-]/g, "_")}/${sourceId.replaceAll(/[^A-Za-z0-9._-]/g, "_")}.html`, "--x-backplane-sha256", sha256(html), "--file", htmlPath]), "output_file");
+  const upload = object(await bp(["blobs", "put-blob", "--key", `talk-digest/${keySegment(demoRun)}/${keySegment(sourceId, ".html")}`, "--x-backplane-sha256", sha256(html), "--file", htmlPath]), "output_file");
   const audit = object(await bp(["events", "read-audit", "--run-id", text(object(state.analyst, "analyst").runId, "run_id"), "--after", "0", "--limit", "500"]), "audit");
+  const events = Array.isArray(audit.events) ? audit.events.map(auditProofEvent) : [];
   const proof: Obj = { sourceId, sourceFileId: file.id!, outputFileId: upload.id!, analystPrincipalId: who.principalId!, analystRunId: object(state.analyst, "analyst").runId!,
     collectorPrincipalId: object(source.collector, "collector").principalId!, collectorRunId: object(source.collector, "collector").runId!, deliveryId: state.deliveryId!, messageId: state.messageId!,
     collectorEventCursor: text(object(source.provenance, "provenance").eventCursor, "event_cursor"),
     transaction: { expectedFailure: failure.error!, failedOperationIndex: failureDetails.operationIndex!, rollbackState: rollbackRow.analysis_state!, rollbackDigestCount: rollbackRow.digest_count!, ackUncommitted,
-      committedPosition: committed.position!, identicalRetry: true, resultCount: 1 }, events: audit.events ?? [] };
+      committedPosition: committed.position!, identicalRetry: true, resultCount: 1 }, events };
   await writePrivate(proofPath, proof);
   console.log(JSON.stringify({ sourceId, html: htmlPath, outputFileId: upload.id, proof: proofPath, identicalRetry: true, resultCount: 1 }));
 }
@@ -189,20 +254,19 @@ async function publish(proofPath: string, invocationPath: string) {
   if (invocation.deploymentId !== deployed.deploymentId || invocation.status !== 200 || metadata.invocationRunId !== invocationRunId
     || metadata.sourceId !== proof.sourceId || typeof result.html !== "string") throw new Error("invocation_proof_mismatch");
   const audit = object(await bp(["events", "read-audit", "--run-id", invocationRunId, "--after", "0", "--limit", "500"]), "invocation_audit");
-  const events = Array.isArray(audit.events) ? audit.events.map(event => object(event, "event")) : [];
-  if (!events.some(event => event.kind === "sql.execute" && event.principal_id === who.principalId && event.run_id === invocationRunId)
-    || !events.some(event => event.kind === "function.complete" && event.principal_id === who.principalId && event.run_id === invocationRunId))
+  const rawEvents = Array.isArray(audit.events) ? audit.events.map(event => object(event, "event")) : [];
+  if (!rawEvents.some(event => event.kind === "sql.execute" && event.principal_id === who.principalId && event.run_id === invocationRunId)
+    || !rawEvents.some(event => event.kind === "function.complete" && event.principal_id === who.principalId && event.run_id === invocationRunId))
     throw new Error("invocation_attribution_missing");
-  const workspaceAudit = object(await bp(["events", "read-audit", "--after", text(proof.collectorEventCursor, "event_cursor"), "--limit", "500"]), "workspace_audit");
-  const invoked = Array.isArray(workspaceAudit.events) ? workspaceAudit.events.map(event => object(event, "event")).find(event =>
-    event.kind === "function.invoke" && object(event.metadata, "event_metadata").runId === invocationRunId) : undefined;
+  const invoked = await findInvocationEvent(text(proof.collectorEventCursor, "event_cursor"), invocationRunId, async after =>
+    object(await bp(["events", "read-audit", "--after", after, "--limit", "500"]), "workspace_audit"));
   if (!invoked || invoked.principal_id === who.principalId || typeof invoked.principal_id !== "string" || typeof invoked.run_id !== "string")
     throw new Error("cross_principal_invocation_missing");
   proof.invocation = { deploymentId: invocation.deploymentId!, runId: invocationRunId, status: 200, sourceId: metadata.sourceId!,
-    callerPrincipalId: invoked.principal_id, callerRunId: invoked.run_id, invokePosition: invoked.position!, events };
+    callerPrincipalId: invoked.principal_id, callerRunId: invoked.run_id, invokePosition: invoked.position!, events: rawEvents.map(auditProofEvent) };
   await writePrivate(proofPath, proof, true);
   const sourceId = text(proof.sourceId, "source_id"), hash = sha256(await readFile(proofPath));
-  const uploaded = object(await bp(["blobs", "put-blob", "--key", `talk-digest/proof/${sourceId.replaceAll(/[^A-Za-z0-9._-]/g, "_")}.json`,
+  const uploaded = object(await bp(["blobs", "put-blob", "--key", `talk-digest/proof/${keySegment(sourceId, ".json")}`,
     "--x-backplane-sha256", hash, "--file", proofPath]), "proof_file");
   console.log(JSON.stringify({ sourceId, proofFileId: uploaded.id, sha256: hash, invocationRunId, deploymentId: invocation.deploymentId }));
 }

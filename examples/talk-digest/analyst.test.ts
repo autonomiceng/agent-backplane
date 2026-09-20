@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { escapeHtml, renderPage, safeUrl } from "./analyst.ts";
+import { auditProofEvent, completionDecision, escapeHtml, findInvocationEvent, renderPage, safeUrl } from "./analyst.ts";
 import handler from "./function.js";
 
 const source = {
@@ -38,4 +38,34 @@ test("Function uses invocation authority for one Workspace SQL read and returns 
     expect(body.html).toContain("Title &lt;unsafe&gt;");
     expect(body.html).not.toContain("<unsafe>");
   } finally { globalThis.fetch = original; }
+});
+
+test("completion retry distinguishes pending work from the identical completed digest", () => {
+  const expected = { sourceFileId: "00000000-0000-0000-0000-000000000001", sourceSha256: "a".repeat(64), sourceBytes: 42,
+    digest: "A bounded digest.", points: ["One", "Two"], metadata: { collectionDate: "2026-09-20", claimsVerified: false },
+    principalId: "00000000-0000-0000-0000-000000000002", runId: "00000000-0000-0000-0000-000000000003" };
+  const source = { transcript_file_id: expected.sourceFileId, transcript_sha256: expected.sourceSha256, transcript_bytes: "42" };
+  expect(completionDecision({ ...source, analysis_state: "pending", digest_count: 0 }, expected)).toBe("pending");
+  const completed = { ...source, analysis_state: "complete", digest_count: 1, digest_text: expected.digest,
+    key_points: JSON.stringify(expected.points), analysis_metadata: expected.metadata,
+    digest_principal_id: expected.principalId, digest_run_id: expected.runId };
+  expect(completionDecision(completed, expected)).toBe("completed");
+  expect(() => completionDecision({ ...completed, digest_text: "different" }, expected)).toThrow("completed_result_mismatch");
+});
+
+test("invocation audit search crosses full pages, terminates, and proof events exclude metadata", async () => {
+  const calls: string[] = [], runId = "00000000-0000-0000-0000-000000000004";
+  const ordinary = Array.from({ length: 500 }, (_, index) => ({ position: String(index + 1), kind: "sql.execute", metadata: {} }));
+  const invoked = { position: "501", kind: "function.invoke", objects: ["talk-digest-review"], principal_id: "caller", run_id: "caller-run",
+    occurred_at: "private", metadata: { runId, private: "exclude" } };
+  const found = await findInvocationEvent("0", runId, async after => {
+    calls.push(after);
+    return after === "0" ? { events: ordinary, nextAfter: "500" } : { events: [invoked], nextAfter: "501" };
+  });
+  expect(calls).toEqual(["0", "500"]);
+  expect(found).toEqual(invoked);
+  expect(auditProofEvent(invoked)).toEqual({ position: "501", kind: "function.invoke", objects: ["talk-digest-review"],
+    principal_id: "caller", run_id: "caller-run" });
+  expect(JSON.stringify(auditProofEvent(invoked))).not.toContain("private");
+  expect(await findInvocationEvent("501", runId, async () => ({ events: [], nextAfter: "501" }))).toBeUndefined();
 });
