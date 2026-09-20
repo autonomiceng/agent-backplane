@@ -37,7 +37,7 @@ export function DashboardHomeView({ state, actions }: { state: DashboardHomeStat
           <h3>{workspace.name}</h3>
           <p>Workspace ID: <code>{workspace.id}</code></p>
           <nav aria-label={`${workspace.name} Workspace`}>
-            <a href={`/dashboard/workspaces/${encodeURIComponent(workspace.id)}/principals`}>Principals</a>{" · "}
+            <a href={`/dashboard/workspaces/${encodeURIComponent(workspace.id)}/principals`}>Principals</a>
             <a href={`/dashboard/workspaces/${encodeURIComponent(workspace.id)}/approvals`}>Approvals</a>
           </nav>
         </li>)}</ul>}
@@ -47,7 +47,7 @@ export function DashboardHomeView({ state, actions }: { state: DashboardHomeStat
         <button disabled={state.nextCursor === null} onClick={() => { void actions.next(); }}>Next</button>
       </nav>
     </>}
-    <section aria-labelledby="connect-agent">
+    <section className="help-panel" aria-labelledby="connect-agent">
       <h2 id="connect-agent">Connect an agent</h2>
       <p>Each agent uses a Principal with its own key in a Workspace. After setup, add the printed <code>mcpServers.backplane</code> settings to your agent application. They connect it to Backplane using the private credential file saved during setup.</p>
       <p>For the CLI, set <code>BP_CREDENTIALS_FILE</code> to that file. Existing key-based setups use <code>BP_URL</code>, <code>BP_KEY</code>, and <code>BP_WORKSPACE_ID</code>.</p>
