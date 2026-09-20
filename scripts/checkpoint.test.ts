@@ -77,6 +77,7 @@ config = {'name':'fixture','services':services}
 running = True
 drift = None
 missing = None
+local_missing = set()
 pulled = []
 def command(args, env=None):
  if args[:2] == ['docker','compose']:
@@ -86,12 +87,12 @@ def command(args, env=None):
   return 'sha256:drift' if args[-1] == drift else ids[refs[args[-1]]]
  elif args[:3] == ['docker','image','inspect']:
   ref = args[-1]
-  if ref == missing: raise RuntimeError('private registry diagnostics')
+  if ref == missing or ref in local_missing: raise RuntimeError('private registry diagnostics')
   if '--format' in args: return ids[ref]
   return json.dumps([{'Id':ids[ref], 'RepoDigests':[digests[ref]] if ref in digests else []}])
  elif args[:2] == ['docker','pull']:
   if args[-1] == missing: raise RuntimeError('private registry diagnostics')
-  pulled.append(args[-1]); return ''
+  pulled.append(args[-1]); local_missing.discard(args[-1]); return ''
  elif args[:2] == ['docker','tag']:
   ids[args[-1]] = args[-2]; return ''
  raise AssertionError('unexpected mutation: '+str(args[:3]))
@@ -155,7 +156,10 @@ ids[digests['pg:experiment']] = recorded['postgres']['id']
 ids['pg:experiment'] = 'sha256:moved-tag'
 restored = cp.Stack(p/'.env', p)
 assert restored.images == recorded
-assert pulled and all('@sha256:' in ref for ref in pulled)
+assert not pulled, 'already loaded immutable content should not need a registry'
+local_missing.add(recovery)
+cp.Stack(p/'.env', p)
+assert pulled == [recovery]
 # Version-1 manifests without recoveryReference still accept their original digest pins.
 for service in ('postgres','edge'):
  ref = digests[refs[service]]
@@ -178,7 +182,7 @@ calls = []
 def pg(sql):
  calls.append(sql)
  return {'SHOW server_version_num':'180006', 'SHOW data_directory':'/custom/data'}[sql]
-stack = SimpleNamespace(attest=lambda: calls.append('attest'), services={},
+stack = SimpleNamespace(attest=lambda: calls.append('attest'), services={}, images={},
  dc=lambda *args: 'postgres server', pg=pg)
 try: cp.backup(stack)
 except ValueError as error: assert 'data_directory=/var/lib/postgresql/18/docker' in str(error)

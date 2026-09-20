@@ -35,7 +35,17 @@ and unchanged audit heads across the fenced backup, hashes all artifacts, writes
 the manifest last and resumes the services that it stopped. Incomplete checkpoints
 have no manifest and cannot be restored. Archive and filesystem errors fail closed.
 
-Capture compares configured image references with container content IDs, including migration and initialization helpers. PostgreSQL and Caddy need locally verified RepoDigests; a local-only override without one is refused before fencing. Publish and pull that exact image, or select a reproducible image and reconcile the running deployment before retrying. PostgreSQL recovery requires version 18 and its existing data layout. The manifest keeps configured references, observed IDs and immutable recovery references separately; resolved environments remain private. The server archive is saved by content ID. Restore verifies recovered IDs before writing target volumes and starts with builds and pulls disabled. A mutable tag alone never establishes recovery identity. Older version-1 manifests retain support for their recorded digest pins and matching content IDs.
+Capture compares configured image references with container content IDs, including migration and initialization helpers. PostgreSQL and Caddy need locally verified immutable references; an override without one is refused before fencing. Publish and pull that exact image, or select a reproducible image and reconcile the running deployment before retrying. PostgreSQL recovery requires version 18 and its existing data layout. The manifest keeps configured references, observed IDs and immutable recovery references separately; resolved environments remain private. The server archive is saved by content ID. Restore verifies recovered IDs before writing target volumes and starts with builds and pulls disabled. A mutable tag alone never establishes recovery identity. Older version-1 manifests retain support for their recorded digest pins and matching content IDs.
+
+Docker can attach RepoDigests to unpublished local builds and aliases. This proves local
+immutable identity, not publication or continued registry availability. Upstream image
+custody is separate from this data Checkpoint: retain the recorded references in a registry
+or a protected archive tested on the recovery host's Docker store type and platform.
+An archive loaded as tags without the recorded immutable references is unsupported;
+verify those references and content IDs before relying on the archive. Cross-store-type
+or cross-architecture recovery is not established by a same-host roundtrip. The server
+image is included in the Checkpoint; upstream PostgreSQL/Caddy images are not. Capture
+reports the external-custody obligation for mutable upstream configurations.
 
 ## Restore into empty volumes
 
@@ -57,7 +67,8 @@ when restoring recorded references.
    incarnation's repository.
 2. Copy the selected complete checkpoint directory into the new repository under
    `backups/`. Restore verifies and loads the saved server image automatically, then
-   pulls the recorded upstream RepoDigests and verifies their content IDs. Keep
+   verifies locally loaded upstream recovery references, pulling only missing references,
+   and checks their content IDs before target writes. Keep
    image settings at their recorded references. Local server tags are restored from
    the archive; a server digest reference must also be available in the local Docker
    store (pull that exact reference before restore). Restore rebinds tag references

@@ -99,8 +99,12 @@ class Stack:
                     if service not in helpers and service != 'server':
                         if not re.fullmatch(r'[^\s@]+@sha256:[a-f0-9]{64}', recovery):
                             raise ValueError(f'{service}: checkpoint has no immutable recovery image; recover the original image and capture a new Checkpoint')
-                        command(['docker', 'pull', recovery])
-                        if command(['docker', 'image', 'inspect', '--format', '{{.Id}}', recovery]) != expected['id']:
+                        try:
+                            recovered_id = command(['docker', 'image', 'inspect', '--format', '{{.Id}}', recovery])
+                        except RuntimeError:
+                            command(['docker', 'pull', recovery])
+                            recovered_id = command(['docker', 'image', 'inspect', '--format', '{{.Id}}', recovery])
+                        if recovered_id != expected['id']:
                             raise ValueError(f'{service}: recovery image content differs; obtain the recorded image for this platform')
                     # An ID-only server archive can restore tags without relying on the registry.
                     if '@' not in ref and not ref.startswith('sha256:'):
@@ -117,7 +121,8 @@ class Stack:
                     raise ValueError(f'{service}: helper must use the same content as {helpers[service]}')
             elif service != 'server':
                 digests = info.get('RepoDigests') or []
-                recovery = next((d for d in digests if re.fullmatch(r'[^\s@]+@sha256:[a-f0-9]{64}', d)
+                recovery = expected.get('recoveryReference', ref) if expected is not None else next((d for d in digests
+                    if re.fullmatch(r'[^\s@]+@sha256:[a-f0-9]{64}', d)
                     and command(['docker', 'image', 'inspect', '--format', '{{.Id}}', d]) == image_id), None)
                 if recovery is None:
                     raise ValueError(f'{service}: no verified RepoDigest; publish and pull this exact image or select a reproducible image before capture')
@@ -190,6 +195,8 @@ def prune_checkpoints(root, keep, remove=shutil.rmtree):
 
 def backup(stack):
     stack.attest()
+    if any('@' not in image['reference'] for name, image in stack.images.items() if name in ('postgres', 'edge')):
+        print('Upstream image custody is external: retain the recorded immutable references in a registry or a tested off-host image archive; publication was not checked.', file=sys.stderr, flush=True)
     running = stack.dc('ps', '--status', 'running', '--services').split()
     if not {'postgres', 'server', *(['edge'] if 'edge' in stack.services else [])} <= set(running):
         raise ValueError('backup requires running postgres and server')
