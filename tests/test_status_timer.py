@@ -108,6 +108,21 @@ class StatusTimerTests(unittest.TestCase):
             installer.installation(root, root / '.env', 'selected_project',
                                    ['compose.yaml'], [], state, runner)
 
+        (root / '.env').write_text("COMPOSE_PROFILES='blobs,edge'\n")
+        install = installer.install
+        unit_config = root / 'user-config'
+        argv = ['install_status_timer.py', '--install', '--checkout', str(root),
+                '--env-file', str(root / '.env'), '--compose-project', 'selected_project',
+                '--compose-file', 'compose.yaml', '--compose-file', 'compose.edge.yaml']
+        with patch.dict(os.environ, {**selected_environment, 'XDG_CONFIG_HOME': str(unit_config)}, clear=True), \
+                patch.object(installer.shutil, 'which', return_value='/selected/bin/docker'), \
+                patch.object(sys, 'argv', argv), \
+                patch.object(installer, 'install', side_effect=lambda *args: install(*args, runner=runner)):
+            self.assertEqual(installer.main(), 0)
+        inherited = (unit_config / 'systemd/user' / (installer.NAME + '.service')).read_text()
+        self.assertIn('"--profile" "blobs" "--profile" "edge"', inherited)
+        self.assertIn('"--state-dir" ' + installer.quote(state), inherited)
+
     def test_install_refuses_overwrite_cleans_pre_activation_partial_and_retains_activation_failure(self):
         root, _, _, runner = self.fixture()
         environment = patch.dict(os.environ, {'PATH': '/usr/bin', 'HOME': str(root)}, clear=True)

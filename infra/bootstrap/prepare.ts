@@ -131,6 +131,7 @@ export async function prepare(argv: string[], env: Environment, run: Runner = do
       || entries.COMPOSE_ENV_FILES || env.COMPOSE_ENV_FILES) throw new CliError("selection_conflict", 1);
     const files = select("COMPOSE_FILE", undefined, [resolve(root, "compose.yaml"), ...profiles.map(p => resolve(root, `compose.${p}.yaml`))].join(":"))
       .split(":").map(file => file ? resolve(dirname(path), file) : "");
+    if (files[0] !== resolve(root, "compose.yaml")) throw new CliError("invalid_compose_file", 1);
     for (const file of files) if (!file || /[\n\r$`'"\\:]/.test(file) || !(await lstat(file).catch(() => undefined))?.isFile()) throw new CliError("invalid_compose_file", 1);
     if (mode !== undefined && (profiles.includes("blobs") !== (mode === "full") || profiles.includes("compute") !== (mode === "full")
       || entries.BP_BLOB_BACKEND !== undefined && entries.BP_BLOB_BACKEND !== (mode === "full" ? "s3" : "filesystem")))
@@ -175,6 +176,8 @@ export async function prepare(argv: string[], env: Environment, run: Runner = do
     const resources = Boolean(volumes.trim() || containers.trim() || networks.trim() || existingVolumes.split("\n").some(v => v.startsWith(`${prefix}_`)));
     const existing = resources || [...core, ...blobs, "BP_COMPUTE_TOKEN"].some(key => entries[key] !== undefined);
     if (existing && !completeSelection && !values["confirm-existing-selection"]) throw new CliError("existing_selection_confirmation_required", 2);
+    const legacyRustfs = !completeSelection && existingVolumes.split("\n").includes(`${prefix}_rustfs-data`);
+    if (legacyRustfs && !profiles.includes("blobs")) throw new CliError("backend_change_requires_migration", 2);
     if (resources && keys.some(k => entries[k] === undefined)) throw new CliError("existing_volume_missing_secrets", 2);
     for (const key of keys) if (entries[key] === undefined) {
       // RustFS service-account creation accepts at most 40 characters.
@@ -194,6 +197,7 @@ export async function prepare(argv: string[], env: Environment, run: Runner = do
       || !record(config.services["storage-init"]) || !record(config.services["storage-init"].environment)) throw new CliError("invalid_compose_config", 1);
     const backend = config.services.server.environment.BP_BLOB_BACKEND ?? "filesystem";
     if (backend !== "filesystem" && backend !== "s3" || entries.BP_BLOB_BACKEND !== undefined && entries.BP_BLOB_BACKEND !== backend
+      || legacyRustfs && backend !== "s3"
       || (config.services["storage-init"].environment.BP_BLOB_BACKEND ?? "filesystem") !== backend) throw new CliError("backend_change_requires_migration", 2);
     if (mode !== undefined && (backend !== (mode === "full" ? "s3" : "filesystem")
       || Boolean(config.services.server.environment.BP_COMPUTE_URL) !== (mode === "full")))

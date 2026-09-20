@@ -465,6 +465,28 @@ test("incomplete existing selection requires original confirmation; failed inven
       expect(mutations(calls)).toEqual([]); expect(records).toEqual([]);
     }
   });
+  await selectionFixture(async ({ path, args, runner, record, calls, records }) => {
+    const source = "BP_VOLUME_PREFIX=original\n" + ["BP_AUTH_SECRET", "BP_POSTGRES_ADMIN_PASSWORD", "BP_POSTGRES_PASSWORD", "BP_OPERATIONS_TOKEN",
+      "BP_RUSTFS_ROOT_USER", "BP_RUSTFS_ROOT_PASSWORD", "BP_BLOB_S3_ACCESS_KEY", "BP_BLOB_S3_SECRET_KEY"].map(key => `${key}=retained\n`).join("");
+    await writeFile(path, source);
+    const inventory: Runner = async (args, env) => {
+      const result = await runner(args, env);
+      return args[0] === "volume" && args[1] === "ls" ? "original_rustfs-data\n" : result;
+    };
+    const confirmation = [...args, "--confirm-existing-selection", "--compose-project", "original", "--profile"];
+    await expect(prepare([...confirmation, ""], {}, inventory, record)).rejects.toMatchObject({ error: "backend_change_requires_migration" });
+    expect(await readFile(path, "utf8")).toBe(source);
+    expect(mutations(calls)).toEqual([]); expect(records).toEqual([]);
+    await expect(prepare([...confirmation, "blobs"], {}, async (args, env) => {
+      const result = await inventory(args, env);
+      return args.includes("config") ? await fakeRunner(args, { ...env, COMPOSE_PROFILES: "" }) : result;
+    }, record)).rejects.toMatchObject({ error: "backend_change_requires_migration" });
+    expect(await readFile(path, "utf8")).toBe(source);
+    expect(mutations(calls)).toEqual([]); expect(records).toEqual([]);
+    await prepare([...confirmation, "blobs"], {}, inventory, record);
+    expect(await readFile(path, "utf8")).toContain(source);
+    expect(await readFile(path, "utf8")).toContain("BP_BLOB_BACKEND='s3'");
+  });
   const help = await prepare(["--help"], {}, async () => { throw Error("help must be local"); });
   expect(help).toContain("--confirm-existing-selection"); expect(help).toContain("'' selects none");
 });
@@ -512,6 +534,11 @@ test("custom overlay order and meaningful empty profiles survive custom env dire
     await writeFile(path, linked);
     await expect(prepare(args, {}, runner, record)).rejects.toMatchObject({ error: "invalid_compose_file" });
     expect(await readFile(path, "utf8")).toBe(linked);
+    expect(calls).toEqual([]); expect(records).toEqual([]);
+    const rebased = `${unrelated}COMPOSE_FILE='logging override.yaml:${base}:last.yaml'\nCOMPOSE_PROFILES=\n`;
+    await writeFile(path, rebased);
+    await expect(prepare(args, {}, runner, record)).rejects.toMatchObject({ error: "invalid_compose_file" });
+    expect(await readFile(path, "utf8")).toBe(rebased);
     expect(calls).toEqual([]); expect(records).toEqual([]);
     await writeFile(path, `${unrelated}COMPOSE_FILE='${base}:logging override.yaml:last.yaml'\nCOMPOSE_PROFILES=\n`);
     await prepare(args, {}, runner, record);

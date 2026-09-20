@@ -50,7 +50,7 @@ def stack_from_env(path):
     value = match[1]
     if len(value) >= 2 and value[0] in "'\"" and value[-1] == value[0]:
         value = value[1:-1]
-    elif value != value.strip() or re.search(r'\s+#', value):
+    elif re.search(r'\s|#', value):
         raise ValueError('private env requires one explicit COMPOSE_FILE with absolute paths')
     files = value.split(os.pathsep)
     if re.search(r'''['"\\$`\x00-\x1f\x7f]''', value) or any(not Path(name).is_absolute() for name in files):
@@ -58,10 +58,8 @@ def stack_from_env(path):
     old = os.environ.get('COMPOSE_FILE')
     try:
         os.environ['COMPOSE_FILE'] = value
-        stack = Stack(path)
-        # Freeze selection in argv; later environment replacement cannot change this stack.
-        stack.compose += [arg for name in files for arg in ('-f', name)]
-        return stack
+        # Freeze paths and their base before the first configuration render.
+        return Stack(path, compose_files=files)
     finally:
         if old is None:
             os.environ.pop('COMPOSE_FILE', None)
