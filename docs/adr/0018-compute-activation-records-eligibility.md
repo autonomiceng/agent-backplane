@@ -73,3 +73,15 @@ Recovery records `function.fail`; its `durationMs` is observed wall time from Ru
 to reconciliation capped at int32, not CPU time or exact execution duration. SQL credential
 expiry and Principal/Workspace authority are unchanged. The terminal record alone is
 not evidence of runtime child exit.
+
+
+Amended 2026-09-20 (local artifact delivery): Superseding the publication prerequisite
+above, a qualified pinned local-build recipe may become the supported amd64 default after
+H-PROOF/F-GATE and B-DEFAULT approval. Registry publication is optional; installations
+instead need build network access and compatible Docker/BuildKit tooling. Bootstrap
+verifies workerd and the pinned Bun supervisor executable hashes and version output from
+the resolved image ID, and records both as private launch evidence. Bun identity remains
+separate from Runtime Identity and the authenticated control protocol. Local image IDs
+remain distinct from registry manifest digests. This claims neither registry release nor
+arm64 qualification and leaves the trusted operator/enrolled-agent authority boundary
+unchanged. Default promotion on another architecture requires its actual runtime gate.

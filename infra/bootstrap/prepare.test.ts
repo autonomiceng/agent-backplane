@@ -6,10 +6,22 @@ import { prepare, resolveRustfsConsole, statusRecorder, type Runner } from "./pr
 import { resolveAccess } from "../compose/validate-edge.ts";
 import { defaultWorkerdBinary } from "./workerd-image.ts";
 
+const probeContainers = new Map<string, string[]>();
 const fakeRunner: Runner = async (args, env) => {
+  if (args[0] === "create") { const id = crypto.randomUUID().replaceAll("-", "").repeat(2); probeContainers.set(id, args); return id; }
+  if (args[0] === "rm") { probeContainers.delete(args.at(-1) ?? ""); return ""; }
+  if (args[0] === "start") args = probeContainers.get(args.at(-1) ?? "") ?? [];
   if (args[0] === "context") return "unix:///var/run/docker.sock";
+  if (args[0] === "info") return "amd64";
   if (args[0] === "image") return `sha256:${"a".repeat(64)} amd64`;
-  if (args[0] === "run") return `${defaultWorkerdBinary}  /usr/bin/workerd`;
+  if (args[0] === "create") {
+    const entrypoint = args.indexOf("--entrypoint");
+    expect(args[entrypoint + 2]).toBe(`sha256:${"a".repeat(64)}`);
+    if (args[entrypoint + 1] === "sha256sum") return `${defaultWorkerdBinary}  /usr/bin/workerd\na83d263767d839e4d2649ca8e35d07159c7afc99afdc96d731ced29e056dda0c  /usr/bin/bun`;
+    if (args[entrypoint + 1] === "/usr/bin/workerd" && args.at(-1) === "--version") return "workerd 2026-09-18";
+    if (args[entrypoint + 1] === "/usr/bin/bun" && args.at(-1) === "--version") return "1.4.2";
+    throw Error("unexpected executable probe");
+  }
   if (args.includes("config")) {
     const environment = { BP_BLOB_BACKEND: env.COMPOSE_PROFILES?.split(",").includes("blobs") ? "s3" : "filesystem" };
     return JSON.stringify({ services: { server: { environment }, "storage-init": { environment } } });
@@ -288,19 +300,19 @@ async function selectionFixture(check: (fixture: {
     });
   } finally { await rm(directory, { recursive: true, force: true }); }
 }
-const mutations = (calls: string[][]) => calls.filter(args => args.includes("create") || args.includes("up") || args[0] === "run");
+const mutations = (calls: string[][]) => calls.filter(args => (args[0] === "volume" || args[0] === "network") && args[1] === "create" || args.includes("up"));
 
 test("fresh default and explicit profiles persist native Compose selection", async () => {
   for (const profiles of [[], ["blobs"], ["compute"], ["edge"], ["gateway"]]) await selectionFixture(async ({ path, args, runner, record, calls }) => {
-    if (profiles.includes("compute")) await writeFile(path, "BP_WORKERD_IMAGE=local:workerd\n");
     await prepare([...args, ...profiles.flatMap(p => ["--profile", p]),
       ...(profiles.includes("gateway") ? ["--access-mode", "proxy", "--public-url", "https://example.test"] : [])], {}, runner, record);
     const saved = await readFile(path, "utf8"), root = resolve(import.meta.dir, "../..");
     expect(saved).toContain("COMPOSE_PROJECT_NAME='agent-backplane'");
     expect(saved).toContain(`COMPOSE_PROFILES='${profiles.join(",")}'`);
+    if (profiles.includes("compute")) expect(saved).not.toContain("BP_WORKERD_IMAGE=");
     expect(saved).toContain(`COMPOSE_FILE='${[join(root, "compose.yaml"), ...profiles.map(p => join(root, `compose.${p}.yaml`))].join(":")}'`);
     expect(saved).toContain(`BP_BLOB_BACKEND='${profiles.includes("blobs") ? "s3" : "filesystem"}'`);
-    expect(calls.findIndex(call => call.includes("config"))).toBeLessThan(calls.findIndex(call => call.includes("create")));
+    expect(calls.findIndex(call => call.includes("config"))).toBeLessThan(calls.findIndex(call => call[0] === "volume" && call[1] === "create"));
   });
 });
 
