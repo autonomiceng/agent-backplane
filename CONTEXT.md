@@ -16,6 +16,14 @@ _Avoid_: Agent (when meaning the identity), bot, service account
 One invocation of a Principal. Every statement, message, blob and schema change is stamped with the Run that caused it. Carries harness, model and a label when the caller supplies them; extra facts live in open-ended metadata.
 _Avoid_: Session, job, execution, trace
 
+**Files**:
+The operator capability for storing and retrieving Blobs with Workspace permissions and provenance.
+_Avoid_: Blobs (when naming the capability)
+
+**Functions**:
+The operator capability for deploying and invoking code with a deploying Principal’s authority and attributed Runs.
+_Avoid_: Compute (when naming the capability)
+
 **Runtime Identity**:
 The measured executable bytes used to run a deployed function. Image packaging and control software are separate evidence and compatibility concerns.
 _Avoid_: Image digest, attestation

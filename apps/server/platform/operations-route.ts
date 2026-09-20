@@ -1,4 +1,5 @@
 // Operator authentication happens before the shared, bounded gather.
+import type { CapabilitySampler } from "./capability-types.ts";
 import type { Enrollment } from "../auth/enrollment.ts";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { Elysia, t } from "elysia";
@@ -8,8 +9,8 @@ import { streamSnapshot } from "../events/stream-admission.ts";
 import { decideOperations, operationsSchema, readOperationsConfig, type OperationsConfig } from "./operations.ts";
 import { operationsProbe } from "./operations-probe.ts";
 import { operationsMetrics } from "./operations-metrics.ts";
-export function operationsRoute(pool: Pool, config: OperationsConfig = readOperationsConfig({}), admission: PrincipalAdmission, streams: Map<string,number>, enrollment?: Enrollment) {
-  const probe=operationsProbe(pool,config,enrollment), hash=(s:string)=>createHash("sha256").update(s).digest();
+export function operationsRoute(pool: Pool, config: OperationsConfig = readOperationsConfig({}), admission: PrincipalAdmission, streams: Map<string,number>, enrollment?: Enrollment, capabilities?: CapabilitySampler) {
+  const probe=operationsProbe(pool,config,enrollment,capabilities), hash=(s:string)=>createHash("sha256").update(s).digest();
   const expected=hash(config.token ?? "");
   const error=t.Object({ error:t.Union([t.Literal("operations_disabled"),t.Literal("operations_unauthorized")]) });
   const response=async (request:Request,metrics:boolean)=>{
