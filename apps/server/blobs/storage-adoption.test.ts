@@ -60,6 +60,7 @@ test("publication failures retry only their exact durable intent and inventory",
       const [intent] = await f.admin`SELECT * FROM control.blob_storage_binding`;
       expect(intent.phase).toBe("verifying");
       expect(await f.operate({ ...adoption, mode: "inspect", checkpoint: "" })).toMatchObject({
+        binding: { databaseId: intent.database_id, storeId: intent.store_id, generation: intent.generation, backend: "filesystem", phase: "verifying" },
         intent: { phase: "verifying", operation: "adopt", checkpoint: adoption.checkpoint, retainUnreferenced: false },
       });
       expect(Boolean(await f.store.markerOrAbsent())).toBe(published);
@@ -82,6 +83,7 @@ test("explicit retention preserves staged and unreferenced bytes through cleanup
     await f.store.stage(blob.workspaceId, blob.id, bytes);
     await f.store.stage(blob.workspaceId, extra, bytes); await f.store.promote(blob.workspaceId, extra, bytes);
     const inspection = await f.operate({ ...adoption, mode: "inspect" });
+    expect("binding" in inspection && inspection.binding).toBeNull();
     expect("objects" in inspection && inspection.objects.filter(ref => ref.classification === "unreferenced")).toHaveLength(2);
     await expect(f.operate(adoption)).rejects.toThrow("blob_binding_unreferenced_requires_retention");
     expect((await f.operate({ ...adoption, retain: true })).status).toBe("ready");

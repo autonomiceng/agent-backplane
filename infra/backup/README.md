@@ -11,11 +11,44 @@ with encrypted transport. Checkpoints contain credentials, enrollment state,
 Workspace data, filesystem blobs, and possibly Caddy CA private keys. Encryption
 and off-host replication remain operator responsibilities. Retain the protected
 `.env` separately: manifests contain image pins, database identity, audit heads,
-target LSN, checksums and completion time, never resolved environment values.
+target LSN, checksums and completion time. S3 manifests also contain private bucket
+selection, inventory evidence and a salted credential commitment; they contain no
+plaintext credentials.
 Restore needs the original database passwords and `BP_AUTH_SECRET`.
 
+Checkpoint directories stay mode `0700` and their manifests mode `0600`. Capture
+and retention have one operator UID. Capture assigns the `backups` directory to
+that UID and grants read/traverse access on that parent with `chmod a+rx` so it can
+atomically publish a receipt readable by the server. The `0700` checkpoint
+subdirectories remain private. Capture by a second UID is
+unsupported unless the operator explicitly manages permissions. After durable completion, capture
+atomically replaces `backups/health.json` at mode `0644`. This public summary contains
+only version, PostgreSQL system ID, actual capture completion time and restore point
+name, LSN and timeline. A failed capture retains the previous receipt. Mount the
+`backups` directory so the server can traverse it and read this receipt; private
+checkpoint directories need no server access. The operations probe validates the
+receipt against its database identity and refuses malformed receipts. Only an absent
+receipt enables the historical manifest fallback, which requires readable manifests.
+The receipt must name an existing real checkpoint directory, never a symlink.
+After restored storage is verified, the restore gate is armed and the recovery API
+is available, restore publishes the receipt with the original capture completion
+time. It does not reset backup age. Preserve the checkpoint directory name when
+copying it into the recovery repository.
+
+Both filesystem and S3 capture perform two full object-byte SHA-256 inspections
+inside the writer fence, before and after physical capture. Plan downtime for both
+passes plus archiving. Each fenced `inspect`, `adopt` and `reconcile` command uses a total
+`BP_STARTUP_VERIFY_TIMEOUT` budget (default 120 seconds). PostgreSQL timeouts run
+on the reserved lease session and leave up to five seconds for cleanup before the
+process deadline. Both PostgreSQL expiry and the process deadline report
+`blob_binding_inspection_timeout`; the process deadline terminates the lease-owning
+helper even if cleanup blocks. Invalid configuration and deadlines refuse offline
+filesystem capture; genuine storage corruption still permits forensic capture. Increase that budget
+for the store size and measured throughput. This bounds inspection, not all Docker
+control-plane operations or the entire capture window.
+
 ```sh
-scripts/backup.sh --env-file .env
+scripts/backup.sh --fenced --env-file .env
 # Reports $BP_BACKUP_DIR/backups/YYYYMMDDTHHMMSSffffffZ
 ```
 
@@ -23,8 +56,7 @@ Export `COMPOSE_FILE=compose.yaml:compose.edge.yaml` and `COMPOSE_PROFILES=edge`
 when the edge overlay is enabled; use the same overlay/profile settings for
 backup and restore. `COMPOSE_PROJECT_NAME` selects the project. Every active
 durable service must be running. Optional compute holds no durable local state.
-The scripts reject the S3 backend; coordinate RustFS snapshots separately using
-the procedure below.
+The shipped local single-volume RustFS layout is also supported with `COMPOSE_FILE=compose.yaml:compose.blobs.yaml` and `COMPOSE_PROFILES=blobs`; use the same selection during capture and restore. Other S3 layouts refuse. `--fenced` attests that external writers and mutating helpers remain excluded for the entire command.
 
 The checkpoint fences writes by stopping edge (when present) and server, including
 its retention and blob cleanup workers. It takes a PostgreSQL base backup and
@@ -66,7 +98,8 @@ when restoring recorded references.
    directory must be empty; a recovered timeline must not archive into the source
    incarnation's repository.
 2. Copy the selected complete checkpoint directory into the new repository under
-   `backups/`. Restore verifies and loads the saved server image automatically, then
+   `backups/`, preserving the manifest's checkpoint name. Misplaced or renamed inputs
+   are refused before target writes. Restore verifies and loads the saved server image automatically, then
    verifies locally loaded upstream recovery references, pulling only missing references,
    and checks their content IDs before target writes. Keep
    image settings at their recorded references. Local server tags are restored from
@@ -78,7 +111,7 @@ when restoring recorded references.
    `BP_HTTPS_PORT` as appropriate, then run:
 
    ```sh
-   scripts/restore.sh /new/repository/backups/YYYYMMDDTHHMMSSffffffZ --env-file recovery.env
+   scripts/restore.sh /new/repository/backups/YYYYMMDDTHHMMSSffffffZ --fenced --env-file recovery.env
    ```
 
    A capture containing cleanup leftovers needs the explicit
@@ -238,9 +271,16 @@ data directory. Socket-only URLs and relocated or symlinked configuration are re
 before capture. These constraints do not alter the core Compose Checkpoint interface.
 
 For storage adoption or recovery when startup is blocked, stop server and edge
-writers, then use `bash scripts/backup.sh --offline --env-file PATH` with the same
+writers, then use `bash scripts/backup.sh --offline --fenced --env-file PATH` with the same
 Compose configuration. Offline capture requires PostgreSQL running and leaves the
 application stopped. It preserves hidden storage markers, publication candidates,
 and retained staging/orphan bytes. Store archives dereference hard links into
 regular entries for safe restore. Follow the [storage recovery procedure](../../docs/operations/storage-identity.md)
-before resuming the server. Automated S3 capture is still unsupported.
+before resuming the server. Offline S3 capture additionally requires RustFS running on entry, and always restores its running state after the physical capture.
+
+Compose Checkpoints require `--fenced` to attest that external writers and mutating helpers remain stopped for the entire command. Local S3 capture and fresh-store restore use the [qualified RustFS procedure](../../docs/operations/s3-checkpoints.md); unsupported S3 layouts refuse before capture.
+
+If recovery completes but cannot publish its health receipt, the tool reports that
+separately and leaves restored Workspaces gated. Repair repository permissions or
+free space and take a new fenced Checkpoint. Do not repeat restore into the now
+non-empty target volumes. Invalid completion timestamps are refused before writes.
