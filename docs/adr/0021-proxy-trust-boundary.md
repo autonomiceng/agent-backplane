@@ -11,3 +11,10 @@ Public ingress owns TLS and exclusion of operator routes. The server cannot prov
 The operator owns persisted certificate and CA state, protected backups, recovery and manual client trust installation. CA private keys remain private; distribute only the root certificate through an authenticated channel. Synthetic upstream login tests prove application cookie and CSRF behavior. Real certificate verification and ingress acceptance must pass before release; browser trust provisioning remains manual.
 
 Better Auth has no trusted client IP in production and uses a shared per-path rate-limit bucket. We accept that limitation without disabling IP tracking, which would also bypass its limiter. No trusted proxy switch is provided.
+
+Amended 2026-09-20: The opt-in native RustFS human console uses an explicit Caddy
+client-IP allowlist. Behind Platform Edge, its forwarded client address is accepted
+only from configured exact proxy peer addresses. This policy applies to the privileged
+console origin; the Backplane server continues to strip forwarded claims and uses
+its configured authentication origin. Native RustFS authentication remains required,
+and its datastore stays off the Platform Network.

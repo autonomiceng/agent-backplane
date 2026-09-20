@@ -87,3 +87,70 @@ The gateway uses `bp-gateway:80` on the shared Platform Network and publishes no
 Platform Edge routes Backplane requests through that gateway. Do not combine this overlay
 with the standalone `edge` profile. Existing direct server access remains for internal telemetry.
 The advanced deployment with an operator-owned proxy can still target the server directly.
+
+
+## Native RustFS console
+
+The console is an opt-in human storage administration surface. Keep
+`BP_RUSTFS_CONSOLE=false` for the default deployment. Disabled consoles have no
+published console link or forwarding route, and standalone Caddy requests no
+console certificate. Reserved HTTP console hosts return 404.
+
+On an existing RustFS installation, set `BP_RUSTFS_CONSOLE=true` in its private
+environment file and prepare with `--profile blobs` plus either `--profile edge`
+or `--profile gateway`. Enabling the console never selects a storage backend.
+Keep the original profiles, credentials, bucket, source bytes and volumes;
+a filesystem deployment requires an explicit storage migration first. An explicit
+`BP_BLOB_BACKEND=filesystem` conflicts with enabling this console.
+
+Standalone mode derives `https://rustfs.<BP_PUBLIC_DOMAIN or localhost>` with
+`BP_HTTPS_PORT` when non-default. Optional `BP_RUSTFS_HOST` overrides the native
+DNS hostname. Local mode also serves HTTP on `BP_HTTP_PORT`; an explicit
+`BP_RUSTFS_URL` must match one of those listeners. Public mode requires HTTPS.
+Point the console hostname at Caddy and use the same local CA trust procedure as
+Backplane. Only Caddy publishes console ports; RustFS stays on `blob-internal`,
+off the Platform Network. Core plus edge remains valid without blobs.
+
+Behind Platform Edge, set a separate external HTTPS origin explicitly, for example:
+
+```dotenv
+BP_ACCESS_MODE=proxy
+BP_PUBLIC_URL=https://darkforge.tail694fe2.ts.net:8449
+BP_RUSTFS_CONSOLE=true
+BP_RUSTFS_URL=https://darkforge.tail694fe2.ts.net:8450
+BP_OPERATOR_ALLOW='100.100.1.2/32 fd7a:115c:a1e0::1/128'
+BP_TRUSTED_PROXIES='192.0.2.2/32'
+```
+
+Replace the example IPs with actual operator addresses and the exact Platform
+Edge peer address observed by Caddy. `BP_OPERATOR_ALLOW` accepts space-separated
+IP literals or CIDRs. `BP_TRUSTED_PROXIES` accepts only exact IPs or host routes
+(`/32` or `/128`); Docker and Tailnet ranges are never trusted proxy peers.
+Forwarded client IPs affect the console allowlist only when the direct peer is
+trusted. Untrusted callers cannot gain access by supplying forwarded headers.
+Native RustFS root authentication is still required after the allowlist check.
+The Backplane server's forwarded-header stripping and configured authentication
+origin remain unchanged. Functions retain their trusted operator boundary.
+
+Platform Edge must preserve the full original Host, including a non-default
+port, and forward the complete console origin to `bp-gateway:80`. The internal
+gateway matches the console authority before its normal Backplane fallback,
+so a shared hostname with different ports stays separate. It proxies assets,
+STS, S3 and admin requests to RustFS 1.0.0 on port 9001. Only `GET`/`HEAD` of `/`
+with `Accept: text/html` redirects to `/rustfs/console/`; other requests retain
+their path, method and Host for native login and SigV4. Platform Edge publication
+on port 8450 is a separate follow-up; this setup does not publish that port.
+
+Run preparation again with the same environment file, project and profiles after
+editing these settings. It validates before Docker calls, preserves credentials
+and user settings, and refreshes the derived `BP_RUSTFS_URL_HOST` and
+`BP_RUSTFS_AUTHORITY` fields used by Caddy. Subsequent bare Compose commands must
+use that prepared file. Preparation prints the console link only when enabled.
+Sign in using `BP_RUSTFS_ROOT_USER` and `BP_RUSTFS_ROOT_PASSWORD` from that private
+file. These are human administration credentials, not Backplane User credentials.
+Agents must use the Files API with Principal and Run context to preserve provenance;
+native storage administration bypasses those application records.
+
+Pure preparation tests do not establish installed login or ingress qualification.
+Release checks must cover actual root-key browser login, signed account info,
+trusted-peer allow/deny, standalone/proxy routing, and disabled 404 behavior.

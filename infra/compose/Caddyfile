@@ -3,6 +3,10 @@
 	skip_install_trust
 	# IP clients omit SNI; Docker forwards to a container address.
 	default_sni 127.0.0.1
+	servers {
+		trusted_proxies static {$BP_TRUSTED_PROXIES}
+		trusted_proxies_strict
+	}
 	log default {
 		output stderr
 		format filter {
@@ -48,7 +52,55 @@
 	}
 }
 
+# Native console requests share one origin for assets, STS, admin and S3 APIs.
+(rustfs-access) {
+	@disabled expression `'{$BP_RUSTFS_CONSOLE:false}' != 'true'`
+	respond @disabled "" 404
+	@denied not client_ip {$BP_OPERATOR_ALLOW:127.0.0.1/8 ::1}
+	respond @denied "" 404
+}
+
+(rustfs-routes) {
+	route {
+		import rustfs-access
+		@landing {
+			path /
+			method GET HEAD
+			header Accept *text/html*
+		}
+		redir @landing /rustfs/console/ 302
+		# Host, scheme and port are part of native console and SigV4 authority.
+		reverse_proxy rustfs:9001
+	}
+}
+
+(rustfs-local-false) {
+}
+(rustfs-local-true) {
+	https://{$BP_RUSTFS_HOST:rustfs.localhost} {
+		tls internal
+		import access-log
+		import rustfs-routes
+	}
+}
+(rustfs-public-false) {
+}
+(rustfs-public-true) {
+	https://{$BP_RUSTFS_HOST:rustfs.localhost} {
+		tls {
+			issuer acme
+		}
+		import access-log
+		import rustfs-routes
+	}
+}
+
 (mode-local) {
+    import rustfs-local-{$BP_RUSTFS_CONSOLE:false}
+    http://{$BP_RUSTFS_HOST:rustfs.localhost} {
+        import access-log
+        import rustfs-routes
+    }
 	http://:80 {
 		import access-log
 		route {
@@ -69,6 +121,14 @@
 }
 
 (mode-public) {
+    import rustfs-public-{$BP_RUSTFS_CONSOLE:false}
+    http://{$BP_RUSTFS_HOST:rustfs.localhost} {
+        import access-log
+        route {
+            import rustfs-access
+            redir {$BP_RUSTFS_URL:https://rustfs.localhost}{uri} 308
+        }
+    }
 	:80 {
 		import access-log
 		route {
@@ -96,6 +156,10 @@
     http://:80 {
         import access-log
         route {
+            @rustfs expression `(host('{$BP_RUSTFS_HOST:rustfs.localhost}') && !host('{$BP_RUSTFS_URL_HOST:unused.invalid}')) || {http.request.hostport} == '{$BP_RUSTFS_AUTHORITY}'`
+            handle @rustfs {
+                import rustfs-routes
+            }
             @health path /health
             respond @health 200
             import operator-deny
