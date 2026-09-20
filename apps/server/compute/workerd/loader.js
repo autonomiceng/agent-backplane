@@ -74,9 +74,12 @@ export default {
             export default { fetch(request, env, ctx) { return handler.fetch(request, ctx.props, ctx); } };` },
           env: {}, globalOutbound: ctx.exports.Egress({ props: { workspaceId: m.workspaceId, urls: m.outboundUrls } }),
         }));
-        return worker.getEntrypoint(null, { props }).fetch(new Request("https://function.invalid/invoke", {
+        const child = await worker.getEntrypoint(null, { props }).fetch(new Request("https://function.invalid/invoke", {
           method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input),
         }));
+        const headers = new Headers(child.headers);
+        headers.delete("x-backplane-error");
+        return new Response(child.body, { status: child.status, statusText: child.statusText, headers });
       }
       const worker = env.LOADER.get(`${m.workspaceId}/${m.id}/${m.configHash}/prepare`, () => ({
         compatibilityDate: m.compatibilityDate, compatibilityFlags: [], mainModule: "check.js",

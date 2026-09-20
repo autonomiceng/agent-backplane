@@ -40,7 +40,7 @@ export function createComputeLauncher(config: { url: string | undefined; token: 
       const response = await fetch(new URL(endpoint.href.replace(/\/prepare$/, "/invoke")), { method: "POST",
         headers: { authorization: `Bearer ${token}`, "content-type": "application/json",
           "x-backplane-runtime": evidence.runtimeDigest, "x-backplane-control": evidence.controlHash, "x-backplane-artifact": JSON.stringify(evidence.artifact) },
-        body: JSON.stringify(invocation), signal, redirect: "error" });
+        body: JSON.stringify(invocation), signal, redirect: "manual" });
       if (response.status === 503 && response.headers.get("x-backplane-error") === "compute_unavailable") {
         await response.body?.cancel();
         throw new Error("compute_unavailable");

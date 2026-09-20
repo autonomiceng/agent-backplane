@@ -32,7 +32,8 @@ The immutable configuration hash still excludes control and artifact facts.
 Control URLs require HTTPS except for the trusted Compose authority
 `http://workerd:8080` and explicit loopback HTTP (localhost, IPv4 127/8, IPv6 ::1).
 Other cleartext endpoints, URL credentials, queries and fragments are refused before
-sending the control token. Path prefixes remain supported; redirects are refused.
+sending the control token. Path prefixes remain supported; redirects are never followed.
+Invocation relays function 3xx responses as ordinary results.
 
 Image facts are distinct host-declared artifact evidence. Bootstrap privately records
 the selected reference, resolved local image config ID, binary hash, architecture and
