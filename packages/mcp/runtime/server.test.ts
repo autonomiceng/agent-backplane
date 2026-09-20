@@ -6,6 +6,9 @@ import { join } from "node:path";
 import { createPool } from "../../../apps/server/platform/pool.ts";
 import { adminUrl, migratedDatabase } from "../../../apps/server/testing/postgres.ts";
 import { advanceDeliveryClock, applyMigration, createRun, issueKey, principalFixture } from "../../../apps/server/testing/session.ts";
+import { filesystemStore } from "../../../apps/server/blobs/filesystem-store.ts";
+import type { ComputeLauncher } from "../../../apps/server/compute/compute-launcher.ts";
+import type { AppDeps } from "../../../apps/server/app.ts";
 import { execute } from "../../cli/runtime/execute.ts";
 import { catalog } from "./tools.ts";
 import { server } from "./server.ts";
@@ -13,14 +16,42 @@ import { capture, commandsForExample, examples } from "../testing/examples.ts";
 
 test("MCP workflow diverges from executable CLI examples", async () => {
   const directory = await mkdtemp(join(tmpdir(), "bp-mcp-"));
+  const runtimeDigest = `workerd-binary-sha256:${"a".repeat(64)}`;
+  const evidence = { runtimeDigest, controlHash: "controlled-test-runtime", artifact: {
+    source: "host-declared" as const, reference: `example/workerd@sha256:${"b".repeat(64)}`, hostObservedImageId: null,
+  } };
+  const compute: ComputeLauncher = {
+    runtimeDigest, timeoutMs: 5000, verify: async () => evidence,
+    prepare: async () => ({ ok: true, value: evidence.artifact }),
+    invoke: async ({ manifest, props, input }) => {
+      const bundlePath = join(directory, manifest.configHash + ".mjs");
+      await writeFile(bundlePath, manifest.bundle);
+      // Match compute/workerd/loader.js's three-argument call. Only repository-controlled
+      // example bundles may execute here: this import runs unsandboxed under Bun.
+      const module: { default: { fetch: (request: Request, context: typeof props, ctx: unknown) => Promise<Response> } } =
+        await import(bundlePath);
+      return module.default.fetch(new Request("https://function.invalid/invoke", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input),
+      }), props, {});
+    },
+  };
   const fixtures: (Awaited<ReturnType<typeof principalFixture>> & { pool: ReturnType<typeof createPool>; admin: ReturnType<typeof createPool>;
     env: { BP_URL: string; BP_KEY: string; BP_WORKSPACE_ID: string; BP_DATA_DIR: string; BP_SESSION: string };
-    rpc: ReturnType<typeof server>; responses: Record<string, unknown>[]; bindings: Record<string, string>; surface: string; streams: AbortSignal[] })[] = [];
+    rpc: ReturnType<typeof server>; responses: Record<string, unknown>[]; bindings: Record<string, string>; surface: string; streams: AbortSignal[];
+    callerPrincipalId: string })[] = [];
   try {
     for (const surface of ["cli", "mcp"]) {
       const url = await migratedDatabase(), pool = createPool(url), admin = createPool(adminUrl(url));
-      const f = await principalFixture(pool);
+      const dependencies: Pick<AppDeps, "blobStore" | "compute"> = { blobStore: filesystemStore(join(directory, surface)), compute };
+      const f = await principalFixture(pool, dependencies);
       const key = await issueKey(f.app, f.cookie, f.workspaceId, f.principalId);
+      const callerResponse = await f.app.handle(new Request(`http://localhost/api/v1/workspaces/${f.workspaceId}/principals`, {
+        method: "POST", headers: { cookie: f.cookie, origin: "http://localhost", "content-type": "application/json" },
+        body: '{"name":"Onboarding caller"}',
+      }));
+      expect(callerResponse.status).toBe(201);
+      const caller = await callerResponse.json() as { id: string };
+      const callerKey = await issueKey(f.app, f.cookie, f.workspaceId, caller.id);
       const env = { BP_URL: "", BP_KEY: key, BP_WORKSPACE_ID: f.workspaceId, BP_DATA_DIR: join(directory, surface), BP_SESSION: "examples" };
       const responses: Record<string, unknown>[] = [];
       const streams: AbortSignal[] = [];
@@ -29,8 +60,11 @@ test("MCP workflow diverges from executable CLI examples", async () => {
         return fetch(input, init);
       }, { preconnect: fetch.preconnect });
       const rpc = server({ env, transport }, async (text) => { responses.push(JSON.parse(text)); });
-      const bindings: Record<string, string> = {};
-      const fixture = { ...f, pool, admin, env, rpc, responses, bindings, surface, streams };
+      const onboardingFile = join(directory, `${surface}-onboarding.txt`), onboardingDownload = join(directory, `${surface}-download.txt`);
+      await writeFile(onboardingFile, "agent client setup\n");
+      const bindings: Record<string, string> = { ONBOARDING_FILE: onboardingFile, ONBOARDING_DOWNLOAD: onboardingDownload,
+        DEPLOYMENT_ID: crypto.randomUUID(), OWNER_KEY: key, CALLER_KEY: callerKey };
+      const fixture = { ...f, pool, admin, env, rpc, responses, bindings, surface, streams, callerPrincipalId: caller.id };
       fixtures.push(fixture);
       f.app.listen({ hostname: "localhost", port: 0 });
       env.BP_URL = `http://localhost:${f.app.server!.port}`;
@@ -62,7 +96,8 @@ test("MCP workflow diverges from executable CLI examples", async () => {
         let stdout = "", stderr = "";
         const code = await execute(argv, { env: f.env, stdin: async () => body,
           stdout: (text) => { stdout += text; }, stderr: (text) => { stderr += text; } });
-        return { isError: code !== 0, value: JSON.parse(code ? stderr : stdout) };
+        const output = (code ? stderr : stdout).trim();
+        return { isError: code !== 0, value: output ? JSON.parse(output) : undefined };
       }
       // Aliases can be prefixes of full commands (bp events versus bp events stream-audit), so the longest match wins.
       const matches = catalog.flatMap((t) => [t.command.command, ...t.command.aliases]
@@ -70,22 +105,32 @@ test("MCP workflow diverges from executable CLI examples", async () => {
         .sort((a, b) => b.parts.length - a.parts.length);
       const { tool, parts } = matches[0]!;
       const args: Record<string, unknown> = {};
+      let outputPath: string | undefined;
       for (let i = parts.length; i < argv.length; i += 2) {
         if (argv[i] === "--body") args.body = JSON.parse(body);
+        else if (argv[i] === "--file") args.file = argv[i + 1];
+        else if (argv[i] === "--out") outputPath = argv[i + 1];
         else args[tool.command.parameters.find((p) => `--${p.flag}` === argv[i])!.name] = argv[i + 1];
       }
       const id = requestId++, frame = Buffer.from(JSON.stringify({ jsonrpc: "2.0", id, method: "tools/call", params: { name: tool.name, arguments: args } }) + "\n");
       f.rpc.feed(frame.subarray(0, 7)); f.rpc.feed(frame.subarray(7)); await f.rpc.drain();
       const response = f.responses.shift() as { result: { isError: boolean; content: { text: string }[] } };
       expect(response).toHaveProperty("result");
-      return { isError: response.result.isError, value: JSON.parse(response.result.content[0]!.text) };
+      const value = JSON.parse(response.result.content[0]!.text);
+      if (tool.command.binary && !response.result.isError) {
+        expect(value).toMatchObject({ encoding: "base64", size: expect.any(Number) });
+        if (!outputPath) throw new Error("binary example missing output path");
+        await writeFile(outputPath, Buffer.from(value.content, "base64"));
+        return { isError: false, value: undefined };
+      }
+      return { isError: response.result.isError, value };
     };
     const forward = new Map<string, string>(), backward = new Map<string, string>();
     const compare = (a: unknown, b: unknown, key = ""): void => {
       if (typeof a === "string" && typeof b === "string" &&
-        (/^[0-9a-f]{8}-[0-9a-f-]{27}$/.test(a) || /At$|[Pp]osition$|^receipt$|^effectKey$/.test(key))) {
+        (/^[0-9a-f]{8}-[0-9a-f-]{27}$/.test(a) || /(?:At|_at)$|[Pp]osition$|^receipt$|^effectKey$|^configHash$/.test(key))) {
         expect(b.length).toBeGreaterThan(0);
-        if (key.endsWith("At")) { expect(Number.isFinite(Date.parse(a))).toBe(true); expect(Number.isFinite(Date.parse(b))).toBe(true); }
+        if (/(?:At|_at)$/.test(key)) { expect(Number.isFinite(Date.parse(a))).toBe(true); expect(Number.isFinite(Date.parse(b))).toBe(true); }
         if (forward.has(a)) expect(b).toBe(forward.get(a)!);
         if (backward.has(b)) expect(a).toBe(backward.get(b)!);
         forward.set(a, b); backward.set(b, a); return;
@@ -102,12 +147,16 @@ test("MCP workflow diverges from executable CLI examples", async () => {
       compare(outputs[0], outputs[1]); return outputs;
     };
     const command = (argv: string[], body?: unknown) => ({ argv: [...argv, ...(body === undefined ? [] : ["--body", "-"])], ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-    const skill = examples(await readFile(new URL("../../../skills/backplane/SKILL.md", import.meta.url), "utf8"));
+    const skill = examples(`${await readFile(new URL("../../../skills/backplane/references/client-setup.md", import.meta.url), "utf8")}\n${
+      await readFile(new URL("../../../skills/backplane/SKILL.md", import.meta.url), "utf8")}`);
     const transactionBodies: string[] = [], transactionResults: unknown[] = [];
     await both(() => command(["queue", "create-queue"], { name: "lazy-first" }));
     await both(() => command(["queue", "create-queue"], { name: "lazy-reused" }));
     for (const f of fixtures) expect(await f.pool`SELECT id FROM control.runs WHERE principal_id=${f.principalId}`).toHaveLength(1);
     for (const example of skill) {
+      if (example.name === "onboarding.functions-invoke") for (const f of fixtures) {
+        f.env.BP_KEY = f.bindings.CALLER_KEY!; f.env.BP_SESSION = "onboarding-caller";
+      }
       if (example.fixture) {
         await both(() => command(["queue", "send-message", "--queue", "intake"], { idempotencyKey: "uncertain", payload: {} }));
         for (const f of fixtures) {
@@ -143,15 +192,26 @@ test("MCP workflow diverges from executable CLI examples", async () => {
         capture(example, results.at(-1), f.bindings); outputs.push(results);
       }
       compare(outputs[0], outputs[1]);
+      if (example.name === "onboarding.functions-invoke") for (const f of fixtures) {
+        f.env.BP_KEY = f.bindings.OWNER_KEY!; f.env.BP_SESSION = "examples";
+      }
     }
     for (const [i, f] of fixtures.entries()) {
+      expect(await readFile(f.bindings.ONBOARDING_DOWNLOAD!, "utf8")).toBe("agent client setup\n");
+      const [invocation] = await f.pool<{ caller_principal_id: string; caller_run_id: string; execution_principal_id: string; execution_run_id: string; execution_deployment_id: string | null }[]>`
+        SELECT e.principal_id AS caller_principal_id,e.run_id AS caller_run_id,r.principal_id AS execution_principal_id,r.id AS execution_run_id,r.invocation_deployment_id AS execution_deployment_id
+        FROM audit.events e JOIN control.runs r ON r.id=(e.metadata->>'runId')::uuid WHERE e.kind='function.invoke'`;
+      expect(invocation).toMatchObject({ caller_principal_id: f.callerPrincipalId, execution_principal_id: f.principalId,
+        execution_deployment_id: f.bindings.DEPLOYMENT_ID });
+      expect(invocation!.caller_run_id).not.toBe(invocation!.execution_run_id);
+      expect(await f.pool`SELECT run_id FROM control.invocation_tokens`).toHaveLength(0);
       const before = await f.pool`SELECT position FROM audit.events ORDER BY position`;
       expect(await call(f, ["transaction", "--body", "-"], transactionBodies[i])).toEqual({ isError: false, value: transactionResults[i] });
       expect(await f.pool`SELECT position FROM audit.events ORDER BY position`).toEqual(before);
       expect(await f.pool<{ state: string }[]>`SELECT state FROM queue.delivery_envelopes WHERE id IN (${f.bindings.DELIVERY_ID}, ${f.bindings.REVIEW_ID})`)
         .toEqual([{ state: "succeeded" }, { state: "succeeded" }]);
       const [run] = await f.pool<{ id: string }[]>`SELECT id FROM control.runs WHERE principal_id = ${f.principalId} AND label='dogfood'`;
-      expect(await f.pool`SELECT id FROM control.runs WHERE principal_id = ${f.principalId}`).toHaveLength(2);
+      expect(await f.pool`SELECT id FROM control.runs WHERE principal_id = ${f.principalId} AND invocation_deployment_id IS NULL`).toHaveLength(2);
       expect(await f.pool<{ producer_principal_id: string; producer_run_id: string }[]>`SELECT producer_principal_id, producer_run_id FROM queue.messages WHERE queue='review'`)
         .toEqual([{ producer_principal_id: f.principalId, producer_run_id: run!.id }]);
       expect(await f.pool<{ run_id: string; principal_id: string }[]>`SELECT DISTINCT run_id,principal_id FROM audit.events WHERE kind IN ('queue.claim','queue.send','queue.ack','effect.begin','transaction.committed','effect.reconciled')`)
@@ -169,8 +229,11 @@ test("MCP workflow diverges from executable CLI examples", async () => {
     expect(failed[0]).toMatchObject({ error: "assertion_failed", status: 422 });
     for (const f of fixtures) {
       expect(await f.pool`SELECT id FROM queue.messages WHERE idempotency_key='rolled-back'`).toHaveLength(0);
-      const folder = join(f.env.BP_DATA_DIR, "cli", "runs"), file = join(folder, (await readdir(folder)).find((n) => n.endsWith(".json"))!);
-      const cache = JSON.parse(await readFile(file, "utf8"));
+      const folder = join(f.env.BP_DATA_DIR, "cli", "runs");
+      const caches = await Promise.all((await readdir(folder)).filter((name) => name.endsWith(".json")).map(async (name) => {
+        const file = join(folder, name); return { file, cache: JSON.parse(await readFile(file, "utf8")) };
+      }));
+      const { file, cache } = caches.find((entry) => entry.cache.principalId === f.principalId)!;
       await writeFile(file, JSON.stringify({ ...cache, id: "00000000-0000-4000-8000-000000000001" }));
     }
     await both(() => command(["queue", "create-queue"], { name: "recovered" }));
@@ -184,14 +247,14 @@ test("MCP workflow diverges from executable CLI examples", async () => {
     expect(mcp.streams[0]!.aborted).toBe(true);
     for (const f of fixtures) {
       expect(await f.pool<{ state: string }[]>`SELECT state FROM queue.delivery_envelopes WHERE id=${f.bindings.AMBIGUOUS_ID}`).toEqual([{ state: "ambiguous" }]);
-      expect(await f.pool`SELECT id FROM control.runs WHERE principal_id=${f.principalId}`).toHaveLength(4); // examples, poisoned-cache recovery, and the rollback probe migration each created one
+      expect(await f.pool`SELECT id FROM control.runs WHERE principal_id=${f.principalId} AND invocation_deployment_id IS NULL`).toHaveLength(4); // examples, poisoned-cache recovery, and the rollback probe migration each created one
       const response = await f.app.handle(new Request(`http://localhost/api/v1/workspaces/${f.workspaceId}/principals/${f.principalId}/revoke`, {
         method: "POST", headers: { origin: "http://localhost", cookie: f.cookie, "content-type": "application/json" }, body: "{}",
       })); expect(response.status).toBe(200);
     }
     const revoked = await both(() => command(["queue", "create-queue"], { name: "revoked" }), true);
     expect(revoked[0]).toMatchObject({ error: "unauthorized", status: 401 });
-    for (const f of fixtures) expect(await f.pool`SELECT id FROM control.runs WHERE principal_id=${f.principalId}`).toHaveLength(4);
+    for (const f of fixtures) expect(await f.pool`SELECT id FROM control.runs WHERE principal_id=${f.principalId} AND invocation_deployment_id IS NULL`).toHaveLength(4);
     expect(() => commandsForExample({ name: "bad", lines: ["bp ping; touch /tmp/no"], captures: [], fixture: undefined }, {})).toThrow();
   } finally {
     try {
