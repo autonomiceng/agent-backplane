@@ -14,6 +14,7 @@ export function storageAdminOptions(argv: string[]): AdoptionOptions {
   return { mode, fenced: values.fenced ?? false, checkpoint: values.checkpoint ?? "", retain: values["retain-unreferenced"] ?? false };
 }
 export function storageAdminError(error: unknown) {
+  if (error instanceof Error && /^backup_credential_(file_must_be_private_and_owned|url_invalid)$/.test(error.message)) return "blob_binding_operator_credential_invalid";
   return error instanceof Error && /^blob_binding_[a-z_]+$/.test(error.message) ? error.message : "blob_binding_operator_failed";
 }
 if (import.meta.main) {

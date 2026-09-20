@@ -21,11 +21,17 @@ export async function adoptionFixture() {
   };
   try {
     const [schema] = await admin`SELECT to_regclass('control.blob_storage_retained') AS retained`;
-    if (!schema.retained) {
-      const path = Bun.env.BP_TEST_STORAGE_ADOPTION_SQL;
-      if (!path) throw new Error("apply the adoption schema proposal or set BP_TEST_STORAGE_ADOPTION_SQL to its exact SQL");
-      await admin.unsafe(await Bun.file(path).text());
-    }
+    if (!schema.retained) throw new Error("migration 000032 not applied");
+    const waitForStoppedRuntime = async () => {
+      // Client close can resolve before PostgreSQL removes its backend record.
+      const deadline = performance.now() + 5000;
+      while (true) {
+        const [active] = await admin`SELECT count(*)::int AS count FROM pg_stat_activity WHERE datname=current_database() AND usename='bp_server'`;
+        if (!active.count) return;
+        if (performance.now() >= deadline) throw new Error("fixture runtime did not stop");
+        await Bun.sleep(10);
+      }
+    };
     const legacy = async () => {
       const runtime = createPool(url);
       try {
@@ -39,20 +45,13 @@ export async function adoptionFixture() {
         return { workspaceId: f.workspaceId, principalId: f.principalId, runId, id: blob.id };
       } finally {
         await runtime.close();
-        // Closing the client can resolve before PostgreSQL removes its backend record.
-        const deadline = performance.now() + 5000;
-        while (true) {
-          const [active] = await admin`SELECT count(*)::int AS count FROM pg_stat_activity WHERE datname=current_database() AND usename='bp_server'`;
-          if (!active.count) break;
-          if (performance.now() >= deadline) throw new Error("legacy fixture runtime did not stop");
-          await Bun.sleep(10);
-        }
+        await waitForStoppedRuntime();
       }
     };
     const verify = async (selected = store) => {
       const runtime = createPool(url);
       try { const release = await verifyStorageBinding(runtime, selected); await release(); }
-      finally { await runtime.close(); }
+      finally { await runtime.close(); await waitForStoppedRuntime(); }
     };
     return { url, admin, dataDir, store, legacy, verify, close, operate: (options: AdoptionOptions) => adoptStorage(admin, store, options) };
   } catch (error) { await close(); throw error; }

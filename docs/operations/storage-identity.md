@@ -3,8 +3,7 @@
 Startup verifies the selected store before enrollment, requests, sampling or purge.
 It writes no binding, marker or blob bytes. A separate operator command initializes
 or adopts storage. Deploy the operator, schema, cleanup exclusions and bootstrap
-service together before activating the startup check. The proposed protected
-integration is in `.scratch/adoption-orchestrator.patch`; root owns activation.
+service together before activating the startup check. Startup/Compose activation ships separately from this operator protocol.
 
 ## New installation
 
@@ -155,7 +154,13 @@ Filesystem Checkpoints include the hidden marker, publication evidence and retai
 bytes through all of `server-data`; physical PostgreSQL backup includes binding and
 retention records. Store archives use `tar --hard-dereference` so marker links become
 regular file entries accepted by the existing safe restore validator. Restore both
-stores from one capture before the existing User restore-release flow. The legacy
+stores from one capture before the existing User restore-release flow. Captures can
+contain ordinary cleanup leftovers. Before the activation release starts a restored
+server, it must inspect the restored inventory while fenced and require explicit
+retention of any unreferenced bytes. If that gate refuses, leave the source fenced,
+keep the restored server stopped, and use the restored capture's ID with the
+`reconcile --fenced --checkpoint CAPTURE_ID --retain-unreferenced` command above.
+Only start the restored server after reconciliation succeeds. The legacy
 PostgreSQL-only helper does not recover blob bytes.
 
 Normal same-database starts exclude one another using a dedicated advisory-lock
@@ -167,7 +172,9 @@ delay detection. Stop/fence the old process before replacing it after session lo
 rolling upgrades and active-active remain unsupported. Startup verification and
 operator mutation also check ownership before completing.
 
-An abrupt stop can leave unreferenced upload, delete or purge bytes. Startup then
+An abrupt stop, a cleanup deadline, a transient delete failure or the active restore
+gate can leave unreferenced upload, delete or purge bytes, even after graceful
+shutdown. A restart after deletion or purge may need reconciliation. Startup then
 refuses until the operator captures and reconciles the store. This deliberately
 trades automatic crash recovery for preserving ambiguous bytes. Choosing
 `--retain-unreferenced` keeps those bytes indefinitely, including previously deleted
@@ -177,6 +184,10 @@ writes after loss of exclusion; graceful draining cannot certify storage while
 PostgreSQL is unavailable.
 
 Verification is O(all object bytes), with memory proportional to object count.
+Startup retains one read-only database snapshot throughout hashing, which can delay
+vacuum cleanup. Schedule a maintenance window proportional to the stored bytes.
+Adoption performs three complete reads around durable publication to detect changed
+bytes before certifying the binding; budget that offline I/O as well.
 Future fresh-target migration can retain the database UUID and attribution while
 allocating a new store UUID/generation; this command intentionally refuses backend
 or foreign-store replacement. That migration and coordinated S3 checkpoints are
