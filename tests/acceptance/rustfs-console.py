@@ -171,6 +171,23 @@ with tempfile.TemporaryDirectory(prefix='bp-console-proof-') as temporary:
         assert signed_get(origin, '/rustfs/admin/v3/accountinfo')[0] == 200, 'signed admin account info failed'
         assert signed_get(origin, '/?list-type=2')[0] == 200, 'signed S3 root list failed'
         assert request(origin, '/', {'Accept': 'text/html'})[0] == 200
+        local = create('--publish', '127.0.0.1::80', '--tmpfs', '/data', '--tmpfs', '/config',
+                       '--mount', f'type=bind,src={ROOT}/infra/compose/Caddyfile,dst=/etc/caddy/Caddyfile,readonly',
+                       '--env', 'BP_ACCESS_MODE=local', '--env', 'BP_EDGE_HOST=backplane.localhost',
+                       '--env', 'BP_PUBLIC_URL=http://backplane.localhost', '--env', 'BP_RUSTFS_CONSOLE=true',
+                       '--env', 'BP_RUSTFS_HOST=rustfs.localhost', CADDY)
+        docker('start', local)
+        local_origin = 'http://' + docker('port', local, '80').splitlines()[0]
+        deadline = time.monotonic() + 10
+        while True:
+            try:
+                for path in ('/rustfs/console/', '/rustfs/admin/v3/accountinfo', '/'):
+                    assert request(local_origin, path, {'Host': 'rustfs.localhost'}, redirects=False)[0] == 404
+                break
+            except OSError:
+                if time.monotonic() > deadline:
+                    raise
+                time.sleep(.1)
         disabled = create(*common, '--env', 'BP_RUSTFS_CONSOLE=false', CADDY)
         docker('start', disabled)
         disabled_origin = 'http://' + docker('port', disabled, '80').splitlines()[0]
@@ -192,7 +209,7 @@ with tempfile.TemporaryDirectory(prefix='bp-console-proof-') as temporary:
                 raise RuntimeError('owned native console browser login failed')
             print(json.dumps({'browserLogin': 'pass'}))
         print(json.dumps({'gate': 'rustfs-console', 'nativeHtml': 'pass', 'nativeAuthRequired': 'pass',
-                          'signedAdminAccountInfo': 200, 'signedS3RootList': 200, 'caddyConfigurationsValidated': len(configurations),
+                          'localHttpConsole': '404', 'signedAdminAccountInfo': 200, 'signedS3RootList': 200, 'caddyConfigurationsValidated': len(configurations),
                           'trustedClientAllowDeny': 'pass', 'untrustedForwardedSpoofDenied': 'pass', 'disabled': '404'}))
     finally:
         primary_error = sys.exc_info()[1]

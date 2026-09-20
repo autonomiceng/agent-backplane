@@ -179,3 +179,13 @@ storage startup/identity, workerd lifecycle/runtime, and both offline and S3 bac
 drills. Preserve the check and test steps too. Resolve the workflow conflict by
 keeping both branches' gate additions; config validation alone does not qualify
 signed requests, browser login, or storage migration.
+
+The native RustFS console requires an HTTPS browser origin in every mode. Local
+HTTP requests to its hostname return 404, even when the console is enabled;
+Backplane's ordinary local HTTP interface is unchanged. Behind a trusted gateway,
+HTTPS terminates there and the private gateway hop remains HTTP.
+
+The console allowlist defaults to loopback and does not automatically permit Docker
+bridge peers. For standalone access, inspect Caddy's observed peer and explicitly
+permit that exact address. For proxy access, permit verified client addresses and
+trust only the gateway. A denied client receives 404.

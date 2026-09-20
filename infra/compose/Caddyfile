@@ -99,7 +99,8 @@
     import rustfs-local-{$BP_RUSTFS_CONSOLE:false}
     http://{$BP_RUSTFS_HOST:rustfs.localhost} {
         import access-log
-        import rustfs-routes
+        # Root console credentials are accepted only through HTTPS.
+        respond 404
     }
 	http://:80 {
 		import access-log

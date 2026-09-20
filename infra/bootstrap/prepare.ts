@@ -29,7 +29,7 @@ export function resolveRustfsConsole(env: Environment, profiles: string[], acces
   catch { throw new CliError("rustfs_url_invalid", 1); }
   const url = new URL(origin), browser = new URL(access.origin);
   if ((!dns(url.hostname) && !isIP(url.hostname.replace(/^\[|\]$/g, ""))) || url.port === "0"
-    || (access.mode !== "local" && url.protocol !== "https:")) throw new CliError("rustfs_url_invalid", 1);
+    || ((enabled === "true" || access.mode !== "local") && url.protocol !== "https:")) throw new CliError("rustfs_url_invalid", 1);
   if (profiles.includes("edge")) {
     const port = url.protocol === "https:" ? env.BP_HTTPS_PORT || "443" : env.BP_HTTP_PORT || "80";
     if (url.hostname !== host || Number(url.port || (url.protocol === "https:" ? "443" : "80")) !== Number(port))

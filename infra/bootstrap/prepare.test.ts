@@ -162,6 +162,8 @@ test("preparation emits standalone domain and proxy authority routing without ch
       expect(prepared).toContain("BP_RUSTFS_AUTHORITY='rustfs.example.com:8443'");
       expect(prepared).toContain("BP_RUSTFS_URL_HOST='rustfs.example.com'");
     }
+    await Bun.write(path, "BP_ACCESS_MODE=local\nBP_RUSTFS_CONSOLE=true\nBP_RUSTFS_URL=http://rustfs.localhost\n");
+    await expect(prepare([...args, "--profile", "edge"], {}, runner)).rejects.toThrow("rustfs_url_invalid");
     const settings = "BP_ACCESS_MODE=proxy\nBP_PUBLIC_URL=https://same.example:8449\nBP_AUTH_URL=https://same.example:8449\nBP_RUSTFS_CONSOLE=true\nBP_RUSTFS_URL=https://same.example:8450\nBP_TRUSTED_PROXIES='192.0.2.2/32'\n";
     await Bun.write(path, settings);
     const output = await prepare([...args, "--profile", "gateway"], {}, runner);
