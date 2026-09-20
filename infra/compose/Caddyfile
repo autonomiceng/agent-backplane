@@ -37,6 +37,35 @@
 	request_header @ready -Authorization
 }
 
+(public-status) {
+	handle /status.json {
+		route {
+			request_header -Authorization
+			request_header -Proxy-Authorization
+			request_header -Cookie
+			request_header -If-Match
+			request_header -If-Unmodified-Since
+			request_header -If-None-Match
+			request_header -If-Modified-Since
+			request_header -Range
+			request_header -If-Range
+			header Content-Type application/json
+			header Cache-Control "no-store"
+			header -ETag
+			header -Accept-Ranges
+			header -Last-Modified
+			@status_method not method GET HEAD
+			header @status_method Allow "GET, HEAD"
+			respond @status_method "" 405
+			root * /srv/status
+			file_server {
+				pass_thru
+			}
+			respond "" 404
+		}
+	}
+}
+
 (upstream) {
 	# Plaintext upstreams require a trusted host and Docker peers (ADR-0021).
 	reverse_proxy server:3000 {
@@ -54,6 +83,7 @@
 		route {
 			@health path /health
 			respond @health 200
+			import public-status
 			import operator-deny
 			import upstream
 		}
@@ -62,6 +92,7 @@
 		tls internal
 		import access-log
 		route {
+			import public-status
 			import operator-deny
 			import upstream
 		}
@@ -74,6 +105,7 @@
 		route {
 			@health path /health
 			respond @health 200
+			import public-status
 			import operator-deny
 			redir {$BP_PUBLIC_URL}{uri} 308
 		}
@@ -85,6 +117,7 @@
 		header Strict-Transport-Security "max-age=31536000"
 		import access-log
 		route {
+			import public-status
 			import operator-deny
 			import upstream
 		}
@@ -98,6 +131,7 @@
         route {
             @health path /health
             respond @health 200
+            import public-status
             import operator-deny
             import upstream
         }

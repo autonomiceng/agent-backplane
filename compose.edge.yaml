@@ -28,6 +28,7 @@ services:
       - "${BP_BIND_HOST:-127.0.0.1}:${BP_HTTPS_PORT:-443}:443"
     volumes:
       - ./infra/compose/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${BP_STATUS_DIR:-./data}/console:/srv/status:ro
       - edge-data:/data
       - edge-config:/config
     healthcheck:
