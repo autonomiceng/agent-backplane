@@ -8,6 +8,7 @@ permissions:
 jobs:
   gates:
     runs-on: ubuntu-latest
+    # Serialized image builds, real storage/runtime gates and three physical recovery drills.
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -33,3 +34,4 @@ jobs:
       - run: python3 tests/acceptance/workerd-gate.py agent-backplane-workerd:1.20260918.1
       - run: python3 scripts/backup-drill.py --offline
       - run: python3 scripts/backup-drill.py --s3
+      - run: python3 scripts/storage-migration-drill.py
