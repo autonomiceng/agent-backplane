@@ -8,7 +8,7 @@ test("terminal cleanup cancels a saturated reservation without leaking or releas
   const held = await pool.reserve();
   try {
     const started = performance.now();
-    await expect(finishInvocation(pool, crypto.randomUUID(), "function.fail", 1, null)).rejects.toThrow();
+    await expect(finishInvocation(pool, crypto.randomUUID(), "function.fail", 1, null)).rejects.toThrow("invocation_finalize_failed");
     expect(performance.now() - started).toBeLessThan(6500);
     expect(poolSnapshot(pool)).toEqual({ inUse: 1, waiting: 0 });
     expect(await held<{ n: number }[]>`SELECT 1 AS n`).toEqual([{ n: 1 }]);
