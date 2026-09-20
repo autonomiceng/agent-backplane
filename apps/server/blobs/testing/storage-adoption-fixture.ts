@@ -37,7 +37,17 @@ export async function adoptionFixture() {
         expect(response.status).toBe(201);
         const blob = await response.json() as { id: string };
         return { workspaceId: f.workspaceId, principalId: f.principalId, runId, id: blob.id };
-      } finally { await runtime.close(); }
+      } finally {
+        await runtime.close();
+        // Closing the client can resolve before PostgreSQL removes its backend record.
+        const deadline = performance.now() + 5000;
+        while (true) {
+          const [active] = await admin`SELECT count(*)::int AS count FROM pg_stat_activity WHERE datname=current_database() AND usename='bp_server'`;
+          if (!active.count) break;
+          if (performance.now() >= deadline) throw new Error("legacy fixture runtime did not stop");
+          await Bun.sleep(10);
+        }
+      }
     };
     const verify = async (selected = store) => {
       const runtime = createPool(url);
