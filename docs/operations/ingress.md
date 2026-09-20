@@ -72,7 +72,17 @@ The existing application ingress acceptance uses a disposable, enrolled local co
 ## Internal gateway behind Platform Edge
 
 Set `BP_ACCESS_MODE=proxy` and `BP_PUBLIC_URL` to the browser’s HTTPS origin.
-Start with `docker compose -f compose.yaml -f compose.gateway.yaml --profile gateway up -d --wait`.
+For the default prepared installation, run from the Backplane checkout:
+
+```sh
+docker compose --env-file .env --project-name agent-backplane \
+  -f compose.yaml -f compose.gateway.yaml --profile gateway up -d --wait
+```
+
+If preparation used `--env-file PATH` or `--compose-project NAME`, replace `.env`
+and `agent-backplane` with those same values. Keep those options on subsequent
+Compose commands so the public URL, volume prefix and network come from the
+prepared deployment.
 The gateway uses `bp-gateway:80` on the shared Platform Network and publishes no host ports.
 Platform Edge routes Backplane requests through that gateway. Do not combine this overlay
 with the standalone `edge` profile. Existing direct server access remains for internal telemetry.
