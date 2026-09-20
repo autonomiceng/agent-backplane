@@ -50,8 +50,26 @@ binding identity, inventory digest/count, private bucket selection, mount eviden
 image custody and clean RustFS exit. A checkpoint-specific credential commitment
 also detects changed root credentials even if RustFS would accept them at process
 startup. It contains no plaintext credentials. Keep its enclosing repository
-private. Operations backup-age monitoring needs access under the same trusted UID;
-do not make the recovery manifest public to enable monitoring.
+private. The atomically published `backups/health.json` is a mode `0644` summary
+containing only version, system ID, completion time and restore point name/LSN/timeline.
+The server reads this receipt across UIDs; detailed manifests stay private. Capture
+and retention use one operator UID; a second capture UID needs explicitly managed
+permissions. See the [receipt and inspection contract](../../infra/backup/README.md).
+Both source inspections hash all object bytes within the fence. Budget downtime for
+two full passes plus physical capture; each pass uses `BP_STARTUP_VERIFY_TIMEOUT`
+and terminates its own helper on expiry with `blob_binding_inspection_timeout`.
+
+The private credential commitment uses a fresh 32-byte random salt and
+PBKDF2-HMAC-SHA256 with 600,000 iterations over the checkpoint name and exact root
+and scoped values. This format accepts only that fixed cost; a future cost change
+requires an explicitly supported format. Arbitrary recorded costs are refused to
+bound work on untrusted manifests. Pre-fix S3 checkpoints with `credentialsSha256`
+or a commitment without the checkpoint name require recapture; their restore refusal
+uses the same captured-credentials diagnostic.
+Use generated credentials and retain their originals in protected recovery custody.
+The drill generates 32-character hexadecimal values accepted by the shipped RustFS
+runtime. Choose generated values within that runtime's accepted credential lengths;
+checkpoint capture adds no credential-length restriction.
 
 S3 inspection failure refuses capture, including offline capture. Filesystem
 offline forensic capture remains available and records failed inspection explicitly;
@@ -76,7 +94,14 @@ changed bodies, wrong identity and credential failures keep bootstrap and server
 stopped. The PostgreSQL identity, versions and entire audit-head set must match;
 recovery explicitly selects the captured timeline and promotion creates a new one.
 
-PostgreSQL and RustFS start with `--no-deps`. A read-only signed root request proves
+PostgreSQL and RustFS start with `--no-deps`. Before authentication, restore checks
+the actual RustFS image content, command, entrypoint and single `/data` mount against
+the captured evidence and fresh target volume. Source volume names are not reused.
+A bounded 30-second `/health/ready` wait precedes the signed proof; proof failures
+expose only stable `checkpoint_proof_configuration`, `_readiness`, `_authentication`,
+`_account` or `_versioning` tokens. The proof helper has a 60-second total deadline.
+Fixture diagnostics similarly use `checkpoint_fixture_` with a fixed identity,
+configuration, create or read step. A read-only signed root request proves
 access to the restored service account and unversioned bucket; scoped inspection
 then verifies the binding and every object body. Only after equality and explicit
 leftover retention does normal Compose startup run IAM convergence. That bootstrap

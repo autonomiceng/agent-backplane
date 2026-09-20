@@ -11,8 +11,41 @@ with encrypted transport. Checkpoints contain credentials, enrollment state,
 Workspace data, filesystem blobs, and possibly Caddy CA private keys. Encryption
 and off-host replication remain operator responsibilities. Retain the protected
 `.env` separately: manifests contain image pins, database identity, audit heads,
-target LSN, checksums and completion time, never resolved environment values.
+target LSN, checksums and completion time. S3 manifests also contain private bucket
+selection, inventory evidence and a salted credential commitment; they contain no
+plaintext credentials.
 Restore needs the original database passwords and `BP_AUTH_SECRET`.
+
+Checkpoint directories stay mode `0700` and their manifests mode `0600`. Capture
+and retention have one operator UID. Capture assigns the `backups` directory to
+that UID and grants read/traverse access on that parent with `chmod a+rx` so it can
+atomically publish a receipt readable by the server. The `0700` checkpoint
+subdirectories remain private. Capture by a second UID is
+unsupported unless the operator explicitly manages permissions. After durable completion, capture
+atomically replaces `backups/health.json` at mode `0644`. This public summary contains
+only version, PostgreSQL system ID, actual capture completion time and restore point
+name, LSN and timeline. A failed capture retains the previous receipt. Mount the
+`backups` directory so the server can traverse it and read this receipt; private
+checkpoint directories need no server access. The operations probe validates the
+receipt against its database identity and refuses malformed receipts. Only an absent
+receipt enables the historical manifest fallback, which requires readable manifests.
+The receipt must name an existing real checkpoint directory, never a symlink.
+After restored storage is verified, the restore gate is armed and the recovery API
+is available, restore publishes the receipt with the original capture completion
+time. It does not reset backup age. Preserve the checkpoint directory name when
+copying it into the recovery repository.
+
+Both filesystem and S3 capture perform two full object-byte SHA-256 inspections
+inside the writer fence, before and after physical capture. Plan downtime for both
+passes plus archiving. Each fenced `inspect`, `adopt` and `reconcile` command uses a total
+`BP_STARTUP_VERIFY_TIMEOUT` budget (default 120 seconds). PostgreSQL timeouts run
+on the reserved lease session and leave up to five seconds for cleanup before the
+process deadline. Both PostgreSQL expiry and the process deadline report
+`blob_binding_inspection_timeout`; the process deadline terminates the lease-owning
+helper even if cleanup blocks. Invalid configuration and deadlines refuse offline
+filesystem capture; genuine storage corruption still permits forensic capture. Increase that budget
+for the store size and measured throughput. This bounds inspection, not all Docker
+control-plane operations or the entire capture window.
 
 ```sh
 scripts/backup.sh --fenced --env-file .env
@@ -77,7 +110,7 @@ when restoring recorded references.
    `BP_HTTPS_PORT` as appropriate, then run:
 
    ```sh
-   scripts/restore.sh /new/repository/backups/YYYYMMDDTHHMMSSffffffZ --env-file recovery.env
+   scripts/restore.sh /new/repository/backups/YYYYMMDDTHHMMSSffffffZ --fenced --env-file recovery.env
    ```
 
    A capture containing cleanup leftovers needs the explicit

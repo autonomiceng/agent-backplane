@@ -32,7 +32,7 @@ return `operations_disabled` (503); a missing or incorrect bearer token returns
 | `queue_ambiguous`, `queue_effect_paused` | Reconcile the Effect before releasing or replaying its Delivery. |
 | `queue_dead_lettered` | Inspect the failure and payload expiry before deciding whether replay is valid. |
 | `quota_exhausted`, `admission_saturated`, `admission_waiters`, `admission_rejected`, `streams_saturated` | Reduce load, close unused streams, or deliberately revise Workspace quotas. |
-| `backup_unavailable`, `backup_stale` | Run `scripts/backup.sh`; verify `/backups` contains completed checkpoints for this database identity. Check repository permissions and the backup schedule. |
+| `backup_unavailable`, `backup_stale` | Run `scripts/backup.sh --fenced`; verify `/backups/health.json` reports a completed checkpoint for this database identity. Check repository permissions and the backup schedule. See the [receipt contract](../../infra/backup/README.md). |
 | `archive_unavailable`, `archive_stale` | Check `pg_stat_archiver`, the backup mount, free space and archive-command errors. |
 | `disk_unavailable`, `disk_sample_unavailable`, `disk_growth_warming_up`, `disk_sample_stale` | Check database access, blob-directory permissions and `operations.disk_sample_failed` logs. Growth needs two samples, about two minutes after startup; a fresh installation treats initial growth as known-empty. |
 | `disk_growth_high` | Inspect database/table and filesystem-blob growth, retention backlog and remaining host volume capacity. |
