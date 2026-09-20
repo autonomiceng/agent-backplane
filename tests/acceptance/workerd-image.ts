@@ -164,25 +164,28 @@ try {
   await docker("rm", "--force", container);
   container = await start("", image);
   address = (await docker("port", container, "8080")).split("\n")[0];
-  let bare = createComputeLauncher({ url: `http://${address}`, token, runtimeDigest });
-  assert(bare);
-  async function waitIdentity(controlHash: string) {
+  async function waitIdentity(controlHash: string): Promise<string> {
     const until = performance.now() + 15000;
     while (performance.now() < until) {
       try {
         // Automatic OOM recovery can finish after the caller first reads the old port.
         // Resolve the mapping from the captured container on every recovery attempt.
         address = (await docker("port", container, "8080")).split("\n")[0];
+        assert(address, "owned runtime has no published port");
         const response = await fetch(`http://${address}/identity`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.any([interrupted.signal, AbortSignal.timeout(1000)]), redirect: "error" });
         await response.body?.cancel();
-        if (response.status === 204 && response.headers.get("x-backplane-control") === controlHash) return;
-      } catch { /* Runtime restart is bounded by the deadline. */ }
+        if (response.status === 204 && response.headers.get("x-backplane-control") === controlHash) return address;
+      } catch (error) {
+        if (interrupted.signal.aborted) throw error;
+        // Runtime restart is bounded by the deadline.
+      }
       await Bun.sleep(100);
     }
     assert.fail("runtime identity startup deadline exceeded");
   }
   const controlHash = await readControlSurfaceHash();
-  await waitIdentity(controlHash);
+  let bare = createComputeLauncher({ url: `http://${await waitIdentity(controlHash)}`, token, runtimeDigest });
+  assert(bare);
   // The binary/control are unchanged, but the replacement no longer declares an image ID.
   assert.deepEqual(await bare.prepare(value, AbortSignal.any([interrupted.signal, AbortSignal.timeout(5000)]), operationEvidence), { ok: false, reason: "compute_unavailable" });
   assert(bare.invoke);
@@ -195,20 +198,16 @@ try {
   await appendFile(join(controlDirectory, "loader.js"), "\n// control identity drift fixture\n");
   await docker("restart", container);
   // Docker may allocate a different ephemeral published port on restart.
-  address = (await docker("port", container, "8080")).split("\n")[0];
-  bare = createComputeLauncher({ url: `http://${address}`, token, runtimeDigest });
+  bare = createComputeLauncher({ url: `http://${await waitIdentity(await readControlSurfaceHash(pathToFileURL(controlDirectory + "/")))}`, token, runtimeDigest });
   assert(bare);
-  await waitIdentity(await readControlSurfaceHash(pathToFileURL(controlDirectory + "/")));
   assert.deepEqual(await bare.prepare(value, AbortSignal.any([interrupted.signal, AbortSignal.timeout(5000)]), bareEvidence), { ok: false, reason: "compute_unavailable" });
   assert(bare.invoke);
   await assert.rejects(bare.invoke({ manifest: value, props, input: null }, AbortSignal.any([interrupted.signal, AbortSignal.timeout(5000)]), bareEvidence), /compute_unavailable/);
   assert.equal(await bare.verify(AbortSignal.any([interrupted.signal, AbortSignal.timeout(5000)])), null, "changed loader must be refused");
   await copyFile(`${root}/apps/server/compute/workerd/loader.js`, join(controlDirectory, "loader.js"));
   await docker("restart", container);
-  address = (await docker("port", container, "8080")).split("\n")[0];
-  bare = createComputeLauncher({ url: `http://${address}`, token, runtimeDigest });
+  bare = createComputeLauncher({ url: `http://${await waitIdentity(controlHash)}`, token, runtimeDigest });
   assert(bare);
-  await waitIdentity(controlHash);
   assert.deepEqual(await bare.verify(AbortSignal.any([interrupted.signal, AbortSignal.timeout(5000)])), bareEvidence);
   assert((await bare.prepare(value, AbortSignal.any([interrupted.signal, AbortSignal.timeout(5000)]), bareEvidence)).ok, "restored control surface must accept the original deployment without redeploy");
   if (Bun.argv.includes("--lifecycle")) {
