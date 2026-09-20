@@ -92,6 +92,7 @@ Each runs alone. Shared conventions live in the gateway's [docs/conventions.md](
 
 ## Day two
 
+- [Agent client setup](skills/backplane/references/client-setup.md)
 - [Browser URLs and HTTPS](docs/operations/ingress.md)
 - [Backup, restore and the drill](infra/backup/README.md)
 - [Bootstrap and recovery](infra/bootstrap/README.md)
