@@ -66,7 +66,7 @@ import checkpoint as cp
 root = tempfile.TemporaryDirectory()
 p = Path(root.name)
 refs = {'postgres':'pg:experiment', 'server':'server:local', 'edge':'caddy:experiment',
-        'backup-init':'pg:experiment', 'migrate':'server:local', 'data-init':'server:local'}
+        'backup-init':'pg:experiment', 'migrate':'server:local', 'data-init':'server:local', 'storage-init':'server:local'}
 ids = {'pg:experiment':'sha256:pg', 'server:local':'sha256:server', 'caddy:experiment':'sha256:edge'}
 digests = {'pg:experiment':'pg@sha256:'+'a'*64, 'caddy:experiment':'caddy@sha256:'+'b'*64}
 ids.update({digest:ids[ref] for ref,digest in digests.items()})
@@ -132,6 +132,10 @@ test("restore resolves recorded immutable content and rejects unavailable or dif
   await python(imageFixture + `
 stack = cp.Stack(p/'.env'); recorded = stack.images
 running = False
+(p/'manifest.json').write_text(json.dumps({'images':recorded,'artifacts':{},'after':{'schema':31}}))
+try: cp.Stack(p/'.env', p)
+except ValueError as error: assert 'matching pre-upgrade checkout' in str(error)
+else: raise AssertionError('old runtime was sent through newer initialization')
 (p/'manifest.json').write_text(json.dumps({'images':recorded,'artifacts':{}}))
 def refused(fragment):
  try: cp.Stack(p/'.env', p)
@@ -203,4 +207,86 @@ except ValueError: pass
 else: raise AssertionError('normal backup accepted a stopped server')
 print('offline fence checked')
 `)).toContain('offline fence checked');
+});
+
+
+test("restore gates leftovers before server startup and only retains with explicit consent", async () => {
+  await python(`import json
+from types import SimpleNamespace
+from checkpoint import prepare_restored_storage
+import checkpoint as cp
+calls=[]
+evidence={'intent':{'phase':'ready'},'objects':[{'classification':'unreferenced'}]}
+def dc(*args):
+ calls.append(args)
+ if 'inspect' in args: assert args == ('inspect','--fenced'), args
+ return json.dumps(evidence) if 'inspect' in args else ''
+stack=SimpleNamespace(services={'storage-init':{}}, dc=dc)
+cp.storage_admin=lambda stack,*args: dc(*args)
+try: prepare_restored_storage(stack,'capture-1')
+except RuntimeError as error: assert 'cleanup leftovers' in str(error)
+else: raise AssertionError('leftovers admitted without consent')
+assert not any('reconcile' in call or 'server' in call for call in calls)
+assert calls[0] == ('up','-d','--wait','--wait-timeout','120','--no-build','--pull','never','postgres')
+calls.clear()
+prepare_restored_storage(stack,'capture-1',True)
+assert any('reconcile' in call and '--retain-unreferenced' in call for call in calls)
+assert not any('server' in call for call in calls)
+calls.clear(); evidence['objects'][0]['classification']='retained'
+prepare_restored_storage(stack,'capture-2')
+assert not any('reconcile' in call for call in calls)
+evidence['intent']['phase']='verifying'
+try: prepare_restored_storage(stack,'capture-2',True)
+except RuntimeError as error: assert 'unfinished binding intent' in str(error)
+else: raise AssertionError('unfinished intent overwritten')
+`);
+});
+
+test("capture preserves its original error if source restart also fails", async () => {
+  await python(`import io
+from contextlib import redirect_stderr
+from types import SimpleNamespace
+from checkpoint import resume_source, startup_timeout
+calls=[]
+def dc(*args):
+ calls.append(args)
+ raise RuntimeError('private daemon diagnostic')
+stack=SimpleNamespace(services={'server':{'environment':{'BP_STARTUP_VERIFY_TIMEOUT':'900'}}},dc=dc)
+out=io.StringIO()
+try:
+ try: raise ValueError('fenced database identity changed')
+ finally:
+  with redirect_stderr(out): resume_source(stack,['edge','server'],None,True)
+except ValueError as error: assert str(error)=='fenced database identity changed'
+else: raise AssertionError('capture failure masked')
+assert 'no Checkpoint was completed' in out.getvalue()
+assert '900' in calls[0] and calls[0][-2:]==('server','edge')
+assert 'private daemon' not in out.getvalue()
+try: resume_source(stack,['server'],'completed-capture',False)
+except RuntimeError as error: assert 'completed Checkpoint is retained' in str(error)
+else: raise AssertionError('restart failure ignored')
+for value in ('0','-1','1.5','secret', '86401'):
+ stack.services['server']['environment']['BP_STARTUP_VERIFY_TIMEOUT']=value
+ try: startup_timeout(stack)
+ except ValueError: pass
+ else: raise AssertionError('invalid budget accepted')
+`);
+});
+
+test("restore exposes only a sanitized storage refusal token from Compose diagnostics", async () => {
+  await python(String.raw`from types import SimpleNamespace
+import checkpoint as cp
+stack=SimpleNamespace(compose=['docker','compose'])
+for diagnostic,expected in [('\n{"error":"blob_binding_content_mismatch"}\nprivate secret', 'blob_binding_content_mismatch'),
+                           ('{"error":"/private/secret"}', 'diagnostic unavailable'),
+                           ('not JSON private secret', 'diagnostic unavailable')]:
+ def run(args,**kwargs):
+  assert '-T' in args and '--fenced' in args
+  return SimpleNamespace(returncode=1,stdout='secret',stderr=diagnostic)
+ cp.subprocess.run=run
+ try: cp.storage_admin(stack,'inspect','--fenced')
+ except RuntimeError as error:
+  assert expected in str(error) and 'private' not in str(error) and 'secret' not in str(error)
+ else: raise AssertionError('storage refusal ignored')
+`);
 });

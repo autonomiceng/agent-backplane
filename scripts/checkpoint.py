@@ -65,6 +65,7 @@ class Stack:
         self.config = json.loads(self.dc('config', '--format', 'json'))
         self.project = self.config['name']
         self.services = self.config['services']
+        startup_timeout(self)
         if self.services['server']['environment'].get('BP_BLOB_BACKEND', 'filesystem') != 'filesystem':
             raise ValueError('filesystem checkpoints require BP_BLOB_BACKEND=filesystem; coordinate S3 recovery separately')
         self.backups = Path(next(v['source'] for v in self.services['postgres']['volumes'] if v['target'] == '/backup')).resolve()
@@ -83,11 +84,16 @@ class Stack:
             doc = json.loads((source / 'manifest.json').read_text())
             if doc['artifacts'] != inventory(source):
                 raise ValueError('checkpoint artifacts or checksums differ')
+            captured_schema = doc.get('after', {}).get('schema')
+            if 'storage-init' in self.services and ('storage-init' not in doc['images'] or isinstance(captured_schema, int) and captured_schema < 32):
+                raise ValueError('pre-binding Checkpoint requires the matching pre-upgrade checkout before restore; its archived image has no storage-init command')
             recorded = doc['images']
             if 'server-image.tar' in doc['artifacts']:
                 command(['docker', 'load', '--input', str(source / 'server-image.tar')])
         self.images = {}
         helpers = {'backup-init': 'postgres', 'migrate': 'server', 'data-init': 'server'}
+        if 'storage-init' in self.services:
+            helpers['storage-init'] = 'server'
         for service in ('postgres', 'server', *(['edge'] if 'edge' in self.services else []), *helpers):
             ref = self.services[service]['image']
             expected = recorded.get(service, recorded.get(helpers.get(service))) if recorded is not None else None
@@ -201,6 +207,28 @@ def require_backup_services(running, edge, offline):
         raise ValueError('backup requires running postgres and server')
 
 
+def startup_timeout(stack):
+    value = str(stack.services.get('server', {}).get('environment', {}).get('BP_STARTUP_VERIFY_TIMEOUT', '120'))
+    if not re.fullmatch(r'[0-9]+', value) or not 1 <= int(value) <= 86400:
+        raise ValueError('BP_STARTUP_VERIFY_TIMEOUT must be an integer from 1 to 86400 seconds')
+    return int(value)
+
+
+def resume_source(stack, stopped, completed, capture_failed):
+    if not stopped:
+        return
+    try:
+        stack.dc('start', '--wait', '--wait-timeout', str(startup_timeout(stack)), *reversed(stopped))
+    except RuntimeError:
+        state = 'the completed Checkpoint is retained' if completed else 'no Checkpoint was completed'
+        message = f'source services could not be resumed and verified; {state}. Inspect service state and logs; startup may still be verifying stored bytes'
+        if capture_failed:
+            # Keep the original capture failure as the primary error.
+            print(message, file=sys.stderr, flush=True)
+        else:
+            raise RuntimeError(message) from None
+
+
 def backup(stack, offline=False):
     stack.attest()
     if any('@' not in image['reference'] for name, image in stack.images.items() if name in ('postgres', 'edge')):
@@ -225,6 +253,8 @@ def backup(stack, offline=False):
     dest = stack.backups / 'backups' / name
     target = '/backup/backups/' + name
     stopped = []
+    completed = None
+    capture_failed = True
     try:
         for service in ('edge', 'server'):
             if service in running:
@@ -279,6 +309,7 @@ def backup(stack, offline=False):
         (dest / '.manifest.json.tmp').rename(dest / 'manifest.json')
         dest.chmod(0o711)
         command(['sync', '-f', str(dest)])
+        completed = dest
         boundaries = prune_checkpoints(stack.backups / 'backups', stack.keep,
             lambda path: stack.helper('rm -rf -- "$1"', '/backup/backups/' + path.name))
         for timeline, boundary in boundaries.items():
@@ -291,10 +322,10 @@ def backup(stack, offline=False):
                 done
             ''', f'{timeline:08X}', boundary)
         print(dest)
+        capture_failed = False
         return dest
     finally:
-        if stopped:
-            stack.dc('start', *reversed(stopped))
+        resume_source(stack, stopped, completed, capture_failed)
 
 
 def verify(source, stack):
@@ -324,7 +355,41 @@ def verify(source, stack):
     return doc
 
 
-def restore(stack, source):
+def storage_admin(stack, *args):
+    result = subprocess.run(stack.compose + ['run', '--rm', '--no-deps', '-T', 'storage-init',
+                            'bun', 'apps/server/blobs/storage-admin.ts', *args],
+                            capture_output=True, text=True, cwd=ROOT)
+    if result.returncode:
+        token = 'diagnostic unavailable; use the fenced storage runbook'
+        for line in reversed(result.stderr.splitlines()):
+            if len(line) > 256:
+                continue
+            try:
+                doc = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(doc, dict) and re.fullmatch(r'blob_binding_[a-z_]{1,80}', str(doc.get('error', ''))):
+                token = doc['error']
+                break
+        raise RuntimeError('storage initialization refused: ' + token)
+    return result.stdout
+
+
+def prepare_restored_storage(stack, checkpoint, retain_unreferenced=False):
+    if 'storage-init' not in stack.services:
+        return
+    stack.dc('up', '-d', '--wait', '--wait-timeout', str(startup_timeout(stack)),
+             '--no-build', '--pull', 'never', 'postgres')
+    evidence = json.loads(storage_admin(stack, 'inspect', '--fenced'))
+    if (evidence.get('intent') or {}).get('phase') != 'ready':
+        raise RuntimeError('restored storage has an unfinished binding intent; keep the server stopped and retry its original operator command before starting')
+    if any(ref['classification'] == 'unreferenced' for ref in evidence['objects']):
+        if not retain_unreferenced:
+            raise RuntimeError('restored storage contains cleanup leftovers; server remains stopped. Reconcile the restored capture with --retain-unreferenced before starting, or restore fresh targets with that explicit flag')
+        storage_admin(stack, 'reconcile', '--fenced', '--checkpoint', checkpoint, '--retain-unreferenced')
+
+
+def restore(stack, source, retain_unreferenced=False):
     source = source.resolve()
     doc = verify(source, stack)
     if stack.dc('ps', '-aq'):
@@ -380,8 +445,9 @@ def restore(stack, source):
         rm -rf "$1/checkpoint-wal"
         mv "$1/checkpoint.auto.conf" "$1/postgresql.auto.conf"
     ''', data, gate, mounts=pgmount, user='postgres')
+    prepare_restored_storage(stack, doc['name'], retain_unreferenced)
     stack.dc('up', '-d', '--no-build', '--pull', 'never', 'server')
-    deadline = time.monotonic() + 120
+    deadline = time.monotonic() + startup_timeout(stack)
     while time.monotonic() < deadline:
         try:
             ready = json.loads(stack.dc('exec', '-T', 'server', 'curl', '-sS', 'http://localhost:3000/health/ready'))
@@ -401,9 +467,12 @@ def main():
     parser.add_argument('checkpoint', nargs='?', type=Path)
     parser.add_argument('--env-file', type=Path, default=ROOT / '.env')
     parser.add_argument('--offline', action='store_true', help='capture a fenced stopped server without restarting it')
+    parser.add_argument('--retain-unreferenced', action='store_true', help='explicitly retain restored cleanup leftovers before starting the server')
     args = parser.parse_args()
     if args.offline and args.action != 'backup':
         parser.error('--offline is only valid for backup')
+    if args.retain_unreferenced and args.action != 'restore':
+        parser.error('--retain-unreferenced is only valid for restore')
     os.umask(0o077)
     lock_path = args.env_file.with_suffix(args.env_file.suffix + '.lock')
     with lock_path.open('x'):
@@ -416,7 +485,7 @@ def main():
                 else:
                     if args.checkpoint is None:
                         raise ValueError('checkpoint path required')
-                    restore(stack, args.checkpoint)
+                    restore(stack, args.checkpoint, args.retain_unreferenced)
         finally:
             lock_path.unlink()
 
