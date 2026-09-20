@@ -2,12 +2,14 @@
 import type { Pool } from "../platform/pool.ts";
 import { bindingBytes, type Binding, type BindingStore } from "./storage-binding.ts";
 import { storageInventory } from "./storage-inventory.ts";
+import { migrationGate } from "./storage-migration-gate.ts";
 import { storageLease } from "./storage-lease.ts";
 export type AdoptionOptions = { mode: "initialize" | "adopt" | "reconcile" | "inspect"; fenced: boolean; checkpoint: string; retain: boolean };
 type Intent = Binding & { intent_kind: string | null; checkpoint_ref: string | null; retain_unreferenced: boolean; inventory_sha256: string | null };
 const mismatch = () => { throw new Error("blob_binding_intent_mismatch"); };
 export async function adoptStorage(pool: Pool, store: BindingStore, options: AdoptionOptions, databaseTimeoutMs?: number) {
   if (options.mode !== "initialize" && (!options.fenced || options.mode !== "inspect" && !/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/.test(options.checkpoint))) throw new Error("blob_binding_checkpoint_and_fence_required");
+  await migrationGate(pool, options.mode === "inspect");
   // A repeated bootstrap never writes a ready binding, including when the server is running.
   if (options.mode === "initialize") {
     const rows = await pool<Intent[]>`SELECT * FROM control.blob_storage_binding`;
@@ -33,6 +35,7 @@ export async function adoptStorage(pool: Pool, store: BindingStore, options: Ado
     await checkFence();
     const prepared = await lease.session.begin(async tx => {
       await tx`LOCK TABLE control.blobs,control.blob_storage_binding,control.blob_storage_retained IN SHARE ROW EXCLUSIVE MODE`;
+      const migration = await migrationGate(tx, options.mode === "inspect");
       const rows = await tx<Intent[]>`SELECT * FROM control.blob_storage_binding`;
       if (rows.length > 1) throw new Error("blob_binding_ambiguous");
       let intent = rows[0];
@@ -41,7 +44,7 @@ export async function adoptStorage(pool: Pool, store: BindingStore, options: Ado
       if (marker && (!intent || !bindingBytes(intent).equals(marker))) mismatch();
       if (intent?.phase === "ready" && !marker) throw new Error("blob_binding_marker_missing");
       const inventory = await storageInventory(tx, store, true, !intent && !marker || intent?.phase === "verifying");
-      if (options.mode === "inspect") return { intent, inventory };
+      if (options.mode === "inspect") return { intent, inventory, migration };
       if (!intent && inventory.objects.some(ref => ref.classification === "retained")) mismatch();
       if (options.mode === "initialize") {
         const [data] = await tx`SELECT EXISTS(SELECT FROM control.workspaces) OR EXISTS(SELECT FROM control."user") AS present`;
@@ -57,7 +60,7 @@ export async function adoptStorage(pool: Pool, store: BindingStore, options: Ado
           // A successful command is idempotent only with its exact saved evidence and content.
           if (!intent || intent.intent_kind !== options.mode || intent.checkpoint_ref !== options.checkpoint
             || intent.retain_unreferenced !== options.retain || intent.inventory_sha256 !== inventory.digest) mismatch();
-          return { intent, inventory };
+          return { intent, inventory, migration };
         }
         if (inventory.objects.some(ref => ref.classification === "unreferenced") && !options.retain) throw new Error("blob_binding_unreferenced_requires_retention");
         if (!intent) {
@@ -73,9 +76,9 @@ export async function adoptStorage(pool: Pool, store: BindingStore, options: Ado
             VALUES(${ref.workspace},${ref.id},${Boolean(ref.staging)},${ref.size},${ref.hash})`;
         }
       }
-      return { intent, inventory };
+      return { intent, inventory, migration };
     });
-    if (options.mode === "inspect") return { status: "inspected", ...prepared.inventory,
+    if (options.mode === "inspect") return { status: "inspected", ...prepared.inventory, migration: prepared.migration,
       binding: prepared.intent ? {
         databaseId: prepared.intent.database_id, storeId: prepared.intent.store_id,
         generation: prepared.intent.generation, backend: prepared.intent.backend, phase: prepared.intent.phase,
