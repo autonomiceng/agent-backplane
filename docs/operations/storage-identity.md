@@ -71,12 +71,16 @@ With the reviewed matching image built or loaded, apply the repository migration
 without starting the server, then inspect the store:
 
 ```sh
-deployment_compose up -d --no-deps --no-build migrate data-init
-for service in migrate data-init; do
-  container=$(deployment_compose ps -aq "$service")
-  test -n "$container" && test "$(docker wait "$container")" = 0 || exit 1
-done
-storage_operator inspect --fenced
+adoption_tasks_ok() {
+  deployment_compose up -d --no-deps --no-build migrate data-init || return 1
+  for service in migrate data-init; do
+    container=$(deployment_compose ps -aq "$service") || return 1
+    # Exactly one container ID is required for each one-shot service.
+    case "$container" in ''|*[!a-f0-9]*) return 1 ;; esac
+    test "$(docker wait "$container")" = 0 || return 1
+  done
+}
+adoption_tasks_ok && storage_operator inspect --fenced
 ```
 
 PostgreSQL must already be healthy. These two tasks finish and exit; `up --wait`
