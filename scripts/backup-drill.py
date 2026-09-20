@@ -5,14 +5,62 @@ import json
 import hashlib
 import os
 from pathlib import Path
+import re
 import secrets
 import shutil
+import subprocess
 import tempfile
 import time
 import sys
 import urllib.request
 import uuid
 from checkpoint import ROOT, Stack, backup, command, restore, inspect_storage, verify, prove_root_credentials, storage_admin
+
+
+def failure_diagnostics(project):
+    # Read only the owned fixture before cleanup. Never print daemon errors or health logs.
+    deadline = time.monotonic() + 15
+    report = {'composeVersion': 'unknown', 'startWaitSupported': None, 'services': []}
+    def read(args):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError()
+        return subprocess.run(args, capture_output=True, text=True, check=True,
+                              timeout=remaining, cwd=ROOT).stdout.strip()
+    try:
+        if not re.fullmatch(r'bp-drill-[0-9a-f]{12}', project):
+            raise ValueError()
+        version = read(['docker', 'compose', 'version', '--short'])
+        if re.fullmatch(r'v?[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}', version):
+            report['composeVersion'] = version
+        help_text = read(['docker', 'compose', 'start', '--help'])
+        report['startWaitSupported'] = bool(re.search(r'^\s+--wait\s', help_text, re.M))
+        ids = read(['docker', 'ps', '-aq', '--no-trunc', '--filter',
+                    'label=com.docker.compose.project=' + project,
+                    '--filter', 'label=com.docker.compose.oneoff=False']).split()
+        if len(ids) > 16 or any(not re.fullmatch(r'[0-9a-f]{64}', cid) for cid in ids):
+            raise ValueError()
+        if ids:
+            fields = ('[{{json (index .Config.Labels "com.docker.compose.project")}},'
+                      '{{json (index .Config.Labels "com.docker.compose.service")}},'
+                      '{{json .State.Status}},'
+                      '{{if .State.Health}}{{json .State.Health.Status}}{{else}}"none"{{end}},'
+                      '{{.State.ExitCode}}]')
+            states = read(['docker', 'inspect', '--format', fields, *ids])
+            for line in states.splitlines():
+                owner, service, state, health, exit_code = json.loads(line)
+                if owner != project or service not in {'postgres', 'server', 'rustfs', 'backup-init',
+                        'migrate', 'data-init', 'storage-init', 'blob-image-check', 'blob-bootstrap'}:
+                    continue
+                report['services'].append(dict(service=service,
+                    state=state if state in {'created', 'running', 'paused', 'restarting', 'removing', 'exited', 'dead'} else 'unknown',
+                    health=health if health in {'none', 'starting', 'healthy', 'unhealthy'} else 'unknown',
+                    exitCode=exit_code if type(exit_code) is int and 0 <= exit_code <= 255 else None))
+    except (subprocess.TimeoutExpired, TimeoutError):
+        report['diagnosticError'] = 'timeout'
+    except Exception:
+        report['diagnosticError'] = 'unavailable'
+    print('checkpoint_drill_failure ' + json.dumps(report), file=sys.stderr, flush=True)
 
 
 def drill(offline=False, s3=False):
@@ -239,6 +287,8 @@ def drill(offline=False, s3=False):
                                   'backend': stack.backend, 'row': 'verified', 'login': 'verified', 'blob': 'verified', 'provenance': 'verified', 'checkpoint': 'verified'}))
         finally:
             primary_error = sys.exc_info()[1]
+            if primary_error is not None:
+                failure_diagnostics(project)
             cleanup_error = None
             for label, args in [('compose down', compose + ['down', '--remove-orphans']),
                                 *((f'volume rm {volume}', ['docker', 'volume', 'rm', volume]) for volume in owned_volumes),
