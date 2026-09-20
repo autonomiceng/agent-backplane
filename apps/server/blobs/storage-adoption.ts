@@ -6,7 +6,7 @@ import { storageLease } from "./storage-lease.ts";
 export type AdoptionOptions = { mode: "initialize" | "adopt" | "reconcile" | "inspect"; fenced: boolean; checkpoint: string; retain: boolean };
 type Intent = Binding & { intent_kind: string | null; checkpoint_ref: string | null; retain_unreferenced: boolean; inventory_sha256: string | null };
 const mismatch = () => { throw new Error("blob_binding_intent_mismatch"); };
-export async function adoptStorage(pool: Pool, store: BindingStore, options: AdoptionOptions) {
+export async function adoptStorage(pool: Pool, store: BindingStore, options: AdoptionOptions, databaseTimeoutMs?: number) {
   if (options.mode !== "initialize" && (!options.fenced || options.mode !== "inspect" && !/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/.test(options.checkpoint))) throw new Error("blob_binding_checkpoint_and_fence_required");
   // A repeated bootstrap never writes a ready binding, including when the server is running.
   if (options.mode === "initialize") {
@@ -19,6 +19,11 @@ export async function adoptStorage(pool: Pool, store: BindingStore, options: Ado
   }
   const lease = await storageLease(pool);
   try {
+    if (databaseTimeoutMs !== undefined) {
+      await lease.session`SELECT set_config('statement_timeout',${String(databaseTimeoutMs)},false),
+        set_config('idle_in_transaction_session_timeout',${String(databaseTimeoutMs)},false),
+        set_config('client_connection_check_interval','100ms',false)`;
+    }
     const checkFence = async () => {
       await lease.assertOwned();
       const [active] = await lease.session`SELECT count(*)::int AS count FROM pg_stat_activity
@@ -70,7 +75,12 @@ export async function adoptStorage(pool: Pool, store: BindingStore, options: Ado
       }
       return { intent, inventory };
     });
-    if (options.mode === "inspect") return { status: "inspected", ...prepared.inventory, intent: prepared.intent ? {
+    if (options.mode === "inspect") return { status: "inspected", ...prepared.inventory,
+      binding: prepared.intent ? {
+        databaseId: prepared.intent.database_id, storeId: prepared.intent.store_id,
+        generation: prepared.intent.generation, backend: prepared.intent.backend, phase: prepared.intent.phase,
+      } : null,
+      intent: prepared.intent ? {
       phase: prepared.intent.phase, operation: prepared.intent.intent_kind,
       checkpoint: prepared.intent.checkpoint_ref, retainUnreferenced: prepared.intent.retain_unreferenced,
     } : null };
