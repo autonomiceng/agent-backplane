@@ -16,8 +16,10 @@ export async function adoptionFixture() {
   const dataDir = await mkdtemp(join(tmpdir(), "bp-adoption-")), store = filesystemStore(dataDir);
   const cleanups: (() => Promise<void>)[] = [];
   const close = async () => {
-    await Promise.all(cleanups.map(cleanup => cleanup()));
-    await admin.close(); await rm(dataDir, { recursive: true, force: true });
+    const results = await Promise.allSettled(cleanups.map(cleanup => cleanup()));
+    results.push(...await Promise.allSettled([admin.close(), rm(dataDir, { recursive: true, force: true })]));
+    const failure = results.find(result => result.status === "rejected");
+    if (failure?.status === "rejected") throw failure.reason;
   };
   try {
     const [schema] = await admin`SELECT to_regclass('control.blob_storage_retained') AS retained`;
@@ -55,5 +57,8 @@ export async function adoptionFixture() {
       finally { await runtime.close(); await waitForStoppedRuntime(); }
     };
     return { url, admin, dataDir, store, legacy, verify, close, operate: (options: AdoptionOptions) => adoptStorage(admin, store, options) };
-  } catch (error) { await close(); throw error; }
+  } catch (error) {
+    try { await close(); } catch { /* Preserve the setup failure after attempting every cleanup. */ }
+    throw error;
+  }
 }

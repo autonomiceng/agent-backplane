@@ -6,6 +6,9 @@ test("operator CLI requires an explicit verb and retains checkpoint/fence eviden
     .toEqual({ mode: "reconcile", fenced: true, checkpoint: "capture-1", retain: true });
   expect(() => storageAdminOptions([])).toThrow();
   expect(() => storageAdminOptions(["initialize", "--retain-unreferenced"])).toThrow();
+  for (const option of [["--checkpoint", "capture"], ["--retain-unreferenced"], ["--checkpoint", ""]]) {
+    expect(() => storageAdminOptions(["inspect", "--fenced", ...option])).toThrow("blob_binding_usage");
+  }
   expect(storageAdminError(new Error("postgres://private-secret"))).toBe("blob_binding_operator_failed");
   expect(storageAdminError(new Error("backup_credential_file_must_be_private_and_owned"))).toBe("blob_binding_operator_credential_invalid");
   expect(storageAdminError(new Error("backup_credential_url_invalid"))).toBe("blob_binding_operator_credential_invalid");

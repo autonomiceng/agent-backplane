@@ -7,11 +7,26 @@ service together before activating the startup check. Startup/Compose activation
 
 ## New installation
 
-Use the normal [preparation command](../../infra/bootstrap/README.md). Its Compose
-startup runs `migrate`, `data-init`, then the shared-image `storage-init` one-shot
-before `server`. No extra secret, bucket, or backend default is introduced.
+Automatic Compose initialization is delivered with the separate startup activation
+slice. This checkout exposes the operator command explicitly. With PostgreSQL
+running, migrations applied, the data directory initialized, and all writers stopped,
+use the deployment Compose selection described below. Place the matching
+PostgreSQL admin URL in a private owner-only file readable by the container's `bun`
+user. The URL must address PostgreSQL on the deployment's private network. Keep its
+contents out of command arguments and shell history. Set
+`STORAGE_ADMIN_CREDENTIAL_FILE` to its absolute host path, then define:
 
-`storage-init` runs `bun apps/server/blobs/storage-admin.ts initialize`. It proves
+```sh
+storage_operator() {
+  deployment_compose run --rm --no-deps -T \
+    -v "$STORAGE_ADMIN_CREDENTIAL_FILE:/run/storage-admin-url:ro" \
+    -e BP_STORAGE_ADMIN_URL_FILE=/run/storage-admin-url \
+    server bun apps/server/blobs/storage-admin.ts "$@"
+}
+storage_operator initialize
+```
+
+The command inherits the server's selected backend settings and data mount. It proves
 there are no Users, Workspaces, referenced bytes, retained bytes, or conflicting
 marker. It commits a `verifying` intent, conditionally publishes the marker,
 rechecks the complete inventory, then commits `ready`. A repeated bootstrap with a
@@ -52,8 +67,7 @@ without starting the server, then inspect the store:
 
 ```sh
 deployment_compose up --wait migrate data-init
-deployment_compose run --rm --no-deps storage-init \
-  bun apps/server/blobs/storage-admin.ts inspect --fenced
+storage_operator inspect --fenced
 ```
 
 `--fenced` and, for mutating adoption/reconciliation, `--checkpoint` are explicit operator attestations. Inspection requires fencing but no checkpoint reference. The checkpoint ID
@@ -68,15 +82,13 @@ Inspection outputs object IDs, physical staging status, size, SHA-256 and one of
 keys, credentials, endpoints or signed URLs. To adopt an unbound legacy store:
 
 ```sh
-deployment_compose run --rm --no-deps storage-init \
-  bun apps/server/blobs/storage-admin.ts adopt --fenced --checkpoint CAPTURE_ID
+storage_operator adopt --fenced --checkpoint CAPTURE_ID
 ```
 
 If inspection reports unreferenced or staging bytes, explicitly preserve them:
 
 ```sh
-deployment_compose run --rm --no-deps storage-init \
-  bun apps/server/blobs/storage-admin.ts adopt --fenced --checkpoint CAPTURE_ID \
+storage_operator adopt --fenced --checkpoint CAPTURE_ID \
   --retain-unreferenced
 ```
 
@@ -84,8 +96,7 @@ For an already bound installation with normal crash leftovers, use `reconcile`
 instead of `adopt`, after a new fenced capture:
 
 ```sh
-deployment_compose run --rm --no-deps storage-init \
-  bun apps/server/blobs/storage-admin.ts reconcile --fenced --checkpoint CAPTURE_ID \
+storage_operator reconcile --fenced --checkpoint CAPTURE_ID \
   --retain-unreferenced
 deployment_compose up -d --wait server
 ```

@@ -10,7 +10,7 @@ export function storageAdminOptions(argv: string[]): AdoptionOptions {
   } });
   const mode = positionals[0];
   if (positionals.length !== 1 || mode !== "initialize" && mode !== "adopt" && mode !== "reconcile" && mode !== "inspect") throw new Error("blob_binding_usage");
-  if (mode === "initialize" && (values.checkpoint || values["retain-unreferenced"])) throw new Error("blob_binding_usage");
+  if ((mode === "initialize" || mode === "inspect") && (values.checkpoint !== undefined || values["retain-unreferenced"] !== undefined)) throw new Error("blob_binding_usage");
   return { mode, fenced: values.fenced ?? false, checkpoint: values.checkpoint ?? "", retain: values["retain-unreferenced"] ?? false };
 }
 export function storageAdminError(error: unknown) {

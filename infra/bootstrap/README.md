@@ -51,9 +51,9 @@ A stale `.lock` requires investigation. Confirm no preparation or bootstrap proc
 
 Exit codes: `0` complete, `1` usage or invalid input, `2` server not ready or recovery required (adoption, capability or identity), `3` ambiguous issuance. A readiness probe waits up to 120 seconds.
 
-Storage initialization runs as the shared-image `storage-init` one-shot after
-migrations and data-directory ownership setup. It initializes only an empty store
-and empty installation, then server startup performs read-only identity and content
-verification. Existing unbound installations require the explicit fenced
-[adoption procedure](../../docs/operations/storage-identity.md). Crash leftovers can
-be recorded for permanent retention without deleting or moving their bytes.
+Storage initialization is an explicit operator command in this checkout. Automatic
+Compose initialization and startup verification are delivered together in the
+separate activation slice. The [storage identity procedure](../../docs/operations/storage-identity.md)
+provides `storage_operator initialize` for an empty store and empty installation,
+and fenced adoption for an existing unbound installation. Crash leftovers can be
+recorded for permanent retention without deleting or moving their bytes.
