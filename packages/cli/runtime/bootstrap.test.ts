@@ -57,7 +57,7 @@ test("rerun overwrites secrets or repeats provisioning after an interrupted crea
     const runner: Runner = async (args, env) => args.includes("config") ? JSON.stringify({ services: {
       server: { environment: { BP_BLOB_BACKEND: env.COMPOSE_PROFILES?.split(",").includes("blobs") ? "s3" : "filesystem" } },
       "storage-init": { environment: { BP_BLOB_BACKEND: env.COMPOSE_PROFILES?.split(",").includes("blobs") ? "s3" : "filesystem" } },
-    } }) : args[0] === "image" ? `sha256:${"e".repeat(64)} amd64` : args[0] === "run" ? `${"d".repeat(64)}  /usr/bin/workerd` : args[0] === "context" ? "unix:///var/run/docker.sock" : args[0] === "volume" ? existingVolume ? "existing-data" : "" : args.at(-1) === "/data/enrollment/capability" ? secret : args.some(arg => arg.includes("curl")) ? JSON.stringify({ enrollment: { state: "pending" } }) : "";
+    } }) : args[0] === "image" ? `sha256:${"e".repeat(64)} amd64` : args[0] === "run" ? args.at(-1) === "--version" ? args.includes("/usr/bin/bun") ? "1.4.2" : "workerd 2026-09-18" : `${"d".repeat(64)}  /usr/bin/workerd\na83d263767d839e4d2649ca8e35d07159c7afc99afdc96d731ced29e056dda0c  /usr/bin/bun` : args[0] === "context" ? "unix:///var/run/docker.sock" : args[0] === "volume" ? existingVolume ? "existing-data" : "" : args.at(-1) === "/data/enrollment/capability" ? secret : args.some(arg => arg.includes("curl")) ? JSON.stringify({ enrollment: { state: "pending" } }) : "";
     const args = ["--env-file", envPath, "--backup-dir", f.directory, "--public-url", "http://localhost:3000", "--capability-file", capability];
     const unrelated = 'UNRELATED=${KEEP_THIS}\nUNRELATED=again\nOTHER=`untouched`\nBP_CUSTOM=${UNMANAGED}\n';
     await privateWrite(envPath, unrelated);
