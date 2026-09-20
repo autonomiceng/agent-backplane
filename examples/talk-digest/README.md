@@ -71,7 +71,7 @@ For each real catalog entry, fetch its direct author or event transcript page wi
 
 ## Analyst procedure
 
-This is also gated demo work. Run it only after the collector handoff and an explicit release from the demo owner. Use the analyst Principal's credential file and a new session/cache. Keep every claimed transcript, claim state, authored summary, invocation response, and proof under the private data directory. The claim state contains the Receipt and must never be committed, uploaded, copied into the page, or used after expiry.
+After the collector handoff, use the analyst Principal's credential file and a new session/cache. Keep every claimed transcript, claim state, authored summary, invocation response, and proof under the private data directory. The claim state contains the Receipt and must never be committed, uploaded, copied into the page, or used after expiry.
 
 ```bash
 export BACKPLANE_REPO=/absolute/path/to/agent-backplane
@@ -113,7 +113,7 @@ bun "$BACKPLANE_REPO/examples/talk-digest/analyst.ts" complete \
 bun "$BACKPLANE_REPO/examples/talk-digest/analyst.ts" deploy "$BP_DATA_DIR/proof.json"
 ```
 
-The Function has no arbitrary external URL allowlist. On invocation it uses the supported internal callback and its temporary invocation credential to read the completed Workspace rows as the deploying analyst Principal. It returns `{html, metadata}` as authenticated invocation JSON and makes no anonymous-hosting promise. A root or collector Principal should perform the cross-Principal invocation in its separately configured CLI environment and save its response. Then restore the analyst environment before running `publish`:
+The Function has no arbitrary external URL allowlist. On invocation it uses the supported internal callback and its temporary invocation credential to read the completed Workspace rows as the deploying analyst Principal. It returns `{html, metadata}` as authenticated invocation JSON and makes no anonymous-hosting promise. The collector Principal should perform the cross-Principal invocation in its separately configured CLI environment and save its response. Then restore the analyst environment before running `publish`:
 
 ```bash
 bp functions invoke-function --name talk-digest-review --body - >/absolute/private/invocation.json <<JSON
