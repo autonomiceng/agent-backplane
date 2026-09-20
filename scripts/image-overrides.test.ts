@@ -22,6 +22,7 @@ async function config(settings: string[] = [], overlays = ["edge"]) {
   } finally { await rm(directory, { recursive: true, force: true }); }
 }
 
+// Three real Compose processes need startup time on shared CI runners.
 test("native image defaults survive empty settings and accept complete references", async () => {
   const defaults = await config();
   expect(defaults.postgres.image).toMatch(/^postgres:18\.6@sha256:[a-f0-9]{64}$/);
@@ -34,7 +35,7 @@ test("native image defaults survive empty settings and accept complete reference
   expect(override.postgres.image).toBe("registry.example:5000/postgres:experiment");
   expect(override.server.image).toBe("local-server:dev");
   expect(override.edge.image).toBe(`mirror/caddy@sha256:${"b".repeat(64)}`);
-});
+}, 15000);
 
 test("helpers inherit server and PostgreSQL references including the internal gateway", async () => {
   const services = await config(["BP_POSTGRES_IMAGE=pg-local", "BP_SERVER_IMAGE=server-local", "BP_CADDY_IMAGE=caddy-local"], ["gateway", "blobs"]);
