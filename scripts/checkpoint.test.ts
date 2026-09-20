@@ -298,6 +298,10 @@ for diagnostic,expected in [('\n{"error":"blob_binding_content_mismatch"}\npriva
  except RuntimeError as error:
   assert expected in str(error) and 'private' not in str(error) and 'secret' not in str(error)
  else: raise AssertionError('storage refusal ignored')
+cp.subprocess.run=lambda *args,**kwargs: SimpleNamespace(returncode=1,stdout='',stderr='  checkpoint_proof_authentication \r\n')
+try: cp.command(['docker','compose'])
+except RuntimeError as error: assert str(error)=='checkpoint_proof_authentication'
+else: raise AssertionError('credential refusal ignored')
 `);
 });
 
@@ -486,6 +490,20 @@ assert cp.inspect_storage(stack,True)=={'backend':'filesystem','inspection':'fai
 try: cp.inspect_storage(stack,False)
 except RuntimeError: pass
 else: raise AssertionError('normal filesystem capture bypassed proof')
+def deadline(*args): raise RuntimeError('storage initialization refused: blob_binding_inspection_timeout')
+cp.storage_admin=deadline
+try: cp.inspect_storage(stack,True)
+except RuntimeError as error: assert 'blob_binding_inspection_timeout' in str(error)
+else: raise AssertionError('deadline became a forensic checkpoint')
+def config(*args): raise RuntimeError('storage initialization refused: blob_binding_inspection_budget_invalid')
+cp.storage_admin=config
+try: cp.inspect_storage(stack,True)
+except RuntimeError as error: assert 'blob_binding_inspection_budget_invalid' in str(error)
+else: raise AssertionError('invalid helper budget became a forensic checkpoint')
+stack.services['server']['environment']['BP_STARTUP_VERIFY_TIMEOUT']='0'
+try: cp.inspect_storage(stack,True)
+except ValueError as error: assert 'BP_STARTUP_VERIFY_TIMEOUT' in str(error)
+else: raise AssertionError('invalid operator budget became a forensic checkpoint')
 `);
 });
 
@@ -520,9 +538,9 @@ import subprocess
 stack=cp.Stack(p/'.env')
 name='bp_'+'a'*32
 salt=cp.os.urandom(32).hex()
-proof=cp.credentials_digest(stack,salt)
-assert proof!=cp.credentials_digest(stack,cp.os.urandom(32).hex())
-assert proof==cp.credentials_digest(stack,salt)
+proof=cp.credentials_digest(stack,name,salt)
+assert proof!=cp.credentials_digest(stack,name,cp.os.urandom(32).hex())
+assert proof==cp.credentials_digest(stack,name,salt)
 snapshot={'systemId':'1','postgres':'180006','schema':32,'pgmq':'1','timeline':1,'heads':[]}
 (p/'manifest.json').write_text(json.dumps({'version':1,'name':name,'targetLsn':'0/1','segment':'0'*24,
  'before':snapshot,'after':snapshot,'images':stack.images,'volumes':list(stack.stores),'artifacts':{},'credentials':{'kdf':'pbkdf2-hmac-sha256','iterations':600000,'salt':salt,'digest':proof}}))
@@ -537,7 +555,17 @@ try: cp.verify(p,stack)
 except ValueError as error: assert 'captured RustFS root and scoped credentials' in str(error)
 else: raise AssertionError('wrong scoped credentials admitted')
 stack.services['blob-bootstrap']['environment']['BP_BLOB_S3_SECRET_KEY']='private-scoped-secret'
-doc=json.loads((p/'manifest.json').read_text()); doc['credentials']['salt']='not-a-salt'
+doc=json.loads((p/'manifest.json').read_text()); doc['name']='bp_'+'b'*32
+(p/'manifest.json').write_text(json.dumps(doc))
+try: cp.verify(p,stack)
+except ValueError as error: assert 'captured RustFS root and scoped credentials' in str(error)
+else: raise AssertionError('commitment spliced into another checkpoint')
+doc['name']=name; doc['credentials']['iterations']=10**12
+(p/'manifest.json').write_text(json.dumps(doc))
+try: cp.verify(p,stack)
+except ValueError as error: assert 'captured RustFS root and scoped credentials' in str(error)
+else: raise AssertionError('unbounded recorded KDF cost admitted')
+doc['credentials']['iterations']=600000; doc['credentials']['salt']='not-a-salt'
 (p/'manifest.json').write_text(json.dumps(doc))
 try: cp.verify(p,stack)
 except ValueError as error: assert 'captured RustFS root and scoped credentials' in str(error)

@@ -60,7 +60,12 @@ two full passes plus physical capture; each pass uses `BP_STARTUP_VERIFY_TIMEOUT
 and terminates its own helper on expiry with `blob_binding_inspection_timeout`.
 
 The private credential commitment uses a fresh 32-byte random salt and
-PBKDF2-HMAC-SHA256 with 600,000 iterations over the exact root and scoped values.
+PBKDF2-HMAC-SHA256 with 600,000 iterations over the checkpoint name and exact root
+and scoped values. This format accepts only that fixed cost; a future cost change
+requires an explicitly supported format. Arbitrary recorded costs are refused to
+bound work on untrusted manifests. Pre-fix S3 checkpoints with `credentialsSha256`
+or a commitment without the checkpoint name require recapture; their restore refusal
+uses the same captured-credentials diagnostic.
 Use generated credentials and retain their originals in protected recovery custody.
 The drill generates 32-character hexadecimal values accepted by the shipped RustFS
 runtime. Choose generated values within that runtime's accepted credential lengths;

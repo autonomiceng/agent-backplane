@@ -47,6 +47,8 @@ async function backupManifest(dir: string | undefined, systemId: string | undefi
       || typeof m.restorePoint.name!=="string" || !/^(?:bp_[a-f0-9]{32}|[0-9]{8}T[0-9]{12}Z)$/.test(m.restorePoint.name)
       || typeof m.restorePoint.lsn!=="string" || !/^[0-9A-F]+\/[0-9A-F]+$/.test(m.restorePoint.lsn)
       || typeof m.restorePoint.timeline!=="number" || !Number.isSafeInteger(m.restorePoint.timeline) || m.restorePoint.timeline<=0) throw new Error("backup_receipt_invalid");
+    const checkpoint=await lstat(join(root,m.restorePoint.name));
+    if (!checkpoint.isDirectory() || checkpoint.isSymbolicLink()) throw new Error("backup_receipt_checkpoint_missing");
     return {completedAt:m.completedAt,restorePoint:{name:m.restorePoint.name,lsn:m.restorePoint.lsn,timeline:m.restorePoint.timeline}};
   }
   const paths: string[] = [join(root,"manifest.json")];

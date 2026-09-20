@@ -75,7 +75,7 @@ def command(args, env=None):
         # Compose diagnostics can contain interpolated credentials.
         tokens = {'checkpoint_proof_' + step for step in ('configuration', 'readiness', 'authentication', 'account', 'versioning')}
         tokens |= {'checkpoint_fixture_' + step for step in ('identity', 'configuration', 'create', 'read')}
-        token = next((line for line in reversed(result.stderr.splitlines()) if line in tokens), None)
+        token = next((line.strip() for line in reversed(result.stderr.splitlines()) if line.strip() in tokens), None)
         if token:
             raise RuntimeError(token)
         raise RuntimeError(f'{Path(args[0]).name} command failed (exit {result.returncode})')
@@ -112,15 +112,19 @@ def publish_checkpoint(dest, doc):
         os.fchmod(file.fileno(), 0o600); os.fsync(file.fileno())
     (dest / '.manifest.json.tmp').rename(dest / 'manifest.json')
     command(['sync', '-f', str(dest)])
+    publish_health(dest.parent, doc)
+
+
+def publish_health(root, doc):
     receipt = dict(version=1, systemId=doc['after']['systemId'], completedAt=doc['completedAt'],
                    restorePoint=dict(name=doc['name'], lsn=doc['targetLsn'], timeline=doc['after']['timeline']))
-    fd, temporary = tempfile.mkstemp(prefix='.health-', dir=dest.parent)
+    fd, temporary = tempfile.mkstemp(prefix='.health-', dir=root)
     try:
         with os.fdopen(fd, 'w') as file:
             json.dump(receipt, file); file.write('\n'); file.flush()
             os.fchmod(file.fileno(), 0o644); os.fsync(file.fileno())
-        os.replace(temporary, dest.parent / 'health.json')
-        command(['sync', '-f', str(dest.parent)])
+        os.replace(temporary, root / 'health.json')
+        command(['sync', '-f', str(root)])
     finally:
         Path(temporary).unlink(missing_ok=True)
 
@@ -452,7 +456,7 @@ def backup(stack, offline=False, fenced=False):
             if volume != 'postgres-data':
                 stack.helper('umask 077; tar --hard-dereference --numeric-owner --xattrs --xattrs-include="*" -C /source -cf "$1" .', f'{target}/{volume}.tar',
                              mounts=('-v', f'{stack.volume(volume)}:/source:ro'))
-        stack.helper('chown "$2:$3" /backup/backups; chown -R "$2:$3" "$1"; chmod -R u+rwX,go-rwx "$1"', target, str(os.getuid()), str(os.getgid()))
+        stack.helper('chown "$2:$3" /backup/backups; chmod a+rx /backup/backups; chown -R "$2:$3" "$1"; chmod -R u+rwX,go-rwx "$1"', target, str(os.getuid()), str(os.getgid()))
         command(['docker', 'save', '--output', str(dest / 'server-image.tar'), stack.images['server']['id']])
         per_log = (1 << 32) // segment_bytes
         first_number = int(first[8:16], 16) * per_log + int(first[16:], 16)
@@ -480,7 +484,7 @@ def backup(stack, offline=False, fenced=False):
         if stack.backend == 's3':
             salt = os.urandom(32).hex()
             doc['credentials'] = dict(kdf='pbkdf2-hmac-sha256', iterations=600000, salt=salt,
-                                      digest=credentials_digest(stack, salt))
+                                      digest=credentials_digest(stack, name, salt))
         doc['walSegmentBytes'] = segment_bytes
         publish_checkpoint(dest, doc)
         completed = dest
@@ -529,7 +533,7 @@ def verify(source, stack):
         if (not isinstance(proof, dict) or proof.get('kdf') != 'pbkdf2-hmac-sha256' or proof.get('iterations') != 600000
                 or not isinstance(proof.get('salt'), str) or not re.fullmatch('[a-f0-9]{64}', proof['salt'])
                 or not isinstance(proof.get('digest'), str) or not re.fullmatch('[a-f0-9]{64}', proof['digest'])
-                or not hmac.compare_digest(proof['digest'], credentials_digest(stack, proof['salt']))):
+                or not hmac.compare_digest(proof['digest'], credentials_digest(stack, doc['name'], proof['salt']))):
             raise ValueError('restore requires the captured RustFS root and scoped credentials')
         if not doc.get('storage') or doc['storage'].get('backend') != 's3' or doc['storage'].get('phase') != 'ready' or doc.get('rustfsExitCode') != 0:
             raise ValueError('S3 checkpoint has no verified source storage proof')
@@ -604,20 +608,25 @@ def storage_evidence(stack, evidence):
 
 
 def inspect_storage(stack, offline=False):
+    startup_timeout(stack)
     try:
         return storage_evidence(stack, json.loads(storage_admin(stack, 'inspect', '--fenced')))
-    except (RuntimeError, ValueError, KeyError):
+    except (RuntimeError, ValueError, KeyError) as error:
+        token = str(error).removeprefix('storage initialization refused: ')
+        if token in {'blob_binding_inspection_timeout', 'blob_binding_inspection_budget_invalid',
+                     'blob_binding_operator_config_required', 'blob_binding_operator_credential_invalid', 'blob_binding_store_timeout'}:
+            raise
         if offline and stack.backend == 'filesystem':
             return {'backend': 'filesystem', 'inspection': 'failed', 'servable': False}
         raise
 
 
-def credentials_digest(stack, salt):
+def credentials_digest(stack, name, salt):
     # RustFS accepts root credentials at process startup. Authentication alone cannot prove
     # they equal the source credentials. Checkpoint-specific commitment prevents silent rotation.
     env = stack.services['blob-bootstrap']['environment']
     values = [env[key] for key in ('BP_RUSTFS_ROOT_USER', 'BP_RUSTFS_ROOT_PASSWORD', 'BP_BLOB_S3_ACCESS_KEY', 'BP_BLOB_S3_SECRET_KEY')]
-    return hashlib.pbkdf2_hmac('sha256', json.dumps(values, separators=(',', ':')).encode(), bytes.fromhex(salt), 600000).hex()
+    return hashlib.pbkdf2_hmac('sha256', json.dumps([name, *values], separators=(',', ':')).encode(), bytes.fromhex(salt), 600000).hex()
 
 
 def prove_root_credentials(stack, environment=()):
@@ -730,6 +739,8 @@ def restore(stack, source, retain_unreferenced=False):
         time.sleep(1)
     else:
         raise RuntimeError('restored server did not expose its recovery API')
+    stack.helper('chown "$1:$2" /backup/backups; chmod a+rx /backup/backups', str(os.getuid()), str(os.getgid()))
+    publish_health(stack.backups / 'backups', doc)
     print('Restore complete. Workspaces remain gated. Release them through the User API, then start the remaining profiles.')
 
 

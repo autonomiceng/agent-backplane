@@ -3,7 +3,7 @@ import { createPool } from "./pool.ts";
 import { sampleDisk } from "./disk-sampler.ts";
 import { expect, test } from "bun:test";
 import { SQL } from "bun";
-import { mkdtemp, rm, utimes, writeFile, readFile, stat, symlink } from "node:fs/promises";
+import { mkdtemp, rm, utimes, writeFile, readFile, stat, symlink, rename } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Elysia } from "elysia";
@@ -123,12 +123,18 @@ publish_checkpoint(dest,doc)
     expect(await observe()).toBeNull();
     await rm(health); await symlink(join(dir,name,"manifest.json"),health);
     expect(await observe()).toBeNull();
+    await rm(health); await writeFile(health,JSON.stringify(receipt));
+    await rename(join(dir,name),join(dir,"saved-checkpoint"));
+    expect(await observe()).toBeNull();
+    await symlink(join(dir,"saved-checkpoint"),join(dir,name));
+    expect(await observe()).toBeNull();
+    await rm(join(dir,name)); await rename(join(dir,"saved-checkpoint"),join(dir,name));
     await rm(health);
     expect(await observe()).toEqual({completedAt:receipt.completedAt,restorePoint:receipt.restorePoint});
   } finally { await pool.close(); await admin.close(); await rm(dir,{recursive:true,force:true}); }
 });
 
-test("inspection deadline releases its database lease and root readiness failures have stable errors", async () => {
+test("reconciliation deadline releases its database lease and root readiness failures have stable errors", async () => {
   const url=adminUrl(await migratedDatabase()), admin=new SQL({url,max:1});
   const dir=await mkdtemp(join(tmpdir(),"bp-checkpoint-deadline-"));
   let child: ReturnType<typeof Bun.spawn> | undefined;
@@ -144,7 +150,7 @@ test("inspection deadline releases its database lease and root readiness failure
     await admin.begin(async tx=>{
       await tx`LOCK TABLE control.blobs IN ACCESS EXCLUSIVE MODE`;
       const started=performance.now();
-      const inspection=Bun.spawn(["bun","apps/server/blobs/storage-admin.ts","inspect","--fenced"],{
+      const inspection=Bun.spawn(["bun","apps/server/blobs/storage-admin.ts","reconcile","--fenced","--checkpoint","capture-1"],{
         cwd:new URL("../../../",import.meta.url).pathname,stdout:"pipe",stderr:"pipe",
         env:{...Bun.env,BP_ADMIN_DATABASE_URL:url,BP_STORAGE_ADMIN_URL_FILE:"",BP_DATA_DIR:dir,BP_BLOB_BACKEND:"filesystem",BP_STARTUP_VERIFY_TIMEOUT:"1"},
       });
