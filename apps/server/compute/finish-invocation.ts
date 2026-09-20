@@ -1,12 +1,13 @@
 // Terminal attempts commit credential deletion even when audit contention requires another attempt.
 import type { ReservedSQL } from "bun";
 import type { Pool } from "../platform/pool.ts";
+export const finalizationBudgetMs = 5000;
 export async function finishInvocation(pool: Pool, runId: string, kind: "function.complete" | "function.fail" | "function.timeout", durationMs: number, status: number | null): Promise<void> {
   const controller = new AbortController();
   let lease: ReservedSQL | undefined, closing: Promise<void> | undefined;
   const close = () => { if (lease) closing ??= lease.close().catch(() => {}); };
   controller.signal.addEventListener("abort", close, { once: true });
-  const timer = setTimeout(() => controller.abort(Error("invocation_finalize_failed")), 5000);
+  const timer = setTimeout(() => controller.abort(Error("invocation_finalize_failed")), finalizationBudgetMs);
   try {
     lease = await pool.reserve({ signal: controller.signal });
     if (controller.signal.aborted) { close(); controller.signal.throwIfAborted(); }
