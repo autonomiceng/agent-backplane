@@ -15,7 +15,7 @@ const MIGRATIONS_DIR = new URL("../../../db/migrations", import.meta.url).pathna
 const START_ATTEMPTS = 5;
 const runtimeLogins = new Map<string, Promise<void>>();
 
-export type TestCluster = { url: string; dataDir: string; binDir: string; stop(): Promise<void> };
+export type TestCluster = { url: string; dataDir: string; binDir: string; restart(): Promise<void>; stop(): Promise<void> };
 
 // Retries on a busy port; keeps the last attempt's diagnostics so a failure explains itself.
 export async function startCluster(settings: string[] = []): Promise<TestCluster> {
@@ -45,7 +45,8 @@ export async function startCluster(settings: string[] = []): Promise<TestCluster
       port,
       user: "postgres",
       password: "postgres",
-      persistent: false,
+      // This fixture owns deletion in stop/exit; library stop must permit a restart.
+      persistent: true,
       onLog: (m) => diagnostics.push(String(m)),
       onError: (m) => diagnostics.push(String(m)),
     });
@@ -55,14 +56,20 @@ export async function startCluster(settings: string[] = []): Promise<TestCluster
       await pg.start();
       // Startup returns before the listener accepts every connection under load; wait until a query succeeds.
       const url = `postgres://postgres:postgres@127.0.0.1:${port}/postgres`;
-      for (let waited = 0; ; waited += 250) {
-        try { const probe = new SQL({ url, max: 1 }); await probe`SELECT 1`; await probe.close(); break; }
-        catch (error) { if (waited >= 15_000) throw error; await Bun.sleep(250); }
+      async function waitReady() {
+        for (let waited = 0; ; waited += 250) {
+          const probe = new SQL({ url, max: 1 });
+          try { await probe`SELECT 1`; return; }
+          catch (error) { if (waited >= 15_000) throw error; await Bun.sleep(250); }
+          finally { await probe.close(); }
+        }
       }
+      await waitReady();
       return {
         dataDir: databaseDir,
         binDir,
         url: `postgres://postgres:postgres@127.0.0.1:${port}/postgres`,
+        async restart() { await pg.stop(); await pg.start(); await waitReady(); },
         async stop() {
           try { await pg.stop(); } finally {
             await rm(databaseDir, { recursive: true, force: true });

@@ -81,14 +81,23 @@ when restoring recorded references.
    scripts/restore.sh /new/repository/backups/YYYYMMDDTHHMMSSffffffZ --env-file recovery.env
    ```
 
+   A capture containing cleanup leftovers needs the explicit
+   `--retain-unreferenced` flag. Without it, restore stops before server startup and
+   leaves the restored stores available for inspection. Follow the
+   [fenced storage recovery procedure](../../docs/operations/storage-identity.md)
+   to inspect and reconcile those stores; retrying the same capture into empty
+   volumes without the flag will refuse again. Raise `BP_STARTUP_VERIFY_TIMEOUT`
+   for the full-store verification time before starting a large recovery.
+
 Restore verifies hashes and archive paths before writing, checks every target for
 emptiness, extracts the stores with original ownership, and runs `pg_verifybackup`.
 PostgreSQL recovers in an isolated container with no network to the named point.
 The script verifies the database identity, replay LSN and audit heads, then arms
 the existing restore gate before starting the server. It leaves the gate active; readiness stays 503 until
 release, and edge stays stopped.
-If restore fails after extraction, preserve the evidence and retry with new empty
-volumes; never start a partially restored server manually.
+For extraction or replay failures, preserve the evidence and retry with new empty
+volumes; never start a partially restored server manually. A storage-gate refusal
+instead follows the inspection/reconciliation procedure above.
 
 Sign in with the restored User account (`bp login`). For every Workspace read
 `bp restore restore-status --workspace-id UUID` and run

@@ -3,6 +3,15 @@ import { ConfigError, readConfig } from "./config.ts";
 import { credentials } from "../../../packages/cli/runtime/credentials.ts";
 
 describe("readConfig", () => {
+  test("startup verification budget rejects Compose duration strings and invalid seconds", () => {
+    const env = { BP_DATABASE_URL: "postgres://fixture", BP_AUTH_SECRET: "a".repeat(32) };
+    for (const value of ["", "0", "-1", "2m", "1.5", "86401"]) {
+      expect(() => readConfig({ ...env, BP_STARTUP_VERIFY_TIMEOUT: value })).toThrow("BP_STARTUP_VERIFY_TIMEOUT");
+    }
+    for (const value of ["1", "120", "86400"]) {
+      expect(() => readConfig({ ...env, BP_STARTUP_VERIFY_TIMEOUT: value })).not.toThrow();
+    }
+  });
   test("refuses to start without a database url or auth secret", () => {
     expect(() => readConfig({})).toThrow(ConfigError);
     expect(() => readConfig({ BP_DATABASE_URL: "postgres://x" })).toThrow(ConfigError);
