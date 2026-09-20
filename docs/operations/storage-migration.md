@@ -24,6 +24,14 @@ Do not run bootstrap separately against the migration target. Unset exported
 `BP_*` and `COMPOSE_*` variables; they must not override either private env file.
 No installation operation is authorized until the checkpoint changes are merged.
 
+Run capture, retention, migration and restore as the same installation account that
+owns the checkpoint repository and private operator files, including scheduled jobs.
+Pins remain bound to that account's UID; switching between that account and Unix root
+is unsupported. Restore temporarily assigns the `backups` directory to PostgreSQL,
+then returns it to the invoking account before migration pinning or health publication.
+Those existing helper transitions do not transfer ownership of `.pins` or authorize
+changing pin custody. PostgreSQL's archive ownership remains separate.
+
 Prepare two owned `0600` files: the installation env and a target env. Both must
 contain exactly one `COMPOSE_FILE` value listing absolute paths. The source selects
 core and its existing overlays; the target additionally selects `compose.blobs.yaml`
@@ -72,8 +80,12 @@ budgets may never converge. This budget is saved in `intent.json`; a plain retry
 reuses a custom saved value, while an explicitly different value refuses with
 `blob_binding_migration_budget_changed`. Choose it before the first attempt. The
 outer operator invocation remains capped at 24 hours. Startup verification has the
-separate budget described above. Fresh-restore finalization uses its existing
-3600-second helper default; this migration option does not configure restore.
+separate budget described above. For a fresh restore, use
+`checkpoint.py restore ... --migration-budget SECONDS` to size the migration-finalization
+helper independently: range 1..86400, default 3600. Choose enough time for checkpoint
+artifact hashing and complete restored S3 inventory verification. The restore CLI
+validates this option before selecting images or creating recovery volumes; it is
+only valid with `restore`. It does not change the saved migration retry budget.
 
 Capture the stopped filesystem installation with the existing checkpoint tool:
 
@@ -104,6 +116,8 @@ or lost lease leaves the durable gate in place and all partial target bytes inta
 An interrupted env lock may remain; confirm that its operator process and helper
 container have stopped before explicitly removing that lock and retrying. Never
 kill processes by pattern.
+The supplied `--state` directory itself must not be a symlink, even when its target
+is a private directory owned by the installation account.
 
 Every invocation reattests application and helper image references and content IDs
 against the original checkpoint. Target-only roles, including RustFS and bootstrap,
@@ -173,6 +187,7 @@ data-loss decision described above.
 Helper failures expose only a stable `blob_binding_*` JSON error token. Raw Compose
 stderr and credentials are never printed. Keep the fence, state files and all bytes
 when diagnosing a refusal.
+The read-only source preflight preserves those same stable storage refusal tokens.
 
 Fenced inspection reports either `copying` or `committed_pending_checkpoint` while
 all serving and mutating adoption paths remain gated. A routine checkpoint during
@@ -196,7 +211,18 @@ partial JSON. Completed `<UUID>-<hash>.json` pins and `<UUID>-pending.json`
 reservations are always validated. Unknown debris, malformed committed records,
 missing checkpoints or changed pinned bytes refuse pruning with
 `blob_binding_checkpoint_pin_recovery_required`; no checkpoint is deleted on that
-refusal. A capture may already be published when retention reports this failure.
+refusal. Backup validates existing pins before any capture work and revalidates
+after publication so a reservation also protects its newly published capture. This
+deliberately hashes pinned artifacts twice on a successful backup. A failure arising
+between those checks can still leave a published capture. WAL trimming also stops
+until pin custody is repaired; monitor archive capacity while resolving the refusal.
+
+The public pin error token stays unchanged. Diagnostics additionally identify a
+bounded `reason` such as `record_invalid`, `checkpoint_missing`, `manifest_changed`
+or `artifacts_changed`, and a recognized pin filename. Unrecognized filenames appear
+as `unrecognized-entry`; arbitrary exception text is never copied into these fields.
+Checkpoint CLI prints this diagnostic as a separate JSON record; migration CLI adds
+the fields alongside its existing `error` token.
 
 For that refusal, keep the fence and acquire exclusive repository custody after
 confirming no operator/helper remains. Inspect `.pins` and the saved migration state.
@@ -210,7 +236,7 @@ explicit recovery decision. Recognized staging debris can remain in place safely
 
 ## Qualification
 
-Root runs these serially after applying migration 35 and integrating the checkpoint
+Run these serially after applying migration 35 and integrating the checkpoint
 parent. They own new disposable resources; they do not target the installation:
 
 ```sh

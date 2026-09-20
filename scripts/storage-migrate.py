@@ -11,7 +11,7 @@ import signal
 import subprocess
 import tempfile
 import uuid
-from checkpoint import (ROOT, RUSTFS_DIGEST, Stack, backup, check_writers, command,
+from checkpoint import (ROOT, RUSTFS_DIGEST, CheckpointPinError, Stack, backup, check_writers, command,
                         pin_checkpoint, prove_root_credentials, start_existing_services, startup_timeout, storage_admin, verify)
 
 
@@ -135,7 +135,7 @@ def engine(stack, state_dir, action, migration, identity, checkpoint, empty_targ
         overlay.unlink(missing_ok=True)
 
 
-def finalize_restored_migration(stack, checkpoint, doc):
+def finalize_restored_migration(stack, checkpoint, doc, budget=3600):
     migration = doc['migration']
     if migration.get('phase') != 'committed_pending_checkpoint':
         raise ValueError('restore requires the captured pending migration')
@@ -149,12 +149,14 @@ def finalize_restored_migration(stack, checkpoint, doc):
     # before recording the private recovery pin, as restore does for its health receipt.
     stack.helper('chown "$1:$2" /backup/backups; chmod a+rx /backup/backups', str(os.getuid()), str(os.getgid()))
     with tempfile.TemporaryDirectory(prefix='.migration-restore-', dir=stack.backups) as temporary:
-        engine(stack, Path(temporary), 'restore-complete', migration['id'], rows[0]['target'], checkpoint)
+        engine(stack, Path(temporary), 'restore-complete', migration['id'], rows[0]['target'], checkpoint, budget=budget)
 
 
 def run(args):
+    if args.state.is_symlink():
+        raise ValueError('migration state directory must be private and owned')
     state_dir = args.state.resolve()
-    if state_dir.is_symlink() or state_dir.exists() and (not state_dir.is_dir() or state_dir.stat().st_mode & 0o077 or state_dir.stat().st_uid != os.getuid()):
+    if state_dir.exists() and (not state_dir.is_dir() or state_dir.stat().st_mode & 0o077 or state_dir.stat().st_uid != os.getuid()):
         raise ValueError('migration state directory must be private and owned')
     state_path = state_dir / 'intent.json'
     budget = getattr(args, 'budget', None)
@@ -195,7 +197,13 @@ def run(args):
             if without_storage(source.services[service].get('environment', {})) != without_storage(target.services[service].get('environment', {})):
                 raise ValueError('non-storage environment differs')
         check_writers(source)
-        inspection = json.loads(storage_admin(source, 'inspect', '--fenced'))
+        try:
+            inspection = json.loads(storage_admin(source, 'inspect', '--fenced'))
+        except RuntimeError as error:
+            token = str(error).removeprefix('storage initialization refused: ')
+            if re.fullmatch(r'blob_binding_[a-z_]{1,80}', token):
+                raise ValueError(token) from None
+            raise
         if any(obj['classification'] == 'unreferenced' for obj in inspection['objects']):
             raise ValueError('blob_binding_migration_unreferenced_reconcile_required')
         checkpoint = args.checkpoint.resolve()
@@ -328,5 +336,8 @@ if __name__ == '__main__':
     except (ValueError, RuntimeError, OSError, KeyError) as error:
         # Third-party exceptions may carry secret-bearing Compose data.
         token = str(error) if re.fullmatch(r'blob_binding_[a-z_]{1,80}', str(error)) else 'blob_binding_migration_failed'
-        print(json.dumps({'error': token}), file=__import__('sys').stderr)
+        diagnostic = dict(error=token)
+        if isinstance(error, CheckpointPinError):
+            diagnostic.update(reason=error.reason, pin=error.pin)
+        print(json.dumps(diagnostic), file=__import__('sys').stderr)
         raise SystemExit(1)
