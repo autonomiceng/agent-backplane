@@ -94,11 +94,11 @@ def installation(root, env_file, project, compose_files, profiles, state_dir=Non
         effective_state = selected_state
     prepared_state(effective_state)
     return (root, env_file, project, compose_files, profiles, endpoint,
-            executable, docker_config, selected_env.get('PATH', str(Path(executable).parent)), effective_state)
+            docker_config, selected_env.get('PATH', str(Path(executable).parent)), effective_state)
 
 
 def units(root, env_file, project, compose_files, profiles, endpoint,
-          executable, docker_config, search_path, state_dir):
+          docker_config, search_path, state_dir):
     argv = [sys.executable, root / 'scripts/status_observer.py', '--checkout', root,
             '--env-file', env_file, '--project-name', project]
     for path in compose_files:
@@ -140,7 +140,7 @@ WantedBy=timers.target
 
 def install(root, env_file, project, compose_files, profiles, state_dir, unit_dir, runner=run):
     selected = installation(root, env_file, project, compose_files, profiles, state_dir, runner)
-    root, env_file, project, compose_files, profiles, _, _, _, _, state_dir = selected
+    root, env_file, project, compose_files, profiles, _, _, _, state_dir = selected
     if not (root / 'scripts/status_observer.py').is_file():
         raise Unavailable()
     contents = units(*selected)

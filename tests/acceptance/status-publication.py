@@ -125,7 +125,7 @@ with tempfile.TemporaryDirectory(prefix='bp-status-proof-') as temporary:
             if time.monotonic() > deadline:
                 raise RuntimeError('owned Caddy healthcheck did not become healthy')
             time.sleep(.2)
-        _, selected_env, selected_project, files, profiles, _, _, _, _, selected_state = selected_gateway
+        _, selected_env, selected_project, files, profiles, _, _, _, selected_state = selected_gateway
         document = observe(ROOT, selected_env, selected_project, files, profiles, selected_state)
         assert document is not None
         caddy = next(component for component in document['components'] if component['id'] == 'caddy')
