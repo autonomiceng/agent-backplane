@@ -27,7 +27,7 @@ def drill(offline=False, s3=False):
         values = {name: secrets.token_hex(32) for name in ('BP_AUTH_SECRET', 'BP_OPERATIONS_TOKEN', 'BP_POSTGRES_PASSWORD', 'BP_POSTGRES_ADMIN_PASSWORD')}
         values.update(BP_PORT=str(port), BP_PUBLIC_URL=origin, BP_VOLUME_PREFIX=project, BP_SERVER_IMAGE='agent-backplane-drill:' + project)
         if s3:
-            values.update({key: secrets.token_hex(24) for key in ('BP_RUSTFS_ROOT_USER', 'BP_RUSTFS_ROOT_PASSWORD', 'BP_BLOB_S3_ACCESS_KEY', 'BP_BLOB_S3_SECRET_KEY')})
+            values.update({key: secrets.token_hex(16) for key in ('BP_RUSTFS_ROOT_USER', 'BP_RUSTFS_ROOT_PASSWORD', 'BP_BLOB_S3_ACCESS_KEY', 'BP_BLOB_S3_SECRET_KEY')})
             values['BP_BLOB_S3_BUCKET'] = project
         source = root / 'source'; source.mkdir()
         recovery = root / 'recovery'; recovery.mkdir()
