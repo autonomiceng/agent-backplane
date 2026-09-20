@@ -21,10 +21,11 @@ Preparation preserves existing project, volume, network, secret and image values
 It refuses profile changes and a rendered Files backend that differs from the saved
 `BP_BLOB_BACKEND`; use an explicit storage migration for backend changes.
 
-`COMPOSE_FILE` is an ordered, colon-separated list. Existing custom overlays retain
-their order. Relative entries resolve beside the selected env file and are saved as
-absolute paths; relative paths inside Compose files resolve from the first file's
-directory, as with native Compose. Only the native Linux `:` separator is supported.
+`COMPOSE_FILE` is an ordered, colon-separated list. The first file must be this
+checkout's root `compose.yaml`; custom overlays follow it in their existing order.
+Relative entries resolve beside the selected env file and are saved as absolute
+paths. Relative bind and build paths inside Compose files resolve from the checkout
+root. Only the native Linux `:` separator is supported.
 Set custom overlays in `COMPOSE_FILE` before preparation. With the default `.env`,
 `docker compose up -d` reuses the saved selection. With a custom env file, use
 `docker compose --env-file /absolute/path/to/.env up -d`.
@@ -33,8 +34,9 @@ An installation with resources or secrets and incomplete recorded selection requ
 `--confirm-existing-selection`, an explicit `--compose-project`, and explicit
 `--profile` flags. Restore the original custom `COMPOSE_FILE` first, if applicable.
 This flag confirms the original selection, including its rendered Files backend;
-it does not authorize changing or migrating an installation. For an original core-only
-installation, for example:
+it does not authorize changing or migrating an installation. For incomplete legacy
+selection, an existing `<BP_VOLUME_PREFIX>_rustfs-data` volume requires `blobs` and
+an S3 Files backend. For an original core-only installation, for example:
 
 ```bash
 bun infra/bootstrap/prepare.ts --env-file /path/to/.env \
@@ -56,6 +58,8 @@ reads the saved native Compose selection and `BP_STATUS_DIR`. Explicit observer 
 timer selectors must agree with recorded values. `--profile ''` explicitly selects
 no optional profiles. Existing timers supply project and file arguments; omitted
 profile flags with explicit files retain their original empty-selection meaning.
+The timer installer reuses saved profiles when `--profile` is omitted and writes
+the resolved selection into the unit arguments.
 Without recorded settings, the observer retains its core-only and checkout `data`
 defaults. `--state-dir` still explicitly selects the publication directory.
 

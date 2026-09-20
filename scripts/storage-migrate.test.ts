@@ -21,7 +21,7 @@ with tempfile.TemporaryDirectory() as root:
   assert os.environ['COMPOSE_FILE']=='retained-parent-selection'
  selected("COMPOSE_FILE='"+base+"'", [base])
  selected('COMPOSE_FILE="'+base+os.pathsep+overlay+'"', [base,overlay])
- selected('COMPOSE_FILE='+overlay+os.pathsep+base, [overlay,base])
+ selected('COMPOSE_FILE='+base+os.pathsep+'/last.yaml', [base,'/last.yaml'])
  def forbidden(path): raise AssertionError('invalid selector reached Stack/Docker')
  g['Stack']=forbidden
  def refused(source):
@@ -39,6 +39,8 @@ with tempfile.TemporaryDirectory() as root:
  refused("COMPOSE_FILE='"+base+'"\n')
  refused('COMPOSE_FILE ='+base+'\n')
  refused('COMPOSE_FILE='+base+' # comment\n')
+ refused('COMPOSE_FILE='+base+os.pathsep+overlay+'\n')
+ refused('COMPOSE_FILE='+base+'#comment\n')
  refused('COMPOSE_FILE='+base+'\\escape\n')
 `], { cwd: import.meta.dir, stdout: "pipe", stderr: "pipe", env: { ...Bun.env, PYTHONDONTWRITEBYTECODE: "1" } });
   const [out, err] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text()]);

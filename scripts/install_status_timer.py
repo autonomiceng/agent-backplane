@@ -8,7 +8,7 @@ import stat
 import sys
 from pathlib import Path
 
-from status_config import configuration, environment, selection
+from status_config import configuration, environment, saved_settings, selection
 from status_io import Unavailable, directory, read_json, regular, run
 
 NAME = 'agent-backplane-status'
@@ -61,6 +61,8 @@ def prepared_state(state_dir):
 
 
 def installation(root, env_file, project, compose_files, profiles, state_dir=None, runner=run):
+    if profiles is None:
+        profiles = saved_settings(Path(env_file).resolve()).get('COMPOSE_PROFILES', '').split(',')
     root, env_file, project, compose_files, profiles = selection(
         root, env_file, project, compose_files, profiles)
     if 'edge' in profiles and 'gateway' in profiles:
@@ -178,7 +180,7 @@ def main():
     parser.add_argument('--env-file', required=True, type=Path)
     parser.add_argument('--compose-project', required=True)
     parser.add_argument('--compose-file', action='append', required=True)
-    parser.add_argument('--profile', action='append', default=[])
+    parser.add_argument('--profile', action='append')
     parser.add_argument('--state-dir', type=Path)
     parser.add_argument('--install', action='store_true', required=True,
                         help='write user units and enable the timer now')
