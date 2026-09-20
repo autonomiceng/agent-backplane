@@ -5,8 +5,8 @@ No workerd artifact has completed full runtime qualification. **Default promotio
 ## Configuration
 
 When compute is selected, bootstrap builds `infra/compute/image/Dockerfile` as
-`agent-backplane-workerd:1.20260918.1` if `BP_WORKERD_IMAGE` is missing or blank. Cached
-rebuilds are allowed. The build requires an amd64 Docker host and compatible BuildKit with
+`agent-backplane-workerd:1.20260918.1` if `BP_WORKERD_IMAGE` is unset or empty.
+Whitespace-only quoted references are invalid. Cached rebuilds are allowed. The build requires an amd64 Docker host and compatible BuildKit with
 network access to pinned inputs. Arm64 is refused for this default even with an explicit
 binary pin; its recipe inputs do not establish architecture qualification. Fresh minimal
 selection remains unchanged and leaves `BP_COMPUTE_URL` unset.
@@ -15,12 +15,19 @@ An explicit `BP_WORKERD_IMAGE` accepts full local tags, registry digest referenc
 local `sha256:<image-config-id>` references. It must already exist locally: bootstrap
 never builds over or implicitly pulls an explicit override. Server and other image
 overrides remain independent. The resolved image ID is used for verification and the
-subsequent Compose launch. The overlay has no build stanza, so `up` cannot rebuild workerd.
+subsequent Compose launch. The overlay defaults both its image and declared reference to
+`agent-backplane-workerd:1.20260918.1`, allowing Compose configuration preflight before the
+build and ordinary `docker compose up` after bootstrap has saved the selected overlays.
+Bare Compose reuses the local default or explicit override with `pull_policy: never`.
+If that image was removed, rerun preparation or explicitly build/load the selected image.
+The overlay has no workerd build stanza: even `docker compose up --build` does not rebuild
+workerd. It can build the server. Use the documented `docker build` command for an explicit
+recipe rebuild. This keeps workerd overrides independent of server build choices.
 After H-PROOF/F-GATE and B-DEFAULT approval, this qualified local recipe is the supported
 delivery method; ADR-0009/0018 now make registry publication optional. Preparatory code
 and a successful build establish neither those gates nor a registry release.
 
-`BP_WORKERD_BINARY_SHA256` is the expected SHA-256 of `/usr/bin/workerd`. Empty uses the known packaged amd64 binary, `f31da6d248028d698806aa93d1b3aec28bbd4b4b7ddc31e967408ab6406fa5aa`. Another executable requires an explicit verified hash. Other architectures require an explicit pin and their own runtime gate. The supervisor protocol requires images to provide `/bin/sh`, `sha256sum`, `/usr/bin/bun` and `/usr/bin/workerd` and run with the overlay restrictions. Bootstrap also requires the recipe's architecture-specific Bun 1.4.2 executable hash and version. Both executables must run `--version` under the overlay restrictions; custom workerd bytes still require their own runtime gate. Settings and host declarations are documented in `.env.example`.
+`BP_WORKERD_BINARY_SHA256` is the expected SHA-256 of `/usr/bin/workerd`. Empty uses the known packaged amd64 binary, `f31da6d248028d698806aa93d1b3aec28bbd4b4b7ddc31e967408ab6406fa5aa`. Another executable requires an explicit verified hash. Other architectures require an explicit pin and their own runtime gate. The supervisor protocol requires images to provide `/bin/sh`, `sha256sum`, `/usr/bin/bun` and `/usr/bin/workerd` and run with the overlay restrictions. Bootstrap also requires the recipe's architecture-specific Bun 1.4.2 executable hash and version. Both executables must run `--version` under the overlay restrictions, returning `workerd 2026-09-18` and `1.4.2`. Bootstrap rejects other executable versions even with an explicit workerd hash. Packaging experiments remain possible; different workerd bytes require an explicit hash and their own runtime gate, and changed Bun bytes require a reviewed pin/compatibility update. Settings and host declarations are documented in `.env.example`.
 
 `BP_COMPUTE_URL` is a secret-bearing destination: verification sends the control token before checking identity, so every HTTPS override must point to an operator-owned runtime. It accepts HTTPS authorities, the private Compose authority `http://workerd:8080`, and explicit loopback HTTP (`localhost`, IPv4 `127.0.0.0/8`, or IPv6 `[::1]`, with any port). Other cleartext authorities, including private LAN addresses, are refused before any token is sent. Loopback is for an operator-owned local runtime; the Compose hostname relies on the trusted private network. No arbitrary hostname is resolved to decide this exception. Userinfo, query strings and fragments are refused. A path prefix is preserved for `/identity`, `/prepare` and `/invoke`; path construction never changes the configured authority. Identity and preparation refuse redirects. Invocation returns function 3xx responses as ordinary results without following their Location. An invalid nonempty URL disables compute operations with `compute_unavailable` while core remains available.
 

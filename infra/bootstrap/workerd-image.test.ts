@@ -50,7 +50,7 @@ test("missing and blank overrides build the pinned default independently of a se
   const settings = { BP_SERVER_IMAGE: "server:operator" };
   expect(images.has(defaultWorkerdImage)).toBe(false);
   expect((await verifyWorkerdImage(settings, {}, run)).reference).toBe(defaultWorkerdImage);
-  expect((await verifyWorkerdImage({ ...settings, BP_WORKERD_IMAGE: " \t " }, {}, run)).imageId).toBe(imageId);
+  expect((await verifyWorkerdImage({ ...settings, BP_WORKERD_IMAGE: "" }, {}, run)).imageId).toBe(imageId);
   expect(state.builds).toBe(2);
   expect(settings).toEqual({ BP_SERVER_IMAGE: "server:operator" });
   state.architecture = "arm64";
@@ -72,6 +72,7 @@ test("explicit local overrides are verified without rebuilding or pulling even w
 test("invalid identity, missing supervisor and incompatible executables refuse launch", async () => {
   const { state, run } = dockerFixture();
   const unused: Runner = async () => { throw Error("must not run"); };
+  await expect(verifyWorkerdImage({ BP_WORKERD_IMAGE: " \t " }, {}, unused)).rejects.toMatchObject({ error: "workerd_identity_invalid" });
   await expect(verifyWorkerdImage({ ...entries, BP_WORKERD_DIGEST: "d".repeat(64) }, {}, unused)).rejects.toMatchObject({ error: "workerd_legacy_identity_requires_migration" });
   await expect(verifyWorkerdImage({ ...entries, BP_WORKERD_BINARY_SHA256: "wrong" }, {}, unused)).rejects.toMatchObject({ error: "workerd_identity_invalid" });
   await expect(verifyWorkerdImage(entries, {}, async () => "local:tag")).rejects.toMatchObject({ error: "workerd_image_identity_invalid" });
@@ -83,7 +84,7 @@ test("invalid identity, missing supervisor and incompatible executables refuse l
   await expect(verifyWorkerdImage(entries, {}, run)).rejects.toThrow("missing executable");
   state.missingBun = false; state.bunVersion = "1.0.0";
   await expect(verifyWorkerdImage(entries, {}, run)).rejects.toMatchObject({ error: "workerd_binary_incompatible" });
-  state.bunVersion = "1.4.2"; state.workerdVersion = "";
+  state.bunVersion = "1.4.2"; state.workerdVersion = "workerd 2026-09-19";
   await expect(verifyWorkerdImage(entries, {}, run)).rejects.toMatchObject({ error: "workerd_binary_incompatible" });
 });
 

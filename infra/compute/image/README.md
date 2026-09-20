@@ -39,11 +39,17 @@ accepts local tags through `BP_WORKERD_IMAGE` and verifies executable bytes agai
 `agent-backplane-workerd:1.20260918.1`, image ID
 `sha256:1b5694d34643f982d7e7a511f81afbb1f59ec49bce0a60685e88deff24bebe3f`.
 This local config ID is candidate evidence. With compute selected, bootstrap builds the
-recipe under this tag when `BP_WORKERD_IMAGE` is missing or blank, then verifies both
+recipe under this tag when `BP_WORKERD_IMAGE` is unset or empty, then verifies both
 workerd and Bun by resolved image ID. An explicit override must already exist locally;
-bootstrap neither builds over it nor pulls it. It requires the recipe's Bun 1.4.2 bytes.
+bootstrap neither builds over it nor pulls it. It requires the recipe's Bun 1.4.2 bytes and workerd version `2026-09-18`.
 The default build refuses non-amd64 Docker hosts. Build inputs require network access
 and compatible Docker/BuildKit tooling; no installed compiler is needed.
+
+The Compose overlay uses the same local tag when the override is unset or empty, so
+configuration preflight and later native `docker compose up` work with the saved selection.
+The local image must exist for startup. Workerd has no Compose build stanza;
+`docker compose up --build` leaves its selected image untouched, including explicit
+overrides. Rerun preparation or use the `docker build` command above to rebuild the recipe.
 
 ADR-0009/0018 permit this qualified local recipe as the supported delivery method after
 H-PROOF/F-GATE and B-DEFAULT approval. Registry publication is optional. This preparatory

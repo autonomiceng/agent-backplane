@@ -15,8 +15,8 @@ const supervisorBinaries = new Map([
 ]);
 export async function verifyWorkerdImage(entries: Environment, env: Environment, run: Runner) {
   if (entries.BP_WORKERD_REPOSITORY || entries.BP_WORKERD_DIGEST) throw new CliError("workerd_legacy_identity_requires_migration", 1);
-  const buildDefault = !entries.BP_WORKERD_IMAGE?.trim();
-  const reference = entries.BP_WORKERD_IMAGE?.trim() ? entries.BP_WORKERD_IMAGE : defaultWorkerdImage;
+  const buildDefault = !entries.BP_WORKERD_IMAGE;
+  const reference = entries.BP_WORKERD_IMAGE || defaultWorkerdImage;
   const binary = entries.BP_WORKERD_BINARY_SHA256 || defaultWorkerdBinary;
   if (!validImageReference(reference) || !/^[0-9a-f]{64}$/.test(binary)) throw new CliError("workerd_identity_invalid", 1);
   if (buildDefault) {
@@ -38,7 +38,7 @@ export async function verifyWorkerdImage(entries: Environment, env: Environment,
   if (observed !== `${binary}  /usr/bin/workerd\n${supervisorBinary}  /usr/bin/bun`) throw new CliError("workerd_binary_identity_mismatch", 1);
   const workerdVersion = (await run([...container, "/usr/bin/workerd", imageId, "--version"], env)).trim();
   const supervisorVersion = (await run([...container, "/usr/bin/bun", imageId, "--version"], env)).trim();
-  if (!/^workerd \d{4}-\d{2}-\d{2}$/.test(workerdVersion) || supervisorVersion !== "1.4.2") throw new CliError("workerd_binary_incompatible", 1);
+  if (workerdVersion !== "workerd 2026-09-18" || supervisorVersion !== "1.4.2") throw new CliError("workerd_binary_incompatible", 1);
   return { reference, imageId, binarySha256: binary, supervisorBinarySha256: supervisorBinary,
     workerdVersion, supervisorVersion, architecture, observedAt: new Date().toISOString() };
 }
