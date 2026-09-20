@@ -10,7 +10,7 @@ import { privateRead, privateWrite, privateLock } from "../../packages/cli/runti
 import { CliError, type Environment } from "../../packages/cli/runtime/credentials.ts";
 import { resolveAccess } from "../compose/validate-edge.ts";
 import { record } from "../../packages/cli/runtime/http.ts";
-export type Runner = (args: string[], env: Environment) => Promise<string>;
+export type Runner = (args: string[], env: Environment, timeoutMs?: number) => Promise<string>;
 export type StatusRecorder = (args: string[]) => Promise<void>;
 const core = ["BP_AUTH_SECRET", "BP_POSTGRES_ADMIN_PASSWORD", "BP_POSTGRES_PASSWORD", "BP_OPERATIONS_TOKEN"];
 const blobs = ["BP_RUSTFS_ROOT_USER", "BP_RUSTFS_ROOT_PASSWORD", "BP_BLOB_S3_ACCESS_KEY", "BP_BLOB_S3_SECRET_KEY"];
@@ -225,11 +225,20 @@ export async function prepare(argv: string[], env: Environment, run: Runner = do
     return (rustfsConsole.enabled === "true" ? `RustFS console: ${rustfsConsole.origin}/rustfs/console/\n` : "") + `bp bootstrap --url '${url}' --email USER_EMAIL --capability-file '${capabilityPath.replaceAll("'", "'\\''")}'\n`;
   } finally { await unlock(); }
 }
-async function docker(args: string[], env: Environment): Promise<string> {
+async function docker(args: string[], env: Environment, timeoutMs?: number): Promise<string> {
   const child = Bun.spawn(["docker", ...args], { env, stdout: "pipe", stderr: "pipe" });
-  const [stdout] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text()]);
-  if (await child.exited !== 0) throw new CliError("compose_command_failed", 2);
-  return stdout;
+  const result = (async () => {
+    const [stdout] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text()]);
+    if (await child.exited !== 0) throw new CliError("compose_command_failed", 2);
+    return stdout;
+  })();
+  if (timeoutMs === undefined) return result;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<string>((_, reject) => {
+    timeout = setTimeout(() => { child.kill("SIGKILL"); reject(new CliError("compose_command_failed", 2)); }, timeoutMs);
+  });
+  try { return await Promise.race([result, deadline]); }
+  finally { clearTimeout(timeout); }
 }
 export async function statusRecorder(args: string[], searchPath = process.env.PATH ?? "/usr/bin:/bin"): Promise<void> {
   const python = Bun.which("python3", { PATH: searchPath });

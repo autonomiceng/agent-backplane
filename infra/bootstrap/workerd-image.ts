@@ -21,23 +21,29 @@ export async function verifyWorkerdImage(entries: Environment, env: Environment,
   if (!validImageReference(reference) || !/^[0-9a-f]{64}$/.test(binary)) throw new CliError("workerd_identity_invalid", 1);
   if (buildDefault) {
     if (binary !== defaultWorkerdBinary) throw new CliError("workerd_default_binary_mismatch", 1);
-    const hostArchitecture = (await run(["info", "--format", "{{.Architecture}}"], env)).trim();
+    const hostArchitecture = (await run(["info", "--format", "{{.Architecture}}"], env, 10_000)).trim();
     if (!["amd64", "x86_64"].includes(hostArchitecture)) throw new CliError("workerd_default_architecture_unqualified", 1);
     const context = resolve(import.meta.dir, "../compute/image");
-    await run(["build", "--platform", "linux/amd64", "--file", join(context, "Dockerfile"), "--tag", reference, context], env);
+    await run(["build", "--platform", "linux/amd64", "--file", join(context, "Dockerfile"), "--tag", reference, context], env, 900_000);
   }
-  const [imageId, architecture, extra] = (await run(["image", "inspect", "--format", "{{.Id}} {{.Architecture}}", reference], env)).trim().split(" ");
+  const [imageId, architecture, extra] = (await run(["image", "inspect", "--format", "{{.Id}} {{.Architecture}}", reference], env, 10_000)).trim().split(" ");
   if (!imageId || !/^sha256:[0-9a-f]{64}$/.test(imageId) || !architecture || !/^[a-z0-9_-]{1,32}$/.test(architecture) || extra !== undefined) throw new CliError("workerd_image_identity_invalid", 1);
   if (buildDefault && architecture !== "amd64") throw new CliError("workerd_default_architecture_unqualified", 1);
   if (!entries.BP_WORKERD_BINARY_SHA256 && architecture !== "amd64") throw new CliError("workerd_binary_pin_required", 1);
   const supervisorBinary = supervisorBinaries.get(architecture);
   if (!supervisorBinary) throw new CliError("workerd_supervisor_architecture_unsupported", 1);
-  const container = ["run", "--rm", "--pull", "never", "--network", "none", "--read-only", "--cap-drop", "ALL",
+  const container = ["create", "--pull", "never", "--network", "none", "--read-only", "--cap-drop", "ALL",
     "--security-opt", "no-new-privileges:true", "--user", "65534:65534", "--entrypoint"];
-  const observed = (await run([...container, "sha256sum", imageId, "/usr/bin/workerd", "/usr/bin/bun"], env)).trim();
+  const probe = async (executable: string, args: string[]) => {
+    const id = (await run([...container, executable, imageId, ...args], env, 10_000)).trim();
+    if (!/^[0-9a-f]{64}$/.test(id)) throw new CliError("workerd_verifier_identity_invalid", 1);
+    try { return (await run(["start", "--attach", id], env, 10_000)).trim(); }
+    finally { await run(["rm", "--force", id], env, 10_000); }
+  };
+  const observed = await probe("sha256sum", ["/usr/bin/workerd", "/usr/bin/bun"]);
   if (observed !== `${binary}  /usr/bin/workerd\n${supervisorBinary}  /usr/bin/bun`) throw new CliError("workerd_binary_identity_mismatch", 1);
-  const workerdVersion = (await run([...container, "/usr/bin/workerd", imageId, "--version"], env)).trim();
-  const supervisorVersion = (await run([...container, "/usr/bin/bun", imageId, "--version"], env)).trim();
+  const workerdVersion = await probe("/usr/bin/workerd", ["--version"]);
+  const supervisorVersion = await probe("/usr/bin/bun", ["--version"]);
   const compatibleWorkerd = binary === defaultWorkerdBinary ? workerdVersion === "workerd 2026-09-18" : /^workerd \d{4}-\d{2}-\d{2}$/.test(workerdVersion);
   if (!compatibleWorkerd || supervisorVersion !== "1.4.2") throw new CliError("workerd_binary_incompatible", 1);
   return { reference, imageId, binarySha256: binary, supervisorBinarySha256: supervisorBinary,
