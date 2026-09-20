@@ -24,7 +24,8 @@ async function text(response: IncomingMessage): Promise<string> {
 }
 async function scenario() {
   assert(Bun.which("docker"), "docker is required; ingress acceptance never skips");
-  const edge = validateEdge(Bun.env); assert.equal(edge.ca, "internal", "acceptance requires BP_EDGE_CA=internal");
+  const edge = validateEdge(Bun.env); assert.equal(edge.mode, "local", "acceptance requires BP_ACCESS_MODE=local");
+  assert(edge.origin.startsWith("https:"), "acceptance requires a canonical HTTPS origin");
   const ca = await readFile(required("BP_EDGE_CA_CERT")), token = required("BP_OPERATIONS_TOKEN");
   const email = required("BP_USER_EMAIL"), password = required("BP_USER_PASSWORD");
   const root = resolve(import.meta.dir, "../..");
@@ -37,7 +38,7 @@ async function scenario() {
   assert.equal(new URL(serverEnv.BP_PUBLIC_URL).origin, edge.origin);
   const allowed = new Set(["BP_DATABASE_URL", "BP_PORT", "BP_DATA_DIR", "BP_OPERATIONS_TOKEN",
     "NODE_ENV", "BP_RETENTION_PURGE_INTERVAL", "BP_BACKUP_KEEP",
-    "BP_BACKUP_DIR", "BP_AUTH_SECRET", "BP_PUBLIC_URL", "BP_AUTH_URL", "BP_SIGNUP"]);
+    "BP_BACKUP_DIR", "BP_AUTH_SECRET", "BP_PUBLIC_URL", "BP_AUTH_URL", "BP_SIGNUP", "BP_ACCESS_MODE"]);
   assert(Object.keys(serverEnv).every(key => allowed.has(key)), "unexpected core server environment key");
   const ids = (await compose("ps", "-q", "server", "postgres", "edge")).trim().split(/\s+/);
   assert.equal(ids.length, 3, "server, postgres and edge must be running");
@@ -78,10 +79,10 @@ async function scenario() {
   const httpPort = Bun.env.BP_HTTP_PORT || "80";
   const httpOrigin = `http://${edge.host}${httpPort === "80" ? "" : `:${httpPort}`}`;
   const redirect = await send(httpOrigin, "/health/ready?probe=ingress");
-  assert.equal(redirect.statusCode, 308); assert.equal(redirect.headers.location, `${edge.origin}/health/ready?probe=ingress`);
+  assert.equal(redirect.statusCode, 200); assert.equal(redirect.headers.location, undefined);
   assert.equal(redirect.headers["strict-transport-security"], undefined); await text(redirect);
   const ready = await send(edge.origin, "/health/ready");
-  assert.equal(ready.statusCode, 200); assert.equal(ready.headers["strict-transport-security"], "max-age=31536000");
+  assert.equal(ready.statusCode, 200); assert.equal(ready.headers["strict-transport-security"], undefined);
   assert.equal(JSON.parse(await text(ready)).enrollment.state, "claimed", "enroll a User before acceptance");
   for (const path of ["/health/ready", "/health/ready/"]) {
     const response = await send(edge.origin, path, { authorization: `Bearer ${token}` });
@@ -95,7 +96,7 @@ async function scenario() {
     for (const origin of [httpOrigin, edge.origin]) {
       const response = await send(origin, path, { authorization: origin === edge.origin ? `Bearer ${token}` : "Bearer public-http-decoy" });
       assert.equal(response.statusCode, 404, `operator path exposed: ${path}`);
-      assert.equal(response.headers["strict-transport-security"], origin === edge.origin ? "max-age=31536000" : undefined);
+      assert.equal(response.headers["strict-transport-security"], undefined);
       await text(response);
     }
   }

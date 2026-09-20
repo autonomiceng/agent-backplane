@@ -1,8 +1,7 @@
 x-logging: &logging
-  driver: json-file
+  driver: journald
   options:
-    max-size: "10m"
-    max-file: "3"
+    cache-disabled: "true"
 
 services:
   server:

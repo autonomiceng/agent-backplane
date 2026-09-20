@@ -1,14 +1,9 @@
 x-logging: &logging
-  driver: json-file
+  driver: journald
   options:
-    max-size: "10m"
-    max-file: "3"
+    cache-disabled: "true"
 
 services:
-  server:
-    environment:
-      BP_PUBLIC_URL: ${BP_PUBLIC_URL:-${BP_AUTH_URL:-https://${BP_PUBLIC_HOST:-backplane.${BP_PUBLIC_DOMAIN:-localhost}}${BP_HTTPS_PORT:+:${BP_HTTPS_PORT}}}}
-
   edge:
     image: caddy:2.11.4@sha256:13ba145cba2f3e28fa801994876e4c086d1b95d5aa2a520a734765ffb6b12017
     profiles: [edge]
@@ -19,14 +14,18 @@ services:
     depends_on:
       server:
         condition: service_healthy
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        case "$$BP_ACCESS_MODE" in local|public) ;; *) echo "Standalone edge requires local or public mode" >&2; exit 1;; esac
+        exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
     environment:
-      # BP_PUBLIC_HOST and BP_EDGE_CA remain explicit overrides for one release.
-      BP_PUBLIC_HOST: ${BP_PUBLIC_HOST:-backplane.${BP_PUBLIC_DOMAIN:-localhost}}
-      BP_EDGE_CA: ${BP_EDGE_CA:-${BP_TLS_ISSUER:-none}}
-      BP_PUBLIC_URL: ${BP_PUBLIC_URL:-${BP_AUTH_URL:-https://${BP_PUBLIC_HOST:-backplane.${BP_PUBLIC_DOMAIN:-localhost}}${BP_HTTPS_PORT:+:${BP_HTTPS_PORT}}}}
+      BP_ACCESS_MODE: ${BP_ACCESS_MODE:-local}
+      BP_EDGE_HOST: backplane.${BP_PUBLIC_DOMAIN:-localhost}
+      BP_PUBLIC_URL: ${BP_PUBLIC_URL:?run infra/bootstrap/prepare.ts to set the browser URL}
     ports:
-      - "${BP_EDGE_BIND_HOST:-${BP_BIND_HOST:-127.0.0.1}}:${BP_HTTP_PORT:-80}:80"
-      - "${BP_EDGE_BIND_HOST:-${BP_BIND_HOST:-127.0.0.1}}:${BP_HTTPS_PORT:-443}:443"
+      - "${BP_BIND_HOST:-127.0.0.1}:${BP_HTTP_PORT:-80}:80"
+      - "${BP_BIND_HOST:-127.0.0.1}:${BP_HTTPS_PORT:-443}:443"
     volumes:
       - ./infra/compose/Caddyfile:/etc/caddy/Caddyfile:ro
       - edge-data:/data

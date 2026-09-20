@@ -28,6 +28,7 @@ test("prepare launches root compose without the core profile", async () => {
     expect(up).toContain(root);
     expect(up).toContain(resolve(root, "compose.yaml"));
     expect(up).not.toContain("core");
+    expect(await readFile(join(directory, ".env"), "utf8")).toContain("BP_ACCESS_MODE='local'");
     expect(await readFile(join(directory, ".env"), "utf8")).toContain("BP_PUBLIC_URL='http://localhost:3000'");
   } finally { await rm(directory, { recursive: true, force: true }); }
 });

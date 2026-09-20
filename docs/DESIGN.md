@@ -114,7 +114,7 @@ Backups with WAL archiving and restore drills, per-Principal and per-Workspace q
 
 ## Stack
 
-Bun, Elysia with OpenAPI, Eden types to a Vite+ dashboard, Drizzle for the backplane's own tables only, PostgreSQL 18 with PGMQ, Better Auth, docker compose, OpenTelemetry to Grafana Alloy and LGTM. PostgreSQL 19 after extensions ship for it (ADR-0008).
+Bun, Elysia with OpenAPI, Eden types to a Vite+ dashboard, Drizzle for the backplane's own tables only, PostgreSQL 18 with PGMQ, Better Auth, Docker Compose, stdout/stderr logs in journald, and optional external log collection. PostgreSQL 19 after extensions ship for it (ADR-0008).
 
 ## Explicitly not built in v1
 

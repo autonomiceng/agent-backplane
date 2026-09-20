@@ -4,24 +4,25 @@ import { randomBytes } from "node:crypto";
 import { stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import { privateRead, privateWrite, privateLock } from "../../packages/cli/runtime/credential-file.ts";
-import { CliError, credentials, type Environment } from "../../packages/cli/runtime/credentials.ts";
+import { CliError, type Environment } from "../../packages/cli/runtime/credentials.ts";
+import { resolveAccess } from "../compose/validate-edge.ts";
 export type Runner = (args: string[], env: Environment) => Promise<string>;
 const core = ["BP_AUTH_SECRET", "BP_POSTGRES_ADMIN_PASSWORD", "BP_POSTGRES_PASSWORD", "BP_OPERATIONS_TOKEN"];
 const blobs = ["BP_RUSTFS_ROOT_USER", "BP_RUSTFS_ROOT_PASSWORD", "BP_BLOB_S3_ACCESS_KEY", "BP_BLOB_S3_SECRET_KEY"];
 export async function prepare(argv: string[], env: Environment, run: Runner = docker): Promise<string> {
   const { values } = parseArgs({ args: argv, allowPositionals: false, options: {
-    "public-url": { type: "string" }, "backup-dir": { type: "string" }, "env-file": { type: "string" },
+    "access-mode": { type: "string" }, "public-url": { type: "string" }, "backup-dir": { type: "string" }, "env-file": { type: "string" },
     "capability-file": { type: "string" }, "compose-project": { type: "string" }, profile: { type: "string", multiple: true },
   } });
   const profiles = [...new Set(values.profile ?? [])];
-  if (profiles.some(p => !["blobs", "compute"].includes(p)) || !values["capability-file"]) throw new CliError("invalid_arguments", 1);
+  if (profiles.some(p => !["blobs", "compute", "edge"].includes(p)) || !values["capability-file"]) throw new CliError("invalid_arguments", 1);
   const project = values["compose-project"] ?? "agent-backplane";
   if (!/^[a-z0-9][a-z0-9_-]*$/.test(project)) throw new CliError("invalid_compose_project", 1);
   const path = resolve(values["env-file"] ?? resolve(import.meta.dir, "../../.env"));
   const unlock = await privateLock(`${path}.lock`);
   try {
     const source = await privateRead(path, true), entries: Record<string, string> = {};
-    const managed = new Set([...core, ...blobs, "BP_COMPUTE_TOKEN", "BP_PUBLIC_URL", "BP_PUBLIC_DOMAIN", "BP_SCHEME", "BP_TLS_ISSUER", "BP_BIND_HOST", "BP_HTTP_PORT", "BP_HTTPS_PORT", "BP_BACKUP_DIR", "BP_BLOB_BOOTSTRAP_IMAGE", "BP_WORKERD_REPOSITORY", "BP_WORKERD_DIGEST", "BP_PLATFORM_NETWORK", "BP_VOLUME_PREFIX", "BP_BACKUP_KEEP"]);
+    const managed = new Set([...core, ...blobs, "BP_COMPUTE_TOKEN", "BP_PUBLIC_URL", "BP_PUBLIC_DOMAIN", "BP_SCHEME", "BP_TLS_ISSUER", "BP_EDGE_CA", "BP_PUBLIC_HOST", "BP_EDGE_BIND_HOST", "BP_ACCESS_MODE", "BP_AUTH_URL", "BP_PORT", "BP_BIND_HOST", "BP_HTTP_PORT", "BP_HTTPS_PORT", "BP_BACKUP_DIR", "BP_BLOB_BOOTSTRAP_IMAGE", "BP_WORKERD_REPOSITORY", "BP_WORKERD_DIGEST", "BP_PLATFORM_NETWORK", "BP_VOLUME_PREFIX", "BP_BACKUP_KEEP"]);
     for (const line of (source ?? "").split("\n")) {
       if (!line.trim() || line.trimStart().startsWith("#")) continue;
       const name = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)/.exec(line)?.[1];
@@ -37,14 +38,15 @@ export async function prepare(argv: string[], env: Environment, run: Runner = do
     }
     const keys = [...core, ...(profiles.includes("blobs") ? blobs : []), ...(profiles.includes("compute") ? ["BP_COMPUTE_TOKEN"] : [])];
     const additions: string[] = [];
-    for (const [key, value] of [["BP_PUBLIC_URL", values["public-url"]], ["BP_BACKUP_DIR", values["backup-dir"]]]) {
+    for (const [key, value] of [["BP_ACCESS_MODE", values["access-mode"]], ["BP_PUBLIC_URL", values["public-url"]], ["BP_BACKUP_DIR", values["backup-dir"]]]) {
       if (!key || value === undefined) continue;
       if (/[\n\r$`'"\\]/.test(value) || entries[key] !== undefined && entries[key] !== value) throw new CliError("env_conflict", 1);
       if (entries[key] === undefined) { entries[key] = value; additions.push(`${key}='${value}'`); }
     }
-    const url = entries.BP_PUBLIC_URL ?? "http://localhost:3000";
-    if (credentials({ BP_URL: url }, "none", undefined).url !== new URL(url).origin) throw new CliError("invalid_public_url", 1);
-    if (entries.BP_PUBLIC_URL === undefined) { entries.BP_PUBLIC_URL = url; additions.push(`BP_PUBLIC_URL='${url}'`); }
+    const access = resolveAccess(entries, profiles.includes("edge")), url = access.origin;
+    for (const [key, value] of [["BP_ACCESS_MODE", access.mode], ["BP_PUBLIC_URL", url]]) {
+      if (key && value && entries[key] === undefined) { entries[key] = value; additions.push(`${key}='${value}'`); }
+    }
     if (!entries.BP_BACKUP_DIR || !(await stat(entries.BP_BACKUP_DIR).catch(() => undefined))?.isDirectory()) throw new CliError("backup_directory_required", 1);
     const child = Object.fromEntries(Object.entries(env).filter(([k]) => !k.startsWith("BP_") && !["COMPOSE_FILE", "COMPOSE_PROFILES", "COMPOSE_PROJECT_NAME", "COMPOSE_ENV_FILES"].includes(k)));
     if (env.DOCKER_HOST && !env.DOCKER_HOST.startsWith("unix://")) throw new CliError("remote_docker_unsupported", 1);

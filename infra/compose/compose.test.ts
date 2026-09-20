@@ -2,13 +2,15 @@ import { expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { readConfig } from "../../apps/server/platform/config.ts";
+import { resolveAccess } from "./validate-edge.ts";
 
 const root = resolve(import.meta.dir, "../..");
 
 const publicSettings = [
   "BP_PUBLIC_DOMAIN=example.com",
-  "BP_SCHEME=https",
-  "BP_TLS_ISSUER=internal",
+  "BP_ACCESS_MODE=local",
+  "BP_PUBLIC_URL=https://backplane.example.com:8443",
   "BP_BIND_HOST=127.0.0.1",
   "BP_PORT=3300",
   "BP_POSTGRES_PORT=55432",
@@ -43,20 +45,20 @@ async function config(overlays: string[] = [], profile?: string, settings = publ
 
 test("compose renders valid local and HTTPS public origins", async () => {
   const core = await config([], undefined, []);
-  expect(core.services.server.environment.BP_PUBLIC_URL).toBe("http://localhost:3000");
+  expect(readConfig(core.services.server.environment).publicOrigin).toBe("http://localhost:3000");
   const edge = await config(["compose.edge.yaml"], "edge", [
     "BP_PUBLIC_DOMAIN=example.com",
-    "BP_SCHEME=https",
-    "BP_TLS_ISSUER=acme",
+    "BP_ACCESS_MODE=public",
+    "BP_PUBLIC_URL=https://backplane.example.com",
   ]);
   expect(edge.services.server.environment.BP_PUBLIC_URL).toBe("https://backplane.example.com");
-  expect(edge.services.edge.environment.BP_PUBLIC_HOST).toBe("backplane.example.com");
+  expect(edge.services.edge.environment.BP_EDGE_HOST).toBe("backplane.example.com");
 });
 
 test("edge derives the public hostname from BP_PUBLIC_DOMAIN", async () => {
   const rendered = await config(["compose.edge.yaml"], "edge");
-  expect(rendered.services.edge.environment.BP_PUBLIC_HOST).toBe("backplane.example.com");
-  expect(rendered.services.edge.environment.BP_EDGE_CA).toBe("internal");
+  expect(rendered.services.edge.environment.BP_EDGE_HOST).toBe("backplane.example.com");
+  expect(rendered.services.edge.environment.BP_ACCESS_MODE).toBe("local");
   expect(rendered.services.server.environment.BP_PUBLIC_URL).toBe("https://backplane.example.com:8443");
 });
 
@@ -73,4 +75,33 @@ test("compose publishes only the expected loopback ports", async () => {
     { mode: "ingress", target: 80, published: "8080", protocol: "tcp", host_ip: "127.0.0.1" },
     { mode: "ingress", target: 443, published: "8443", protocol: "tcp", host_ip: "127.0.0.1" },
   ]);
+});
+
+test("proxy uses the gateway origin on core HTTP without a standalone edge", async () => {
+  const settings = { BP_ACCESS_MODE: "proxy", BP_PUBLIC_URL: "https://backplane.example.com" };
+  expect(resolveAccess(settings)).toMatchObject({ mode: "proxy", origin: settings.BP_PUBLIC_URL });
+  const proxy = await config([], undefined, Object.entries(settings).map(([key, value]) => `${key}=${value}`));
+  expect(proxy.services.edge).toBeUndefined();
+  expect(proxy.services.server.environment.BP_ACCESS_MODE).toBe("proxy");
+  expect(proxy.services.server.environment.BP_PUBLIC_URL).toBe(settings.BP_PUBLIC_URL);
+  expect(proxy.services.server.environment.BP_PORT).toBe("3000");
+  expect(proxy.services.server.networks.platform.aliases).toEqual(["bp-server"]);
+  expect(proxy.volumes["server-data"].name).toBe("agent-backplane_server-data");
+  const missing = await config([], undefined, ["BP_ACCESS_MODE=proxy"]);
+  expect(() => readConfig(missing.services.server.environment)).toThrow("BP_PUBLIC_URL is required");
+});
+
+test("every merged service uses journald without a Docker file cache or Alloy dependency", async () => {
+  const rendered = await config(["compose.blobs.yaml", "compose.compute.yaml", "compose.edge.yaml", "compose.dev.yaml"], "*", [
+    ...publicSettings,
+    `BP_BLOB_BOOTSTRAP_IMAGE=fixture@sha256:${"a".repeat(64)}`,
+    "BP_RUSTFS_ROOT_USER=fixture", "BP_RUSTFS_ROOT_PASSWORD=fixture",
+    "BP_BLOB_S3_ACCESS_KEY=fixture", "BP_BLOB_S3_SECRET_KEY=fixture",
+    "BP_COMPUTE_TOKEN=fixture", "BP_WORKERD_REPOSITORY=fixture", `BP_WORKERD_DIGEST=${"a".repeat(64)}`,
+  ]);
+  for (const service of Object.values(rendered.services)) {
+    expect(service).toMatchObject({ logging: { driver: "journald", options: { "cache-disabled": "true" } } });
+  }
+  expect(JSON.stringify(rendered)).not.toMatch(/alloy|json-file|\/var\/log/);
+  expect(rendered.services.rustfs.environment.RUSTFS_OBS_LOG_DIRECTORY).toBe("");
 });

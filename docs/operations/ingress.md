@@ -1,62 +1,70 @@
-# Public origin and ingress
+# Access setup
 
-Core Compose defaults `BP_PUBLIC_URL` to `http://localhost:${BP_PORT:-3000}`. The edge overlay derives `https://backplane.<BP_PUBLIC_DOMAIN>` when `BP_SCHEME=https` and `BP_PUBLIC_URL` is unset, including `BP_HTTPS_PORT` when explicitly set. A derived plain-HTTP non-loopback origin is unsupported. `BP_PUBLIC_URL` remains an explicit override for one release, and deprecated `BP_AUTH_URL` remains a fallback; if aliases are set, their normalized origins must match. Origins accept HTTP(S), a hostname or IP, and an optional port and root slash. Credentials, paths, query strings, fragments, whitespace and backslashes are rejected. Case, IDNA and default ports normalize before comparison.
+Choose `BP_ACCESS_MODE` in the environment file used by preparation:
 
-HTTP is allowed only for `localhost`, literal `127.0.0.0/8` or `::1`, without DNS lookup, unless a directly launched server explicitly sets `BP_ALLOW_INSECURE_ORIGIN=true`. The flag accepts only `true` or `false`. Every HTTP origin reports `insecure_origin` in readiness problems; that diagnostic does not change readiness status. `BP_SIGNUP` defaults to `closed`; the one-time enrollment capability remains the source of initial authority. Open sign-up is effective only on loopback origins.
+| Mode | What you get | Setup |
+| --- | --- | --- |
+| Local (`local`, default) | HTTP and self-signed HTTPS, no domain needed | Add `--profile edge` for both protocols. Core alone serves HTTP on port 3000. |
+| Public (`public`) | Automatically renewed trusted HTTPS certificates for your own domain | Set `BP_PUBLIC_DOMAIN`, publish the edge on `BP_BIND_HOST=0.0.0.0`, and add `--profile edge`. |
+| Behind another gateway (`proxy`) | That gateway handles HTTPS; this stack receives HTTP internally | Set `BP_PUBLIC_URL` to the gateway's backplane URL and omit `--profile edge`. |
 
-The CLI and MCP resolve `BP_PUBLIC_URL`, then `BP_URL`, then `BP_AUTH_URL`. Configured aliases must identify the same origin before any credential is sent. They reject non-loopback HTTP even when the server override is enabled and never follow credential-bearing redirects. Login uses that same origin for its Origin header and stored session identity.
-
-Core Compose publishes only the server on `127.0.0.1`; Postgres remains unpublished. The development overlay can publish Postgres on loopback. The server receives an explicit environment allowlist. The blobs and compute overlays supply their own server keys. Host `.env` values are Compose interpolation inputs, and the server has no `env_file`. The core allowlist does not pass the insecure HTTP override.
-
-Supply `BP_OPERATIONS_*` thresholds through a Compose override; empty passthrough values become zero and fail operations configuration validation.
-
-## Optional Caddy edge
-
-Export these settings before starting Compose (or put them in the root `.env` and use `--env-file .env` with Compose):
+For local mode, run preparation from this checkout with an existing encrypted backup mount:
 
 ```sh
-export BP_PUBLIC_DOMAIN=example.com
-export BP_SCHEME=https
-export BP_TLS_ISSUER=acme
-mise exec -- bun infra/compose/validate-edge.ts
-docker compose -f compose.yaml -f compose.edge.yaml --profile edge up -d --build
+bun infra/bootstrap/prepare.ts --access-mode local --profile edge \
+  --backup-dir /mnt/backplane-backups --capability-file "$HOME/.bp-enrollment"
 ```
 
-If bootstrap created the root `.env`, replace its exact `BP_PUBLIC_URL=http://localhost:3000` line with `BP_PUBLIC_URL=https://backplane.example.com` before running preflight. Include the explicit HTTPS port when it is not 443.
+The local edge serves HTTP on port 80 and HTTPS on port 443 together, without redirecting HTTP or telling browsers to require HTTPS. Preparation defaults the configured browser address to `http://localhost` for that setup. Without the edge profile it defaults to `http://localhost:3000`. Set `BP_HTTP_PORT`, `BP_HTTPS_PORT` or `BP_PORT` before preparation to change the published ports. Core's container always receives HTTP on port 3000 and its host port stays on `127.0.0.1`.
 
-Supply core's `BP_AUTH_SECRET` and encrypted backup mount `BP_BACKUP_DIR` as usual. The preflight computes values with the same environment precedence as Compose and validates the scheme, hostname, issuer, loopback core binding and exact HTTPS-origin agreement. The overlay uses `BP_HTTP_PORT` and `BP_HTTPS_PORT`, which default to 80 and 443. For standalone public ingress, set `BP_EDGE_BIND_HOST=0.0.0.0`, keep `BP_BIND_HOST=127.0.0.1`, point the hostname at this host and permit inbound 80/443 for ACME issuance. On a shared host, keep this repository’s edge profile off. The platform edge forwards public application traffic to `bp-server:3000` over the external network selected by `BP_PLATFORM_NETWORK` (default `platform`).
+The local HTTPS listener covers `localhost`, `127.0.0.1`, and `backplane.localhost`. With `BP_PUBLIC_DOMAIN=example.com`, the configured hostname becomes `backplane.example.com` and preparation defaults to its HTTPS origin. Set up DNS or a hosts entry for a custom hostname. Local HTTPS clients need the trust setup below.
 
-Edge and server share the project default network and the external platform network;
-the service name `server` resolves on both. Only server-to-workerd traffic is confined
-to the default network. Every platform peer can reach the plaintext server. Trust the
-host and peers on both networks, restrict Docker access and network membership, and
-isolate untrusted peers or use authenticated HTTPS for upstream traffic.
+For public mode, put `BP_ACCESS_MODE=public`, `BP_PUBLIC_DOMAIN=example.com`, and `BP_BIND_HOST=0.0.0.0` in the selected environment file, then run preparation with `--profile edge`. Point `backplane.example.com` at this host and allow inbound ports 80 and 443. A loopback bind is also supported if a separate TCP forwarder makes those ports publicly reachable; a loopback bind alone cannot obtain public certificates. HTTP redirects to the configured HTTPS address; `/health` stays available over HTTP for health checks. HTTPS tells browsers to require HTTPS on future visits.
 
-Port 80 redirects to the configured HTTPS hostname. HTTPS alone sends HSTS. Both listeners return 404 for `/health/operations`, `/metrics`, their descendants and normalized-path variants, even with an operator token, and strip `Authorization` from `/health/ready`, its trailing slash and descendants so the public form (enrollment state, status, problem codes) is all the internet can see. Operators use the loopback server port with `BP_OPERATIONS_TOKEN` for readiness details.
+For Platform Edge, use `BP_ACCESS_MODE=proxy` and the exact external `BP_PUBLIC_URL`. Preparation starts core without a standalone Caddy. Platform Edge forwards to `bp-server:3000` on `BP_PLATFORM_NETWORK` (default `platform`). The gateway owns certificate issuance, HTTP redirects and operator-route exclusions. Keep the standalone edge profile off when another gateway owns ports 80 and 443.
 
-The server ignores `Forwarded`, every `X-Forwarded-*`, `X-Real-IP`, `CF-Connecting-IP` and `True-Client-IP`. The configured origin determines authentication and secure cookies through an HTTP upstream connection. Custom proxies must terminate TLS, exclude operator paths, preserve browser Origin and Fetch Metadata, and carry SSE without buffering or a stream lifetime limit. Caddy's default SSE flushing preserves client-disconnect cancellation; do not set `flush_interval -1`. See [Caddy streaming behavior](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#streaming) and [ADR-0021](../adr/0021-proxy-trust-boundary.md).
+Preparation preserves existing secrets and rejects conflicting mode/origin settings before starting services. Set one mode directly; the previous scheme, issuer and edge override settings are unsupported. No configuration or data migration runs. Existing volume names and backup contents remain unchanged. On a host with several deployments, choose distinct `BP_VOLUME_PREFIX` and `BP_PLATFORM_NETWORK` values so the `bp-server` and `bp-gateway` aliases resolve uniquely.
 
-## Internal CA
+## Browser address for authentication
 
-For private deployments, use `BP_TLS_ISSUER=internal`. Caddy stores certificates and CA keys in `edge-data`, with configuration state in `edge-config`. Back up both securely and preserve them during recovery. Export only the public root certificate:
+`BP_PUBLIC_URL` is one configured origin, even when both listener protocols are available. Choose the address used for browser login and the CLI. A local edge accepts an explicitly selected HTTP loopback origin or HTTPS origin on one of its certificate names and corresponding published ports. Other listener addresses can serve requests, but authenticated browser mutations still require the configured browser Origin; sessions and secure-cookie attributes follow its scheme. Public mode requires the derived `https://backplane.<BP_PUBLIC_DOMAIN>` origin, including a non-default HTTPS port. Behind another gateway, preparation preserves the configured gateway origin.
+
+Origins normalize case, IDNA and default ports. Credentials, paths, query strings, fragments, whitespace and backslashes are rejected. `BP_AUTH_URL`, if supplied separately, must normalize to the same configured browser address; it no longer supplies a fallback origin. CLI and MCP accept `BP_PUBLIC_URL` or the CLI endpoint setting `BP_URL` and reject conflicts before sending credentials. They never follow credential-bearing redirects.
+
+HTTP authentication requires a loopback origin unless a directly launched server explicitly enables `BP_ALLOW_INSECURE_ORIGIN=true`. Compose does not pass that override. HTTP appears as an `insecure_origin` readiness diagnostic without changing readiness status. Sign-up remains closed by default; initial enrollment still uses the protected capability file.
+
+The server strips `Forwarded`, every `X-Forwarded-*`, `X-Real-IP`, `CF-Connecting-IP` and `True-Client-IP`. It never derives an authentication origin from a request Host header. The configured scheme determines cookie security through the HTTP upstream connection. Both standalone listeners exclude operator routes (`/health/operations`, `/metrics` and normalized variants) and strip Authorization from public readiness. Operators use the loopback server port with `BP_OPERATIONS_TOKEN`.
+
+Edge and server share the project network and external platform network. Trust the host and Docker peers, restrict Docker access and network membership, and isolate untrusted peers. Custom gateways must preserve browser Origin and Fetch Metadata and carry SSE without buffering or a stream lifetime limit. See [ADR-0021](../adr/0021-proxy-trust-boundary.md).
+
+## Local certificate trust
+
+Local mode uses a self-signed root certificate to sign the server certificates. Public mode obtains and renews trusted certificates for your domain. Caddy stores certificates and private CA keys in `edge-data`, with configuration state in `edge-config`. Preserve and back up both securely. Automatic trust installation is disabled. Export only the public root certificate from the matching Compose project:
 
 ```sh
-docker compose -f compose.yaml -f compose.edge.yaml --profile edge \
+docker compose --env-file .env --project-name agent-backplane \
+  -f compose.yaml -f compose.edge.yaml --profile edge \
   cp edge:/data/caddy/pki/authorities/local/root.crt ./edge-root.crt
 ```
 
-Verify and distribute that certificate through an authenticated channel, then manually install it into each browser, OS or runtime trust store. Never distribute `root.key` or disable certificate verification. The overlay deliberately disables automatic trust installation. Ensure `backplane.${BP_PUBLIC_DOMAIN}` resolves to the edge, using private DNS or a local hosts entry. `BP_PUBLIC_HOST` and `BP_EDGE_CA` remain explicit compatibility overrides for one release. See [Caddy local HTTPS](https://caddyserver.com/docs/automatic-https#local-https).
+Use the same environment file and project name as preparation: replace `.env` if you supplied `--env-file PATH`, and replace `agent-backplane` if you supplied `--compose-project NAME`.
 
-## Release acceptance
+Verify and distribute that certificate through an authenticated channel, then install it into each browser, OS or runtime trust store. Never distribute `root.key` or disable certificate verification. If choosing a configured HTTPS address for local bootstrap, install trust before running the emitted `bp bootstrap` command. See [Caddy local HTTPS](https://caddyserver.com/docs/automatic-https#local-https).
 
-After enrolling the first User with bp bootstrap, run the single edge acceptance scenario against the running core and edge deployment:
+## Verification
+
+Configuration tests render isolated environment files without contacting Docker's daemon:
 
 ```sh
-export BP_EDGE_CA_CERT="$PWD/edge-root.crt"
-export BP_USER_EMAIL="<enrolled-user-email>"
-export BP_USER_PASSWORD="<enrolled-user-password>"
-export BP_OPERATIONS_TOKEN="<configured-operator-token>"
-mise exec -- bun tests/acceptance/public-ingress.ts
+bun test infra/bootstrap/prepare.test.ts infra/compose/validate-edge.test.ts infra/compose/compose.test.ts apps/server/platform/config.test.ts
 ```
 
-Keep the same Compose project name and environment for startup and acceptance (`COMPOSE_PROJECT_NAME` selects a custom project). Acceptance requires Docker, the running core and edge services, the internal CA root, and enrolled credentials. It verifies TLS hostname and chain, redirect and HSTS, operator exclusions, actual loopback bindings, login, SSE ready/heartbeat delivery, disconnect cleanup and exclusive ordered resume. Readiness checks send the operations bearer over TLS to `/health/ready` and `/health/ready/` and require only the public response keys. Public HTTP exclusion probes use a decoy bearer; the real operations token is sent only over HTTPS or to the validated loopback operator address. Missing prerequisites fail. It creates one Workspace and two Principals through the API; use a disposable release deployment. Run the two embedded application scenarios with `mise exec -- bun run test`.
+The disposable listener probes require Docker with journald and the pinned Caddy image already cached. They use a unique project, random loopback ports, a dedicated network with outbound certificate requests blocked, and temporary certificate storage. Only the public CA certificate is exported. No application database or installed deployment is used:
+
+```sh
+bun tests/acceptance/access-modes.ts
+```
+
+These three probes cover local dual protocols, verified hostname/localhost/IP certificates, and public HTTP redirects with the health exception. Public certificate issuance and renewal require reachable public DNS and cannot be proven by this isolated probe.
+
+The existing application ingress acceptance uses a disposable, enrolled local core plus edge deployment with a configured HTTPS address. Supply its matching environment and project, `BP_EDGE_CA_CERT`, `BP_USER_EMAIL`, `BP_USER_PASSWORD`, and `BP_OPERATIONS_TOKEN`, then run `bun tests/acceptance/public-ingress.ts`. It checks cookie/CSRF policy, operator exclusions, actual loopback bindings and SSE lifetime/resume through Caddy. Missing prerequisites fail. For direct application checks against temporary PostgreSQL, run `bun run test apps/server/platform/forwarded-headers.test.ts`.

@@ -16,7 +16,7 @@ describe("readConfig", () => {
       authSecret: "test-secret-at-least-32-characters", publicOrigin: "http://localhost:3000", signup: "closed", insecureOrigin: true });
     expect(() => readConfig({ BP_DATABASE_URL: "postgres://x", BP_ADMIN_DATABASE_URL: "postgres://admin", BP_AUTH_SECRET: "test-secret-at-least-32-characters" })).toThrow("BP_ADMIN_DATABASE_URL is forbidden");
     expect(readConfig({ BP_DATABASE_URL: "postgres://x", BP_AUTH_SECRET: "test-secret-at-least-32-characters", BP_PORT: "4000" }).publicOrigin).toBe("http://localhost:4000");
-    expect(readConfig({ BP_DATABASE_URL: "postgres://x", BP_AUTH_SECRET: "test-secret-at-least-32-characters", BP_AUTH_URL: "https://backplane.example" }).publicOrigin).toBe("https://backplane.example");
+    expect(readConfig({ BP_DATABASE_URL: "postgres://x", BP_AUTH_SECRET: "test-secret-at-least-32-characters", BP_PUBLIC_URL: "https://backplane.example" }).publicOrigin).toBe("https://backplane.example");
     for (const publicUrl of ["http://2130706433", "http://0177.0.0.1", "http://0x7f000001", "https://127.1",
       "http://localhost:", "https://[::1]:", "http://%31%32%37.0.0.1"]) {
       const env = { BP_DATABASE_URL: "postgres://x", BP_AUTH_SECRET: "test-secret-at-least-32-characters", BP_PUBLIC_URL: publicUrl };
