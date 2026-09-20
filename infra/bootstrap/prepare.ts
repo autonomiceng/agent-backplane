@@ -26,6 +26,7 @@ const help = `Usage: bun infra/bootstrap/prepare.ts --capability-file PATH [opti
   --access-mode local|public|proxy  --public-url URL  --backup-dir PATH
 Omitted selectors reuse recorded COMPOSE_PROJECT_NAME, COMPOSE_FILE and COMPOSE_PROFILES.
 Fresh ingress flags add to the mode's profiles. Minimal selects filesystem Files, no Functions.
+Fresh --profile '' requires --mode minimal; use --mode minimal for a core-only installation.
 Saved selections stay authoritative; a mode must agree or requires an explicit upgrade/migration.
 Existing selections and backends cannot be changed here.
 `;
@@ -70,7 +71,8 @@ export function resolveRustfsConsole(env: Environment, profiles: string[], acces
   return { enabled, host, origin, authority: url.host, urlHost: url.hostname.replace(/^\[|\]$/g, "") };
 }
 
-export async function prepare(argv: string[], env: Environment, run: Runner = docker, recordStatus: StatusRecorder = statusRecorder): Promise<string> {
+export async function prepare(argv: string[], env: Environment, run: Runner = docker, recordStatus: StatusRecorder = statusRecorder,
+  timing = { now: () => performance.now(), sleep: (ms: number) => Bun.sleep(ms) }): Promise<string> {
   const { values } = parseArgs({ args: argv, allowPositionals: false, options: {
     "access-mode": { type: "string" }, "public-url": { type: "string" }, "backup-dir": { type: "string" }, "env-file": { type: "string" },
     "capability-file": { type: "string" }, "compose-project": { type: "string" }, profile: { type: "string", multiple: true },
@@ -120,7 +122,7 @@ export async function prepare(argv: string[], env: Environment, run: Runner = do
     const requestedProfiles = freshSelection
       ? [...new Set([...(mode === "full" ? ["blobs", "compute"] : []), ...(values.profile ?? []).filter(Boolean)])].join(",")
       : values.profile?.join(",");
-    if (freshSelection && mode === "full" && values.profile?.includes("")) throw new CliError("mode_conflict_requires_explicit_upgrade_or_migration", 2);
+    if (freshSelection && mode === "full" && values.profile?.includes("")) throw new CliError("invalid_arguments", 1);
     const profileSelection = select("COMPOSE_PROFILES", requestedProfiles, "");
     const profiles = profileSelection === "" ? [] : [...new Set(profileSelection.split(","))];
     if (profiles.some(p => !["blobs", "compute", "edge", "gateway"].includes(p)) || values.profile?.includes("") && values.profile.length !== 1) throw new CliError("invalid_arguments", 1);
@@ -197,6 +199,7 @@ export async function prepare(argv: string[], env: Environment, run: Runner = do
       || Boolean(config.services.server.environment.BP_COMPUTE_URL) !== (mode === "full")))
       throw new CliError("mode_conflict_requires_explicit_upgrade_or_migration", 2);
     save("BP_BLOB_BACKEND", backend);
+    const identity = profiles.includes("compute") ? await verifyWorkerdImage(entries, child, run) : undefined;
     await recordStatus(["--state-dir", statusDir, "--prepare"]);
     source = lines.join("\n");
     if (!source.endsWith("\n")) source += "\n";
@@ -212,8 +215,7 @@ export async function prepare(argv: string[], env: Environment, run: Runner = do
     const statusRecord = ["--state-dir", statusDir, "--checkout", root, "--env-file", path, "--started", new Date().toISOString(),
       "--project-name", project, ...files.flatMap(file => ["--compose-file", file]), ...profiles.flatMap(profile => ["--profile", profile])];
     await recordStatus([...statusRecord, "--state", "unavailable"]);
-    if (profiles.includes("compute")) {
-      const identity = await verifyWorkerdImage(entries, child, run);
+    if (identity) {
       await persistWorkerdEvidence(resolve(dirname(path), entries.BP_DATA_DIR ?? "data"), identity);
       child.BP_WORKERD_IMAGE = identity.reference;
       child.BP_WORKERD_EFFECTIVE_IMAGE = identity.imageId;
@@ -228,19 +230,31 @@ export async function prepare(argv: string[], env: Environment, run: Runner = do
     const readiness: unknown = JSON.parse(await run([...compose, "exec", "-T", "server", "sh", "-ec", 'exec curl --max-time 5 -fsS -H "Authorization: Bearer $BP_OPERATIONS_TOKEN" http://localhost:3000/health/ready'], child, 10_000));
     if (typeof readiness !== "object" || readiness === null || !("enrollment" in readiness) || typeof readiness.enrollment !== "object" || readiness.enrollment === null || !("state" in readiness.enrollment)) throw new CliError("invalid_readiness", 2);
     // Operations may return 503 for an absent first backup; inspect the selected capabilities.
-    let operations: unknown;
-    try {
-      operations = JSON.parse(await run([...compose, "exec", "-T", "server", "sh", "-ec",
-        'exec curl --max-time 5 -sS -H "Authorization: Bearer $BP_OPERATIONS_TOKEN" http://localhost:3000/health/operations'], child, 10_000));
-    } catch { throw new CliError("selected_capabilities_not_ready", 2); }
-    const capabilities = record(operations) && record(operations.capabilities) ? operations.capabilities : {};
     const selected = { files: backend, ...(profiles.includes("compute") ? { functions: "workerd" } : {}) };
-    for (const [name, expected] of Object.entries(selected)) {
-      const observation = capabilities[name];
-      const age = record(observation) && typeof observation.observedAt === "string" ? Date.now() - Date.parse(observation.observedAt) : NaN;
-      if (!record(observation) || observation.state !== "healthy" || observation.backend !== expected || !(age >= 0 && age <= 15_000))
-        throw new CliError("selected_capabilities_not_ready", 2);
+    const deadline = timing.now() + 30_000;
+    let capabilitiesReady = false;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const remaining = deadline - timing.now();
+      if (remaining <= 0) break;
+      const response = await run([...compose, "exec", "-T", "server", "sh", "-ec",
+        'exec curl --max-time 5 -sS -H "Authorization: Bearer $BP_OPERATIONS_TOKEN" http://localhost:3000/health/operations'], child, Math.min(10_000, remaining)).catch(() => undefined);
+      if (response !== undefined) {
+        let operations: unknown;
+        try { operations = JSON.parse(response); }
+        catch { throw new CliError("selected_capabilities_not_ready", 2); }
+        if (!record(operations) || !record(operations.capabilities)) throw new CliError("operations_capabilities_unsupported", 2);
+        const capabilities = operations.capabilities;
+        capabilitiesReady = Object.entries(selected).every(([name, expected]) => {
+          const observation = capabilities[name];
+          const age = record(observation) && typeof observation.observedAt === "string" ? Date.now() - Date.parse(observation.observedAt) : NaN;
+          return record(observation) && observation.state === "healthy" && observation.backend === expected && age >= 0 && age <= 15_000;
+        });
+      }
+      if (timing.now() >= deadline) { capabilitiesReady = false; break; }
+      if (capabilitiesReady || attempt === 3 || deadline - timing.now() <= 1000) break;
+      await timing.sleep(1000);
     }
+    if (!capabilitiesReady) throw new CliError("selected_capabilities_not_ready", 2);
     const capabilityPath = resolve(values["capability-file"]);
     if (readiness.enrollment.state === "pending") {
       const capability = await run([...compose, "exec", "-T", "server", "cat", "/data/enrollment/capability"], child);

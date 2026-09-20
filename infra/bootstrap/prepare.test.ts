@@ -319,6 +319,23 @@ test("fresh full and minimal save native Compose selections, including independe
     expect(calls.some(call => call[0] === "run")).toBe(mode !== "minimal");
     expect(calls.findIndex(call => call.includes("config"))).toBeLessThan(calls.findIndex(call => call.includes("create")));
   });
+  for (const source of [undefined, "# retain operator settings\nBP_WORKERD_IMAGE=\n"]) await selectionFixture(async ({ directory, path, args, runner, record, calls, records }) => {
+    if (source !== undefined) await writeFile(path, source);
+    await expect(prepare(args, {}, async (command, env) => {
+      const result = await runner(command, env);
+      if (command[0] === "build") throw Error("artifact build failed");
+      return result;
+    }, record)).rejects.toThrow("artifact build failed");
+    expect(await readFile(path, "utf8").catch(error => { if (error.code === "ENOENT") return undefined; throw error; })).toBe(source);
+    expect(mutations(calls)).toEqual([]); expect(records).toEqual([]);
+    expect(calls.findIndex(call => call.includes("config"))).toBeLessThan(calls.findIndex(call => call[0] === "build"));
+    await expect(lstat(join(directory, "data"))).rejects.toMatchObject({ code: "ENOENT" });
+    calls.length = 0;
+    await prepare([...args, "--mode", "minimal", "--profile", ""], {}, runner, record);
+    expect(await readFile(path, "utf8")).toContain("COMPOSE_PROFILES=''");
+    expect(await readFile(path, "utf8")).toContain("BP_BLOB_BACKEND='filesystem'");
+    expect(calls.some(call => call[0] === "build" || call[0] === "run")).toBe(false);
+  });
 });
 
 test("complete full and minimal selections preserve project, files, secrets and settings on rerun", async () => {
@@ -355,23 +372,28 @@ test("conflicting modes and shell selectors refuse before persisted or runtime m
     }
     await expect(prepare([...args, "--mode", "minimal", "--profile", "compute"], {}, runner, record))
       .rejects.toMatchObject({ error: "mode_conflict_requires_explicit_upgrade_or_migration" });
+    await expect(prepare([...args, "--profile", ""], {}, runner, record)).rejects.toMatchObject({ error: "invalid_arguments", exit: 1 });
+    expect(await prepare(["--help"], {})).toContain("Fresh --profile '' requires --mode minimal");
     expect(calls).toEqual([]); expect(records).toEqual([]);
     await expect(lstat(path)).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
 
 test("selected capability failures cannot publish healthy bootstrap or enrollment success", async () => {
-  for (const capability of ["files", "functions"]) for (const fault of ["unavailable", "unknown", "disabled", "wrong-backend", "stale", "missing", "invalid-json", "timeout"]) {
-    await selectionFixture(async ({ args, runner, record, records }) => {
+  for (const capability of ["files", "functions"]) for (const fault of ["unavailable", "unknown", "disabled", "wrong-backend", "stale", "missing", "invalid-json", "timeout", "unsupported"]) {
+    await selectionFixture(async ({ directory, args, runner, record, records, calls }) => {
+      let elapsed = 0, attempts = 0;
       await expect(prepare(args, {}, async (command, env, timeoutMs) => {
         const response = await runner(command, env);
         if (!command.some(arg => arg.includes("/health/operations"))) return response;
-        expect(timeoutMs).toBe(10_000);
+        attempts++;
+        expect(timeoutMs).toBe(Math.min(10_000, 30_000 - elapsed));
         expect(command.at(-1)).toContain("--max-time 5");
-        if (fault === "timeout") throw Error("deadline");
+        if (fault === "timeout") { elapsed += timeoutMs ?? 0; throw Error("deadline"); }
         if (fault === "invalid-json") return "invalid";
         const body: unknown = JSON.parse(response);
         if (!isRecord(body) || !isRecord(body.capabilities)) throw Error("invalid fixture");
+        if (fault === "unsupported") { delete body.capabilities; return JSON.stringify(body); }
         const observation = body.capabilities[capability];
         if (!isRecord(observation)) throw Error("missing fixture capability");
         if (fault === "wrong-backend") observation.backend = "other";
@@ -379,10 +401,42 @@ test("selected capability failures cannot publish healthy bootstrap or enrollmen
         else if (fault === "missing") delete body.capabilities[capability];
         else observation.state = fault;
         return JSON.stringify(body);
-      }, record)).rejects.toMatchObject({ error: "selected_capabilities_not_ready" });
+      }, record, { now: () => elapsed, sleep: async ms => { elapsed += ms; } })).rejects.toMatchObject({
+        error: fault === "unsupported" ? "operations_capabilities_unsupported" : "selected_capabilities_not_ready", exit: 2,
+      });
+      expect(attempts).toBe(fault === "unsupported" || fault === "invalid-json" ? 1 : fault === "timeout" ? 3 : 4);
+      expect(elapsed).toBe(fault === "timeout" ? 30_000 : fault === "unsupported" || fault === "invalid-json" ? 0 : 3000);
+      expect(calls.some(call => call.at(-1) === "/data/enrollment/capability")).toBe(false);
+      await expect(lstat(join(directory, "capability"))).rejects.toMatchObject({ code: "ENOENT" });
       expect(records.filter(call => call.includes("--state")).map(call => call.at(-1))).toEqual(["unavailable"]);
     });
   }
+});
+
+test("capability polling recovers transient unknown before exporting pending enrollment", async () => {
+  await selectionFixture(async ({ directory, args, runner, record, records }) => {
+    let attempts = 0, elapsed = 0;
+    const sleeps: number[] = [];
+    const output = await prepare(args, {}, async (command, env) => {
+      const response = await runner(command, env);
+      if (command.some(arg => arg.includes("/health/ready"))) return JSON.stringify({ enrollment: { state: "pending" } });
+      if (command.some(arg => arg.includes("/health/operations"))) {
+        attempts++;
+        expect(records.some(call => call.at(-1) === "healthy")).toBe(false);
+        await expect(lstat(join(directory, "capability"))).rejects.toMatchObject({ code: "ENOENT" });
+        if (attempts < 3) return JSON.stringify({ capabilities: { files: { state: "unknown" }, functions: { state: "unknown" } } });
+      }
+      if (command.at(-1) === "/data/enrollment/capability") {
+        expect(attempts).toBe(3);
+        return `${"a".repeat(64)}\n`;
+      }
+      return response;
+    }, record, { now: () => elapsed, sleep: async ms => { sleeps.push(ms); elapsed += ms; } });
+    expect(sleeps).toEqual([1000, 1000]);
+    expect(output).toContain("bp bootstrap");
+    expect(await readFile(join(directory, "capability"), "utf8")).toBe(`${"a".repeat(64)}\n`);
+    expect(records.filter(call => call.includes("--state")).map(call => call.at(-1))).toEqual(["unavailable", "healthy"]);
+  });
 });
 
 test("incomplete existing selection requires original confirmation; failed inventory cannot establish fresh state", async () => {

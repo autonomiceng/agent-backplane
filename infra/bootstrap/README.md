@@ -16,7 +16,8 @@ Fresh preparation defaults to `--mode full`: RustFS-backed Files and Functions
 Host installers can pass either mode directly. Ingress stays separate: on a fresh
 installation, `--profile edge` or `--profile gateway` adds ingress to the chosen mode.
 Full always includes both capability profiles; minimal refuses either one.
-Fresh `--profile ''` requires `--mode minimal`. Edge and gateway are mutually exclusive.
+Fresh `--profile ''` without `--mode minimal` returns `invalid_arguments`; use
+`--mode minimal`. Edge and gateway are mutually exclusive.
 
 Preparation records `COMPOSE_PROJECT_NAME`, `COMPOSE_FILE`, `COMPOSE_PROFILES` and
 `BP_BLOB_BACKEND` in the selected env file. Recorded selections are authoritative;
@@ -55,7 +56,11 @@ bun infra/bootstrap/prepare.ts --env-file /path/to/.env \
 ```
 
 Run `--help` for the selection flags. Successful local resource inventory and Compose
-configuration validation precede network or volume mutation. Selection and secrets
+configuration validation precede artifact verification and network or volume mutation.
+Selected workerd images are built/verified before publishing the env file. A failed
+build or verification leaves its contents unchanged, so fresh preparation can retry
+with `--mode minimal`. Private launch evidence is persisted after env publication;
+the verified immutable image ID remains frozen for that launch. Selection and secrets
 are published together by atomic replacement before durable volumes are created,
 so an interrupted preparation reuses the same identities on its next run. An
 inventory failure refuses preparation. Bootstrap status records the actual project,
@@ -65,12 +70,18 @@ preparation records another outcome.
 
 After Compose startup, preparation checks authenticated `/health/ready` and
 `/health/operations` before exporting enrollment authority or recording healthy
-bootstrap. Each HTTP request has a five-second timeout and its Docker exec has a
-ten-second host deadline. The existing capability sampler must report a healthy,
+bootstrap. Capability readiness polls up to four times with one-second gaps within
+30 seconds total. Each HTTP request has a five-second timeout; its Docker exec deadline
+is at most ten seconds and no greater than the remaining polling budget. The existing
+capability sampler must report a healthy,
 matching Files backend and, when compute is selected, healthy workerd, with observations
 no older than 15 seconds. Missing, stale, disabled or failed selected capabilities
-return `selected_capabilities_not_ready`; rerun preparation after recovery. An operations
-503 caused by missing first-backup evidence can still carry healthy capabilities.
+return `selected_capabilities_not_ready` after the bounded retries; rerun preparation
+after recovery. Malformed JSON fails immediately with that same diagnostic. A response
+without the capability sampler contract fails immediately with
+`operations_capabilities_unsupported`. The selected server image must provide
+`/health/operations` with `capabilities`; update an incompatible image before retrying.
+An operations 503 caused by missing first-backup evidence can still carry healthy capabilities.
 The sampler reads the storage binding/marker and verifies runtime identity with a
 loader round trip. It creates no Workspace, Blob, Deployment or invocation Run.
 This bounded check establishes current capability readiness, without proving an agent
