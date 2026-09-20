@@ -110,8 +110,15 @@ with tempfile.TemporaryDirectory(prefix='bp-console-proof-') as temporary:
                                 '--mount', f'type=bind,src={ROOT}/infra/compose/Caddyfile,dst=/etc/caddy/Caddyfile,readonly',
                                 *[arg for key, value in settings.items() for arg in ('--env', key + '=' + value)],
                                 CADDY, 'caddy', 'adapt', '--config', '/etc/caddy/Caddyfile', '--adapter', 'caddyfile', '--validate')
-            docker('start', '--attach', validation)
-            assert docker('inspect', '--format', '{{.State.ExitCode}}', validation) == '0', 'Caddy configuration validation failed'
+            result = subprocess.run(['docker', 'start', '--attach', validation], env=child_env,
+                                    capture_output=True, text=True, timeout=90)
+            if result.returncode:
+                detail = result.stderr
+                for key in ('RUSTFS_ACCESS_KEY', 'RUSTFS_SECRET_KEY'):
+                    detail = detail.replace(child_env[key], '[redacted]')
+                detail = ''.join(char for char in detail if char in '\n\t' or ' ' <= char <= '~')[-500:]
+                raise RuntimeError(f"Caddy validation failed for mode={settings['BP_ACCESS_MODE']} "
+                                   f"console={settings['BP_RUSTFS_CONSOLE']}: {detail}")
         rustfs = create('--network-alias', 'rustfs', '--memory', '1g', '--cpus', '1', '--pids-limit', '128',
                         '--tmpfs', '/data:rw,size=256m,mode=0777', '--env', 'RUSTFS_ACCESS_KEY', '--env', 'RUSTFS_SECRET_KEY',
                         '--env', 'RUSTFS_CONSOLE_ENABLE=true', '--env', 'RUSTFS_CONSOLE_ADDRESS=:9001',
