@@ -9,10 +9,49 @@ import type { Pool } from "./pool.ts";
 import { probeTransaction } from "./probe-transaction.ts";
 import { databaseSchema, snapshotSchema, type Facts, type OperationsConfig, type Telemetry } from "./operations.ts";
 const record = (v: unknown): v is Record<string,unknown> => typeof v==="object" && v!==null && !Array.isArray(v);
+async function backupFile(path: string, root: string, limit: number, signal: AbortSignal) {
+  signal.throwIfAborted();
+  const parent=await realpath(dirname(path));
+  if (parent!==dirname(path) || (parent!==root && dirname(parent)!==root)) throw new Error("backup_path_outside_root");
+  const file=await open(path,constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK).catch((e: unknown)=>{
+    if (record(e) && e.code==="ENOENT") return null; throw e;
+  });
+  if (!file) return null;
+  try {
+    signal.throwIfAborted();
+    if (await realpath(dirname(path))!==parent) throw new Error("backup_path_changed");
+    const stat=await file.stat();
+    if (!stat.isFile() || stat.size>limit) throw new Error("backup_file_invalid");
+    const chunks: Buffer[]=[];
+    for await (const chunk of file.createReadStream({start:0,end:limit,autoClose:false,signal})) {
+      signal.throwIfAborted();
+      if (!Buffer.isBuffer(chunk)) throw new Error("backup_file_invalid");
+      chunks.push(chunk);
+    }
+    const buffer=Buffer.concat(chunks);
+    if (buffer.length>limit) throw new Error("backup_file_overflow");
+    const value: unknown=JSON.parse(buffer.toString());
+    return {value,mtime:stat.mtime};
+  } finally { await file.close(); }
+}
 async function backupManifest(dir: string | undefined, systemId: string | undefined, signal: AbortSignal): Promise<Facts["backup"]> {
   if (!dir || !systemId) return null;
   signal.throwIfAborted();
   const root=await realpath(dir);
+  const receipt=await backupFile(join(root,"health.json"),root,4096,signal);
+  if (receipt) {
+    const m=receipt.value;
+    if (!record(m) || Object.keys(m).sort().join()!=="completedAt,restorePoint,systemId,version" || m.version!==1 || m.systemId!==systemId
+      || typeof m.completedAt!=="string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|\+00:00)$/.test(m.completedAt) || !Number.isFinite(Date.parse(m.completedAt))
+      || new Date(m.completedAt).toISOString().slice(0,19)!==m.completedAt.slice(0,19)
+      || !record(m.restorePoint) || Object.keys(m.restorePoint).sort().join()!=="lsn,name,timeline"
+      || typeof m.restorePoint.name!=="string" || !/^(?:bp_[a-f0-9]{32}|[0-9]{8}T[0-9]{12}Z)$/.test(m.restorePoint.name)
+      || typeof m.restorePoint.lsn!=="string" || !/^[0-9A-F]+\/[0-9A-F]+$/.test(m.restorePoint.lsn)
+      || typeof m.restorePoint.timeline!=="number" || !Number.isSafeInteger(m.restorePoint.timeline) || m.restorePoint.timeline<=0) throw new Error("backup_receipt_invalid");
+    const checkpoint=await lstat(join(root,m.restorePoint.name));
+    if (!checkpoint.isDirectory() || checkpoint.isSymbolicLink()) throw new Error("backup_receipt_checkpoint_missing");
+    return {completedAt:m.completedAt,restorePoint:{name:m.restorePoint.name,lsn:m.restorePoint.lsn,timeline:m.restorePoint.timeline}};
+  }
   const paths: string[] = [join(root,"manifest.json")];
   const direct=await lstat(paths[0] ?? "").catch((e: unknown)=>{ if (record(e) && e.code==="ENOENT") return null; throw e; });
   if (!direct) {
@@ -27,37 +66,18 @@ async function backupManifest(dir: string | undefined, systemId: string | undefi
   let latest: Facts["backup"] = null;
   for (const path of paths) {
     signal.throwIfAborted();
-    const parent=await realpath(dirname(path));
-    if (parent!==dirname(path) || (parent!==root && dirname(parent)!==root)) throw new Error("backup_path_outside_root");
-    signal.throwIfAborted();
-    const file = await open(join(parent,"manifest.json"),constants.O_RDONLY | constants.O_NOFOLLOW).catch((e: unknown)=>{
-      if (record(e) && e.code==="ENOENT") return null; throw e;
-    });
+    const file=await backupFile(path,root,1048576,signal);
     if (!file) continue;
-    try {
-      signal.throwIfAborted();
-      if (await realpath(dirname(path))!==parent) throw new Error("backup_path_changed");
-      const stat=await file.stat();
-      if (!stat.isFile() || stat.size>1048576) throw new Error("backup_manifest_invalid");
-      const chunks: Buffer[]=[];
-      for await (const chunk of file.createReadStream({start:0,end:1048576,autoClose:false,signal})) {
-        signal.throwIfAborted();
-        if (!Buffer.isBuffer(chunk)) throw new Error("backup_manifest_invalid");
-        chunks.push(chunk);
-      }
-      const buffer=Buffer.concat(chunks);
-      if (buffer.length>1048576) throw new Error("backup_manifest_overflow");
-      const m: unknown=JSON.parse(buffer.toString());
-      if (!record(m) || !record(m.before) || !record(m.after) || m.after.systemId!==systemId || m.before.systemId!==systemId
-        || typeof m.name!=="string" || !/^(?:bp_[a-f0-9]{32}|[0-9]{8}T[0-9]{12}Z)$/.test(m.name) || typeof m.targetLsn!=="string" || !/^[0-9A-F]+\/[0-9A-F]+$/.test(m.targetLsn)
-        || typeof m.segment!=="string" || !/^[0-9A-F]{24}$/.test(m.segment) || typeof m.after.timeline!=="number" || !Number.isInteger(m.after.timeline)
-        || m.after.timeline<=0 || m.before.timeline!==m.after.timeline || parseInt(m.segment.slice(0,8),16)!==m.after.timeline
-        || typeof m.after.postgres!=="string" || m.before.postgres!==m.after.postgres || typeof m.after.schema!=="number" || m.before.schema!==m.after.schema
-        || typeof m.after.pgmq!=="string" || m.before.pgmq!==m.after.pgmq || !Array.isArray(m.before.heads) || !Array.isArray(m.after.heads)
-        || ![...m.before.heads,...m.after.heads].every(h=>record(h) && typeof h.workspaceId==="string" && typeof h.head==="string" && /^\d+$/.test(h.head))) throw new Error("backup_manifest_invalid");
-      const candidate={ completedAt:typeof m.completedAt === "string" ? m.completedAt : stat.mtime.toISOString(),restorePoint:{ name:m.name,lsn:m.targetLsn,timeline:m.after.timeline } };
-      if (!latest || candidate.completedAt>latest.completedAt) latest=candidate;
-    } finally { await file.close(); }
+    const m=file.value;
+    if (!record(m) || !record(m.before) || !record(m.after) || m.after.systemId!==systemId || m.before.systemId!==systemId
+      || typeof m.name!=="string" || !/^(?:bp_[a-f0-9]{32}|[0-9]{8}T[0-9]{12}Z)$/.test(m.name) || typeof m.targetLsn!=="string" || !/^[0-9A-F]+\/[0-9A-F]+$/.test(m.targetLsn)
+      || typeof m.segment!=="string" || !/^[0-9A-F]{24}$/.test(m.segment) || typeof m.after.timeline!=="number" || !Number.isInteger(m.after.timeline)
+      || m.after.timeline<=0 || m.before.timeline!==m.after.timeline || parseInt(m.segment.slice(0,8),16)!==m.after.timeline
+      || typeof m.after.postgres!=="string" || m.before.postgres!==m.after.postgres || typeof m.after.schema!=="number" || m.before.schema!==m.after.schema
+      || typeof m.after.pgmq!=="string" || m.before.pgmq!==m.after.pgmq || !Array.isArray(m.before.heads) || !Array.isArray(m.after.heads)
+      || ![...m.before.heads,...m.after.heads].every(h=>record(h) && typeof h.workspaceId==="string" && typeof h.head==="string" && /^\d+$/.test(h.head))) throw new Error("backup_manifest_invalid");
+    const candidate={ completedAt:typeof m.completedAt === "string" ? m.completedAt : file.mtime.toISOString(),restorePoint:{ name:m.name,lsn:m.targetLsn,timeline:m.after.timeline } };
+    if (!latest || candidate.completedAt>latest.completedAt) latest=candidate;
   }
   return latest;
 }

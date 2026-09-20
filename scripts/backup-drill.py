@@ -85,7 +85,7 @@ def drill(offline=False):
             for cycle, repository in enumerate((recovery, recovery_again), start=1):
                 if offline:
                     stack.dc('stop', 'server')
-                checkpoint = backup(stack, offline=offline)
+                checkpoint = backup(stack, offline=offline, fenced=True)
                 if offline and 'server' in stack.dc('ps', '--status', 'running', '--services').split():
                     raise ValueError('offline backup restarted the server')
                 command(compose + ['down'])
