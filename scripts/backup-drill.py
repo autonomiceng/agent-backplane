@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Destructive only within a fresh disposable Compose project and its private temporary repository."""
+import argparse
 import json
 import os
 from pathlib import Path
@@ -13,7 +14,7 @@ import uuid
 from checkpoint import ROOT, Stack, backup, command, restore
 
 
-def drill():
+def drill(offline=False):
     root = Path(tempfile.mkdtemp(prefix='backplane-drill-'))
     host_uid, host_gid = os.getuid(), os.getgid()
     try:
@@ -72,8 +73,21 @@ def drill():
             blob_req = urllib.request.Request(origin + base + '/blobs?key=checkpoint-proof', data=blob, headers={**headers, 'content-type': 'application/octet-stream'}, method='POST')
             with urllib.request.urlopen(blob_req, timeout=30) as response:
                 stored_blob = json.load(response)
+            retained = None
+            if offline:
+                stack.dc('stop', 'server')
+                retained = f"/data/blobs/{enrolled['workspaceId']}/{uuid.uuid4()}"
+                # Simulate an upload that reached storage but never committed its reference.
+                stack.dc('run', '--rm', '--no-deps', '--entrypoint', 'bun', 'server', '-e',
+                         "const f=await Bun.file(process.argv[1]); await Bun.write(f,'retained crash bytes'); await import('node:fs/promises').then(fs=>fs.chmod(process.argv[1],0o600))", retained)
+                # Capture includes an unclassified leftover; restore must retain it explicitly.
+                # The first source is deliberately not reconciled before capture.
             for cycle, repository in enumerate((recovery, recovery_again), start=1):
-                checkpoint = backup(stack)
+                if offline:
+                    stack.dc('stop', 'server')
+                checkpoint = backup(stack, offline=offline)
+                if offline and 'server' in stack.dc('ps', '--status', 'running', '--services').split():
+                    raise ValueError('offline backup restarted the server')
                 command(compose + ['down'])
                 command(['docker', 'volume', 'rm', *volumes])
                 copied = repository / 'backups' / checkpoint.name
@@ -81,7 +95,7 @@ def drill():
                 write_env(repository)
                 stack = Stack(env_file, copied)
                 started = time.monotonic()
-                restore(stack, copied)
+                restore(stack, copied, retain_unreferenced=offline)
                 user_headers = {'content-type': 'application/json', 'origin': origin}
                 login_req = urllib.request.Request(origin + '/api/auth/sign-in/email', data=json.dumps({'email': 'drill@example.com', 'password': password}).encode(), headers=user_headers)
                 with urllib.request.urlopen(login_req, timeout=30) as response:
@@ -106,6 +120,11 @@ def drill():
                 with urllib.request.urlopen(blob_req, timeout=30) as response:
                     if response.read() != blob:
                         raise ValueError('restored blob differs')
+                if retained:
+                    if stack.dc('exec', '-T', 'server', 'bun', '-e', "console.log(await Bun.file(process.argv[1]).text())", retained) != 'retained crash bytes':
+                        raise ValueError('retained crash bytes changed')
+                    if stack.pg('SELECT count(*) FROM control.blob_storage_retained') != '1':
+                        raise ValueError('retention evidence missing after restore')
                 # RTO spans restore startup, login, gate release and row/blob verification.
                 print(json.dumps({'project': project, 'cycle': cycle, 'rtoSeconds': round(time.monotonic() - started, 3),
                                   'row': 'verified', 'login': 'verified', 'blob': 'verified', 'checkpoint': 'verified'}))
@@ -132,4 +151,6 @@ def drill():
 
 
 if __name__ == '__main__':
-    drill()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--offline', action='store_true', help='also recover explicitly retained crash bytes from a stopped-server capture')
+    drill(parser.parse_args().offline)

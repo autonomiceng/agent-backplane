@@ -39,7 +39,7 @@ test("native image defaults survive empty settings and accept complete reference
 test("helpers inherit server and PostgreSQL references including the internal gateway", async () => {
   const services = await config(["BP_POSTGRES_IMAGE=pg-local", "BP_SERVER_IMAGE=server-local", "BP_CADDY_IMAGE=caddy-local"], ["gateway", "blobs"]);
   expect(services["backup-init"].image).toBe(services.postgres.image);
-  for (const name of ["migrate", "data-init", "blob-bootstrap", "blob-image-check"]) expect(services[name].image).toBe(services.server.image);
+  for (const name of ["migrate", "data-init", "storage-init", "blob-bootstrap", "blob-image-check"]) expect(services[name].image).toBe(services.server.image);
   expect(services.edge.image).toBe("caddy-local");
   expect(services["blob-bootstrap"].environment.BP_BLOB_BOOTSTRAP_IMAGE).toBe("server-local");
 });

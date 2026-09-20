@@ -13,17 +13,23 @@ export async function storageInventory(tx: RunTransaction, store: BindingStore, 
   if (expected.size !== references.length + retained.length) throw new Error("blob_binding_inventory_mismatch");
   const objects: (StoredObject & { size: number; hash: string; classification: "referenced" | "retained" | "unreferenced" })[] = [];
   const seen = new Set<string>(), live = new Set(references.map(objectKey));
+  const listed: StoredObject[] = [];
   for await (const ref of store.inventory(allowAbsent)) {
-    const key = objectKey(ref), row = expected.get(key);
+    const key = objectKey(ref);
     if (seen.has(key)) throw new Error("blob_binding_inventory_mismatch");
     seen.add(key);
+    if (!expected.has(key) && !allowUnreferenced) throw new Error("blob_binding_inventory_mismatch");
+    listed.push(ref);
+  }
+  if ([...expected.keys()].some(key => !seen.has(key))) throw new Error("blob_binding_inventory_mismatch");
+  // Refuse classification mismatches before reading bytes, including on automatic restart.
+  for (const ref of listed) {
+    const key = objectKey(ref), row = expected.get(key);
     const bytes = ref.staging ? await store.readStored(ref.workspace, { id: ref.id, staging: true }) : await store.open(ref.workspace, ref.id);
     const hash = blobHash(bytes);
     if (row && (bytes.length !== row.size || hash !== row.hash)) throw new Error("blob_binding_content_mismatch");
-    if (!row && !allowUnreferenced) throw new Error("blob_binding_inventory_mismatch");
     objects.push({ ...ref, size: bytes.length, hash, classification: live.has(key) ? "referenced" : row ? "retained" : "unreferenced" });
   }
-  if ([...expected.keys()].some(key => !seen.has(key))) throw new Error("blob_binding_inventory_mismatch");
   objects.sort((a, b) => objectKey(a) < objectKey(b) ? -1 : objectKey(a) > objectKey(b) ? 1 : 0);
   const digest = blobHash(Buffer.from(JSON.stringify(objects.map(ref => [objectKey(ref), ref.size, ref.hash]))));
   return { objects, digest };

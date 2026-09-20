@@ -3,13 +3,15 @@
 Once activated, startup verifies the selected store before enrollment, requests, sampling or purge.
 It writes no binding, marker or blob bytes. A separate operator command initializes
 or adopts storage. Deploy the operator, schema, cleanup exclusions and bootstrap
-service together before activating the startup check. Startup/Compose activation ships separately from this operator protocol.
+service together before activating the startup check. The shared-image initialization service precedes server startup.
 
 ## New installation
 
-Automatic Compose initialization is delivered with the separate startup activation
-slice. This checkout exposes the operator command explicitly. With PostgreSQL
-running, migrations applied, the data directory initialized, and all writers stopped,
+Normal preparation now runs the shared-image `storage-init` after migrations and
+data-directory setup, before `server`. It automatically initializes only an empty
+installation. The explicit operator command below also supports fenced inspection,
+adoption and reconciliation. With PostgreSQL running, migrations applied, the data
+directory initialized, and all writers stopped,
 use the deployment Compose selection described below. Place the matching
 PostgreSQL admin URL in a private owner-only file readable by the container's `bun`
 user. The URL must address PostgreSQL on the deployment's private network. Keep its
@@ -58,7 +60,10 @@ bash scripts/backup.sh --offline --env-file .env
 Use the same env file and `COMPOSE_FILE`/`COMPOSE_PROFILES` for capture as the
 running deployment. `--offline` requires PostgreSQL running and server, edge and
 storage-init stopped; it does not restart them. This supports a server whose
-startup already fails on crash leftovers. The normal backup mode is unchanged.
+startup already fails on crash leftovers. Normal backup resumes only the services it stopped and waits for their health.
+A source that cannot restart after capture makes the command fail with a recovery
+diagnostic; any completed Checkpoint remains available. Keep ingress fenced and use
+the capture to reconcile leftovers before resuming traffic.
 For S3, take and retain an externally coordinated PostgreSQL/store capture with
 writers and deletion fenced. Automated coordinated S3 Checkpoints remain separate.
 
@@ -166,9 +171,12 @@ bytes through all of `server-data`; physical PostgreSQL backup includes binding 
 retention records. Store archives use `tar --hard-dereference` so marker links become
 regular file entries accepted by the existing safe restore validator. Restore both
 stores from one capture before the existing User restore-release flow. Captures can
-contain ordinary cleanup leftovers. Before the activation release starts a restored
-server, it must inspect the restored inventory while fenced and require explicit
-retention of any unreferenced bytes. If that gate refuses, leave the source fenced,
+contain ordinary cleanup leftovers. Restore inspects the recovered inventory while fenced before starting the server.
+Use `bash scripts/restore.sh CHECKPOINT --env-file .env --retain-unreferenced` to
+explicitly preserve such leftovers. Without that flag, unreferenced bytes stop
+recovery before server startup; the restored stores remain available for inspection.
+Already retained bytes need no new opt-in. An unfinished adoption intent still
+requires its original exact retry evidence. If that gate refuses, leave the source fenced,
 keep the restored server stopped, and use the restored capture's ID with the
 `reconcile --fenced --checkpoint CAPTURE_ID --retain-unreferenced` command above.
 Only start the restored server after reconciliation succeeds. The legacy
@@ -176,12 +184,16 @@ PostgreSQL-only helper does not recover blob bytes.
 
 Normal same-database starts exclude one another using a dedicated advisory-lock
 session. Runtime checks ownership every second with a five-second deadline. The
-proposed main integration exits the process on a failed query, changed backend PID,
+server exits the process on a failed query, changed backend PID,
 lost lock, or deadline. This is bounded failure detection, with a maximum nominal
 six-second detection window, not a distributed fencing lease. A process stall can
 delay detection. Stop/fence the old process before replacing it after session loss;
 rolling upgrades and active-active remain unsupported. Startup verification and
 operator mutation also check ownership before completing.
+
+Even a transient database stall exceeding that deadline causes an outage, a restart
+and complete storage verification; interrupted cleanup can also require reconciliation.
+The deadline stays fixed to preserve the stated exclusion-detection bound.
 
 An abrupt stop, a cleanup deadline, a transient delete failure or the active restore
 gate can leave unreferenced upload, delete or purge bytes, even after graceful
@@ -197,6 +209,11 @@ PostgreSQL is unavailable.
 Verification is O(all object bytes), with memory proportional to object count.
 Startup retains one read-only database snapshot throughout hashing, which can delay
 vacuum cleanup. Schedule a maintenance window proportional to the stored bytes.
+Set `BP_STARTUP_VERIFY_TIMEOUT` in the deployment env file to the required startup
+budget in seconds (default 120, range 1..86400). It controls the server healthcheck
+start period and checkpoint resume/restore readiness waits. Raise it before large
+store operations. Expiry is not evidence of corruption: inspect logs and service
+state before deciding whether verification is slow or an operator action is needed.
 Adoption performs three complete reads around durable publication to detect changed
 bytes before certifying the binding; budget that offline I/O as well.
 Future fresh-target migration can retain the database UUID and attribution while
