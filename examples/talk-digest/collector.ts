@@ -73,6 +73,12 @@ export function metadata(value: Json) {
   strings(m.speakers, "speakers"); strings(m.topicTags, "topicTags");
   for (const field of ["talkDate", "videoUrl", "transcriptUrl"] as const)
     if (m[field] !== null && typeof m[field] !== "string") throw new Error(`${field}_invalid`);
+  if (m.talkDate !== null) {
+    const value = text(m.talkDate, "talkDate"), date = new Date(`${value}T00:00:00.000Z`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || value.startsWith("0000-")
+      || !Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== value)
+      throw new Error("talkDate_invalid");
+  }
   const access = object(m.transcriptAccess, "transcriptAccess"), license = object(m.license, "license");
   const status = access.status;
   if (!(typeof status === "string" && status.trim())
