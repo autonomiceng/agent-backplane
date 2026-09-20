@@ -116,7 +116,13 @@ export async function migrationFixture() {
   };
   return { ...f, workspace, actors, targetStore, target, id, retained, before, bucketRequest, capture, operate, intent, serve, freshTarget,
     eraseTargetMarker: () => new S3Client(options).delete(".backplane-store"),
-    close: async () => { for (const cleanup of cleanups) await cleanup(); await f.close(); } };
+    close: async () => {
+      const failures: unknown[] = [];
+      for (const cleanup of [...cleanups, () => f.close()]) {
+        try { await cleanup(); } catch (error) { failures.push(error); }
+      }
+      if (failures.length) throw failures[0];
+    } };
   } catch (error) {
     await Promise.allSettled(cleanups.map(cleanup => cleanup()));
     await f.close().catch(() => {});

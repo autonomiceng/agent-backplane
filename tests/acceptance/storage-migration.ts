@@ -8,8 +8,8 @@ async function docker(...args: string[]) {
   const child = Bun.spawn(["docker", ...args], { stdout: "pipe", stderr: "pipe", env: { ...Bun.env, RUSTFS_ACCESS_KEY: access, RUSTFS_SECRET_KEY: secret } });
   const timer = setTimeout(() => child.kill(), 120000);
   try {
-    const [code, out] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
-    assert.equal(code, 0, `owned migration fixture Docker ${args[0]} failed`); return out.trim();
+    const [code, out, err] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+    assert.equal(code, 0, `owned migration fixture Docker ${args[0]} failed: ${err.trim().replaceAll(access, "[redacted]").replaceAll(secret, "[redacted]").slice(0, 2048)}`); return out.trim();
   } finally { clearTimeout(timer); }
 }
 try {
