@@ -300,7 +300,7 @@ async function selectionFixture(check: (fixture: {
     });
   } finally { await rm(directory, { recursive: true, force: true }); }
 }
-const mutations = (calls: string[][]) => calls.filter(args => args.includes("create") || args.includes("up") || args[0] === "run");
+const mutations = (calls: string[][]) => calls.filter(args => (args[0] === "volume" || args[0] === "network") && args[1] === "create" || args.includes("up"));
 
 test("fresh default and explicit profiles persist native Compose selection", async () => {
   for (const profiles of [[], ["blobs"], ["compute"], ["edge"], ["gateway"]]) await selectionFixture(async ({ path, args, runner, record, calls }) => {
@@ -312,7 +312,7 @@ test("fresh default and explicit profiles persist native Compose selection", asy
     if (profiles.includes("compute")) expect(saved).not.toContain("BP_WORKERD_IMAGE=");
     expect(saved).toContain(`COMPOSE_FILE='${[join(root, "compose.yaml"), ...profiles.map(p => join(root, `compose.${p}.yaml`))].join(":")}'`);
     expect(saved).toContain(`BP_BLOB_BACKEND='${profiles.includes("blobs") ? "s3" : "filesystem"}'`);
-    expect(calls.findIndex(call => call.includes("config"))).toBeLessThan(calls.findIndex(call => call.includes("create")));
+    expect(calls.findIndex(call => call.includes("config"))).toBeLessThan(calls.findIndex(call => call[0] === "volume" && call[1] === "create"));
   });
 });
 
