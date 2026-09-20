@@ -132,6 +132,11 @@ test("copied markers cannot authorize missing, corrupt, or extra bytes and no cl
     await copy.stage(f.workspaceId, extra, Buffer.from("foreign bytes"));
     await copy.promote(f.workspaceId, extra, Buffer.from("foreign bytes"));
     await expect(start()).rejects.toThrow("blob_binding_inventory_mismatch");
+    let reads = 0;
+    await expect(verifyStorageBinding(f.pool, { ...copy, open: async (...args) => {
+      reads++; return copy.open(...args);
+    } })).rejects.toThrow("blob_binding_inventory_mismatch");
+    expect(reads).toBe(0);
     expect(cleanupStarted).toBe(false);
     expect(await copy.open(f.workspaceId, extra)).toEqual(Buffer.from("foreign bytes"));
     expect(await f.store.open(f.workspaceId, blob.id)).toEqual(Buffer.from("proof bytes"));

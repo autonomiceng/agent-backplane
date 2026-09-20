@@ -22,4 +22,4 @@ services:
         max-file: "3"
 ```
 
-Apply the same mapping to `backup-init`, `postgres`, `migrate`, `data-init`, and enabled `edge`, `blob-image-check`, `rustfs`, `blob-bootstrap`, and `workerd` services. Pass that file last to Docker Compose and inspect `docker compose config` before starting it. The portable override intentionally restores Docker-managed files and is an operator choice. It requires a Compose version that supports [`!override`](https://docs.docker.com/reference/compose-file/merge/#replace-value).
+Apply the same mapping to `backup-init`, `postgres`, `migrate`, `data-init`, `storage-init`, and enabled `edge`, `blob-image-check`, `rustfs`, `blob-bootstrap`, and `workerd` services. Pass that file last to Docker Compose and inspect `docker compose config` before starting it. The portable override intentionally restores Docker-managed files and is an operator choice. It requires a Compose version that supports [`!override`](https://docs.docker.com/reference/compose-file/merge/#replace-value).

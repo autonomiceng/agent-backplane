@@ -182,12 +182,16 @@ PostgreSQL-only helper does not recover blob bytes.
 
 Normal same-database starts exclude one another using a dedicated advisory-lock
 session. Runtime checks ownership every second with a five-second deadline. The
-proposed main integration exits the process on a failed query, changed backend PID,
+server exits the process on a failed query, changed backend PID,
 lost lock, or deadline. This is bounded failure detection, with a maximum nominal
 six-second detection window, not a distributed fencing lease. A process stall can
 delay detection. Stop/fence the old process before replacing it after session loss;
 rolling upgrades and active-active remain unsupported. Startup verification and
 operator mutation also check ownership before completing.
+
+Even a transient database stall exceeding that deadline causes an outage, a restart
+and complete storage verification; interrupted cleanup can also require reconciliation.
+The deadline stays fixed to preserve the stated exclusion-detection bound.
 
 An abrupt stop, a cleanup deadline, a transient delete failure or the active restore
 gate can leave unreferenced upload, delete or purge bytes, even after graceful
@@ -203,6 +207,11 @@ PostgreSQL is unavailable.
 Verification is O(all object bytes), with memory proportional to object count.
 Startup retains one read-only database snapshot throughout hashing, which can delay
 vacuum cleanup. Schedule a maintenance window proportional to the stored bytes.
+Set `BP_STARTUP_VERIFY_TIMEOUT` in the deployment env file to the required startup
+budget in seconds (default 120, range 1..86400). It controls the server healthcheck
+start period and checkpoint resume/restore readiness waits. Raise it before large
+store operations. Expiry is not evidence of corruption: inspect logs and service
+state before deciding whether verification is slow or an operator action is needed.
 Adoption performs three complete reads around durable publication to detect changed
 bytes before certifying the binding; budget that offline I/O as well.
 Future fresh-target migration can retain the database UUID and attribution while

@@ -65,6 +65,7 @@ class Stack:
         self.config = json.loads(self.dc('config', '--format', 'json'))
         self.project = self.config['name']
         self.services = self.config['services']
+        startup_timeout(self)
         if self.services['server']['environment'].get('BP_BLOB_BACKEND', 'filesystem') != 'filesystem':
             raise ValueError('filesystem checkpoints require BP_BLOB_BACKEND=filesystem; coordinate S3 recovery separately')
         self.backups = Path(next(v['source'] for v in self.services['postgres']['volumes'] if v['target'] == '/backup')).resolve()
@@ -206,6 +207,28 @@ def require_backup_services(running, edge, offline):
         raise ValueError('backup requires running postgres and server')
 
 
+def startup_timeout(stack):
+    value = str(stack.services.get('server', {}).get('environment', {}).get('BP_STARTUP_VERIFY_TIMEOUT', '120'))
+    if not re.fullmatch(r'[0-9]+', value) or not 1 <= int(value) <= 86400:
+        raise ValueError('BP_STARTUP_VERIFY_TIMEOUT must be an integer from 1 to 86400 seconds')
+    return int(value)
+
+
+def resume_source(stack, stopped, completed, capture_failed):
+    if not stopped:
+        return
+    try:
+        stack.dc('start', '--wait', '--wait-timeout', str(startup_timeout(stack)), *reversed(stopped))
+    except RuntimeError:
+        state = 'the completed Checkpoint is retained' if completed else 'no Checkpoint was completed'
+        message = f'source services could not be resumed and verified; {state}. Inspect service state and logs; startup may still be verifying stored bytes'
+        if capture_failed:
+            # Keep the original capture failure as the primary error.
+            print(message, file=sys.stderr, flush=True)
+        else:
+            raise RuntimeError(message) from None
+
+
 def backup(stack, offline=False):
     stack.attest()
     if any('@' not in image['reference'] for name, image in stack.images.items() if name in ('postgres', 'edge')):
@@ -230,6 +253,7 @@ def backup(stack, offline=False):
     dest = stack.backups / 'backups' / name
     target = '/backup/backups/' + name
     stopped = []
+    completed = None
     try:
         for service in ('edge', 'server'):
             if service in running:
@@ -284,6 +308,7 @@ def backup(stack, offline=False):
         (dest / '.manifest.json.tmp').rename(dest / 'manifest.json')
         dest.chmod(0o711)
         command(['sync', '-f', str(dest)])
+        completed = dest
         boundaries = prune_checkpoints(stack.backups / 'backups', stack.keep,
             lambda path: stack.helper('rm -rf -- "$1"', '/backup/backups/' + path.name))
         for timeline, boundary in boundaries.items():
@@ -298,11 +323,7 @@ def backup(stack, offline=False):
         print(dest)
         return dest
     finally:
-        if stopped:
-            try:
-                stack.dc('start', '--wait', '--wait-timeout', '120', *reversed(stopped))
-            except RuntimeError:
-                raise RuntimeError('source services did not become healthy after capture; inspect the retained Checkpoint and use fenced storage reconciliation if cleanup leftovers prevent startup') from None
+        resume_source(stack, stopped, completed, sys.exc_info()[0] is not None)
 
 
 def verify(source, stack):
@@ -332,18 +353,37 @@ def verify(source, stack):
     return doc
 
 
+def storage_admin(stack, *args):
+    result = subprocess.run(stack.compose + ['run', '--rm', '--no-deps', '-T', 'storage-init',
+                            'bun', 'apps/server/blobs/storage-admin.ts', *args],
+                            capture_output=True, text=True, cwd=ROOT)
+    if result.returncode:
+        token = 'diagnostic unavailable; use the fenced storage runbook'
+        for line in reversed(result.stderr.splitlines()):
+            if len(line) > 256:
+                continue
+            try:
+                doc = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(doc, dict) and re.fullmatch(r'blob_binding_[a-z_]{1,80}', str(doc.get('error', ''))):
+                token = doc['error']
+                break
+        raise RuntimeError('storage initialization refused: ' + token)
+    return result.stdout
+
+
 def prepare_restored_storage(stack, checkpoint, retain_unreferenced=False):
     if 'storage-init' not in stack.services:
         return
     stack.dc('up', '-d', '--wait', '--no-build', '--pull', 'never', 'postgres')
-    args = ('run', '--rm', '--no-deps', 'storage-init', 'bun', 'apps/server/blobs/storage-admin.ts')
-    evidence = json.loads(stack.dc(*args, 'inspect', '--fenced', '--checkpoint', checkpoint))
+    evidence = json.loads(storage_admin(stack, 'inspect', '--fenced', '--checkpoint', checkpoint))
     if (evidence.get('intent') or {}).get('phase') != 'ready':
         raise RuntimeError('restored storage has an unfinished binding intent; keep the server stopped and retry its original operator command before starting')
     if any(ref['classification'] == 'unreferenced' for ref in evidence['objects']):
         if not retain_unreferenced:
             raise RuntimeError('restored storage contains cleanup leftovers; server remains stopped. Reconcile the restored capture with --retain-unreferenced before starting, or restore fresh targets with that explicit flag')
-        stack.dc(*args, 'reconcile', '--fenced', '--checkpoint', checkpoint, '--retain-unreferenced')
+        storage_admin(stack, 'reconcile', '--fenced', '--checkpoint', checkpoint, '--retain-unreferenced')
 
 
 def restore(stack, source, retain_unreferenced=False):
@@ -404,7 +444,7 @@ def restore(stack, source, retain_unreferenced=False):
     ''', data, gate, mounts=pgmount, user='postgres')
     prepare_restored_storage(stack, doc['name'], retain_unreferenced)
     stack.dc('up', '-d', '--no-build', '--pull', 'never', 'server')
-    deadline = time.monotonic() + 120
+    deadline = time.monotonic() + startup_timeout(stack)
     while time.monotonic() < deadline:
         try:
             ready = json.loads(stack.dc('exec', '-T', 'server', 'curl', '-sS', 'http://localhost:3000/health/ready'))

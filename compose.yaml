@@ -123,6 +123,7 @@ services:
       BP_DATA_DIR: /data
       BP_OPERATIONS_TOKEN: ${BP_OPERATIONS_TOKEN:-}
       BP_BACKUP_KEEP: ${BP_BACKUP_KEEP:-7}
+      BP_STARTUP_VERIFY_TIMEOUT: ${BP_STARTUP_VERIFY_TIMEOUT:-120}
       BP_BACKUP_DIR: /backups
       BP_AUTH_SECRET: ${BP_AUTH_SECRET:?set BP_AUTH_SECRET to a random string of at least 32 characters}
       BP_ACCESS_MODE: ${BP_ACCESS_MODE:-local}
@@ -134,6 +135,7 @@ services:
       - ${BP_BACKUP_DIR:?set BP_BACKUP_DIR to an encrypted off-host repository mount}/backups:/backups:ro
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:3000/health/ready || exit 1"]
+      start_period: ${BP_STARTUP_VERIFY_TIMEOUT:-120}s
       interval: 5s
       timeout: 3s
       retries: 30
