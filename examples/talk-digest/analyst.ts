@@ -117,7 +117,7 @@ async function withClaimLock<T>(statePath: string, command: string, action: () =
     await writeFile(`${lockPath}/owner.json`, `${JSON.stringify({ command, pid: process.pid, startedAt: new Date().toISOString() })}\n`,
       { flag: "wx", mode: 0o600 });
     return await action();
-  } finally { await rm(lockPath, { recursive: true }); }
+  } finally { await rm(lockPath, { recursive: true, force: true }); }
 }
 
 async function runAudit(runId: string) {
