@@ -67,9 +67,21 @@ test("completed CLI handoffs skip unreadable uploads and recover without repeati
       }
       await writeFile(summary, JSON.stringify({ sourceId, digestText: "Reliable agents verify their work.",
         keyPoints: ["Use durable handoffs.", "Preserve attribution."] }), { mode: 0o600 });
+      const args = ["complete", downloaded, state, summary, html, proof];
+      if (failure === "html") {
+        const before = await readFile(state, "utf8"), lock = `${proof}.lock`;
+        await mkdir(lock, { mode: 0o700 });
+        await writeFile(`${lock}/owner.json`, JSON.stringify({ command: "held-by-test", pid: process.pid }), { mode: 0o600 });
+        for (const command of [args, ["deploy", proof], ["publish", proof, summary]]) {
+          const refused = await invoke("analyst", command);
+          expect(refused.code).toBe(1);
+          expect(refused.stderr).toContain("proof_locked");
+        }
+        expect(await readFile(state, "utf8")).toBe(before);
+        await rm(lock, { recursive: true });
+      }
       const blocked = failure === "html" ? html : proof;
       await mkdir(blocked, { mode: 0o700 });
-      const args = ["complete", downloaded, state, summary, html, proof];
       const interrupted = await invoke("analyst", args);
       expect(interrupted.code).not.toBe(0);
       const events = () => f.pool<{ kind: string }[]>`SELECT kind FROM audit.events

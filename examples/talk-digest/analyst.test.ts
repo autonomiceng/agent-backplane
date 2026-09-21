@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { auditProofEvent, completionDecision, completionKeys, escapeHtml, findInvocationEvent, renderPage, safeUrl } from "./analyst.ts";
+import { auditProofEvent, completionDecision, completionKeys, escapeHtml, findInvocationEvent, renderPage, safeUrl, summary } from "./analyst.ts";
 import handler from "./function.js";
 
 const source = {
@@ -15,6 +15,13 @@ test("standalone page escapes authored and source text while retaining validated
   expect(page).not.toContain("<script>");
   expect(escapeHtml("'\"&<>")).toBe("&#39;&quot;&amp;&lt;&gt;");
   expect(() => safeUrl("javascript:alert(1)")).toThrow("source_url_invalid");
+});
+
+test("authored summaries reject whitespace-only digest and points", () => {
+  expect(() => summary({ sourceId: "source-1", digestText: "   ", keyPoints: ["One", "Two"] }, "source-1"))
+    .toThrow("summary_text_invalid");
+  expect(() => summary({ sourceId: "source-1", digestText: "Digest", keyPoints: ["One", " \n "] }, "source-1"))
+    .toThrow("summary_text_invalid");
 });
 
 test("Function uses invocation authority for one Workspace SQL read and returns escaped HTML metadata", async () => {

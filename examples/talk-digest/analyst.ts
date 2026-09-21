@@ -105,19 +105,28 @@ async function writePrivate(path: string, value: Json, replace = false) {
   } finally { await rm(temporary, { force: true }); }
 }
 async function readObject(path: string, name: string) { return object(JSON.parse(await readFile(path, "utf8")) as Json, name); }
-async function withClaimLock<T>(statePath: string, command: string, action: () => Promise<T>) {
-  const lockPath = `${statePath}.lock`;
+async function withPrivateLock<T>(path: string, command: string, kind: "claim_state" | "proof", action: () => Promise<T>) {
+  const lockPath = `${path}.lock`;
   try { await mkdir(lockPath, { mode: 0o700 }); }
   catch (error) {
     if (typeof error === "object" && error !== null && "code" in error && error.code === "EEXIST")
-      throw new Error(`claim_state_locked:${lockPath}`);
+      throw new Error(`${kind}_locked:${lockPath}`);
     throw error;
   }
+  let result: T;
   try {
     await writeFile(`${lockPath}/owner.json`, `${JSON.stringify({ command, pid: process.pid, startedAt: new Date().toISOString() })}\n`,
       { flag: "wx", mode: 0o600 });
-    return await action();
-  } finally { await rm(lockPath, { recursive: true, force: true }); }
+    result = await action();
+  } catch (error) {
+    try { await rm(lockPath, { recursive: true, force: true }); }
+    catch (cleanupError) {
+      console.error(`lock_cleanup_failed:${lockPath}:${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
+    }
+    throw error;
+  }
+  await rm(lockPath, { recursive: true, force: true });
+  return result;
 }
 
 async function runAudit(runId: string) {
@@ -167,9 +176,10 @@ export function safeUrl(value: string) {
 export const escapeHtml = (value: unknown) => String(value).replace(/[&<>"']/g, character => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
 })[character]!);
-function summary(value: Json, sourceId: string) {
+export function summary(value: Json, sourceId: string) {
   const authored = object(value, "summary"), digest = text(authored.digestText, "digest_text"), points = list(authored.keyPoints, "key_points");
   if (authored.sourceId !== sourceId || points.length < 2 || points.length > 6) throw new Error("summary_source_or_points_invalid");
+  if (!digest.trim() || points.some(point => !point.trim())) throw new Error("summary_text_invalid");
   const words = `${digest} ${points.join(" ")}`.trim().split(/\s+/).length;
   if (words > 150) throw new Error("summary_over_150_words");
   return { digest, points, words };
@@ -347,11 +357,13 @@ async function publish(proofPath: string, invocationPath: string) {
 if (import.meta.main) {
   const [command, ...args] = process.argv.slice(2);
   if (command === "discover" && args.length === 0) await discover();
-  else if (command === "claim" && args.length === 2) await withClaimLock(args[1]!, command, () => claim(args[0]!, args[1]!));
-  else if (command === "renew" && args.length === 1) await withClaimLock(args[0]!, command, () => renew(args[0]!));
-  else if (command === "complete" && args.length === 5) await withClaimLock(args[1]!, command,
-    () => complete(args[0]!, args[1]!, args[2]!, args[3]!, args[4]!));
-  else if (command === "deploy" && (args.length === 1 || args.length === 2)) await deploy(args[0]!, args[1]);
-  else if (command === "publish" && args.length === 2) await publish(args[0]!, args[1]!);
+  else if (command === "claim" && args.length === 2) await withPrivateLock(args[1]!, command, "claim_state", () => claim(args[0]!, args[1]!));
+  else if (command === "renew" && args.length === 1) await withPrivateLock(args[0]!, command, "claim_state", () => renew(args[0]!));
+  else if (command === "complete" && args.length === 5) await withPrivateLock(args[1]!, command, "claim_state", () =>
+    withPrivateLock(args[4]!, command, "proof", () => complete(args[0]!, args[1]!, args[2]!, args[3]!, args[4]!)));
+  else if (command === "deploy" && (args.length === 1 || args.length === 2))
+    await withPrivateLock(args[0]!, command, "proof", () => deploy(args[0]!, args[1]));
+  else if (command === "publish" && args.length === 2)
+    await withPrivateLock(args[0]!, command, "proof", () => publish(args[0]!, args[1]!));
   else throw new Error("usage: analyst.ts discover | claim TRANSCRIPT CLAIM | renew CLAIM | complete TRANSCRIPT CLAIM SUMMARY HTML PROOF | deploy PROOF [EXPECTED_ACTIVE_ID] | publish PROOF INVOCATION");
 }
