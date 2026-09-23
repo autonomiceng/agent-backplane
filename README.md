@@ -60,7 +60,7 @@ Optional profiles add S3 blob storage on RustFS, a workerd sandbox for small fun
 | Server (API, dashboard, audit stream) | volume for enrollment and migration projections |
 | RustFS, workerd, Caddy | optional profiles |
 
-Each push to `main` and each `v*` tag publishes `ghcr.io/autonomiceng/agent-backplane-server` (amd64, arm64) and `ghcr.io/autonomiceng/agent-backplane-workerd` (amd64); Compose does not use them yet. See [published images](docs/operations/upgrade.md).
+Each push to `main` and each `vX.Y.Z` release tag publishes `ghcr.io/autonomiceng/agent-backplane-server` (amd64, arm64) and `ghcr.io/autonomiceng/agent-backplane-workerd` (amd64); Compose does not use them yet. See [published images](docs/operations/upgrade.md).
 
 Shipped upstream image defaults are pinned as `tag@sha256`; the server image is built from this checkout. Complete image references in `.env` select unvalidated experiments; see [preparation](infra/bootstrap/README.md). Terms are in [CONTEXT.md](CONTEXT.md); guarantees in the [design](docs/DESIGN.md).
 

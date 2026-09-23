@@ -4,7 +4,8 @@ name: Publish
 on:
   push:
     branches: [main]
-    tags: ["v*"]
+    # Only semver tags yield an image tag; other v* tags would build with none.
+    tags: ["v[0-9]+.[0-9]+.[0-9]+", "v[0-9]+.[0-9]+.[0-9]+-*"]
 
 permissions: {}
 

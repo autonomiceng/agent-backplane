@@ -1,7 +1,8 @@
 # Published images
 
 The `Publish` workflow builds and pushes two images to GitHub Container Registry
-after each push to `main` and each `v*` tag. Pull requests never publish.
+after each push to `main` and each semver release tag (`vX.Y.Z`, optionally with a
+prerelease suffix such as `v1.2.3-rc.1`). Other tags and pull requests never publish.
 
 | Image | Platforms | Recipe |
 | --- | --- | --- |
