@@ -319,7 +319,7 @@ async function orchestrate() {
     volumes: { "acceptance-backup": {}, "restored-data": {}, ...Object.fromEntries(["postgres-data", "server-data", "rustfs-data"].map(name => [name, { external: false, name: `${project}_${name}` }])) } }));
   const base = ["docker", "compose", "--project-name", project,
     "--project-directory", root, "-f", join(root, "compose.yaml"),
-    "-f", join(root, "compose.blobs.yaml"), "-f", override, "--profile", "blobs"];
+    "-f", join(root, "compose.blobs.yaml"), "-f", join(root, "compose.dev.yaml"), "-f", override, "--profile", "blobs"];
   const compose = async (...args: string[]) => {
     const result = await command([...base, ...args], env); assert.equal(result.code, 0, `Compose ${args[0]} failed (output withheld to protect credentials)`); return result.out;
   };

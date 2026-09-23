@@ -48,7 +48,9 @@ def drill():
     try:
         for volume in volumes:
             command(['docker', 'volume', 'create', '--label', 'backplane.test-owner=' + project, volume])
-        command(compose + ['up', '--build', '-d', '--wait', '--wait-timeout', '180'])
+        # Compose pins the published server; the drill exercises this checkout's build.
+        command(['docker', 'build', '-f', str(ROOT / 'infra/compose/server.Dockerfile'), '-t', values['BP_SERVER_IMAGE'], str(ROOT)])
+        command(compose + ['up', '-d', '--wait', '--wait-timeout', '180'])
         source = operator['stack_from_env'](env); stacks.append(source)
         capability = root / 'capability'; capability.write_text(source.dc('exec', '-T', 'server', 'cat', '/data/enrollment/capability')); capability.chmod(0o600)
         password = secrets.token_hex(24)

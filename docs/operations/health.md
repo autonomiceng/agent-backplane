@@ -148,12 +148,12 @@ test -n "$(deployment_compose ps -q server)" || {
   exit 1
 }
 deployment_compose stop server
-deployment_compose up -d --build --wait
+deployment_compose up -d --wait
 ```
 
 Replace the example settings with the running deployment's settings, including
 every active overlay/profile (for core only, omit `-f compose.edge.yaml --profile edge`).
 The guard requires a running server in the selected project before stopping it.
-Source upgrades rebuild the image shared by migrations and server. Omit `--build`
-only when `BP_SERVER_IMAGE` names a prebuilt, already pulled image.
+Migrations and server share the server image the checkout pins (or `BP_SERVER_IMAGE`);
+`up` pulls it when absent. See [published images](upgrade.md) for moving the pin.
 The migration one-shot finishes before the server resumes traffic.

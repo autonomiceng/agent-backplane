@@ -226,8 +226,8 @@ When a migration takes exclusive locks, including 000028, 000030 and 000031, use
 running deployment's project, env file, Compose files and profiles. Export
 `COMPOSE_PROJECT_NAME` for a custom project and follow the documented running-server
 guard before `deployment_compose stop server`, then run
-`deployment_compose up -d --build --wait`. Omit `--build` only when `BP_SERVER_IMAGE`
-names a prebuilt, already pulled image.
+`deployment_compose up -d --wait`, which pulls the pinned server image (or uses
+`BP_SERVER_IMAGE`).
 The one-shot migration must finish before traffic resumes. Rolling upgrades are unsupported.
 
 Migration 000031 interprets existing timestamps without time zone as UTC; operators

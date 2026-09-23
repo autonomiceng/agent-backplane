@@ -96,3 +96,8 @@ bounded sampler reads the storage binding/marker and verifies Runtime Identity w
 loader round trip, creating no Workspace writes or invocation Runs. It establishes current
 readiness only. H-PROOF/F-GATE, host console/runtime confirmation by root, architecture
 qualification and the trusted operator/enrolled-agent boundary remain unchanged.
+
+Amended 2026-09-23 (published image delivery): A missing or blank workerd override now
+pulls the digest-pinned published image instead of building the local recipe (ADR-0009).
+Executable verification, launch evidence, the amd64-only default and the remaining gates
+are unchanged.

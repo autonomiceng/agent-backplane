@@ -221,7 +221,9 @@ export async function prepare(argv: string[], env: Environment, run: Runner = do
       || Boolean(config.services.server.environment.BP_COMPUTE_URL) !== (mode === "full")))
       throw new CliError("mode_conflict_requires_explicit_upgrade_or_migration", 2);
     save("BP_BLOB_BACKEND", backend);
-    const identity = profiles.includes("compute") ? await verifyWorkerdImage(entries, child, run) : undefined;
+    const workerd = config.services.workerd, published = record(workerd) && record(workerd.environment)
+      && typeof workerd.environment.BP_WORKERD_IMAGE === "string" ? workerd.environment.BP_WORKERD_IMAGE : "";
+    const identity = profiles.includes("compute") ? await verifyWorkerdImage(entries, child, run, published) : undefined;
     await recordStatus(["--state-dir", statusDir, "--prepare"]);
     source = lines.join("\n");
     if (!source.endsWith("\n")) source += "\n";

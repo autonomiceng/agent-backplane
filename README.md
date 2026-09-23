@@ -17,7 +17,7 @@ It runs on one machine as one Bun process in front of PostgreSQL 18. A CLI and a
 
 ## Quick start
 
-You need Docker with the Compose plugin, Bun 1.4, and a Linux host with journald. Other Docker hosts need an [operator logging override](docs/operations/logging.md). [mise](https://mise.jdx.dev) installs the pinned tools: `mise install`.
+You need Docker with the Compose plugin, Bun 1.4 for preparation and the `bp` CLI, and a Linux host with journald. Compose pulls published, digest-pinned images; nothing is built on the host. Other Docker hosts need an [operator logging override](docs/operations/logging.md). [mise](https://mise.jdx.dev) installs the pinned tools: `mise install`.
 
 ```sh
 git clone https://github.com/autonomiceng/agent-backplane.git
@@ -60,9 +60,9 @@ Optional profiles add S3 blob storage on RustFS, a workerd sandbox for small fun
 | Server (API, dashboard, audit stream) | volume for enrollment and migration projections |
 | RustFS, workerd, Caddy | optional profiles |
 
-Each push to `main` and each `vX.Y.Z` release tag publishes `ghcr.io/autonomiceng/agent-backplane-server` (amd64, arm64) and `ghcr.io/autonomiceng/agent-backplane-workerd` (amd64); Compose does not use them yet. See [published images](docs/operations/upgrade.md).
+Each push to `main` and each `vX.Y.Z` release tag publishes `ghcr.io/autonomiceng/agent-backplane-server` (amd64, arm64) and `ghcr.io/autonomiceng/agent-backplane-workerd` (amd64). Compose uses them by default. See [published images](docs/operations/upgrade.md).
 
-Shipped upstream image defaults are pinned as `tag@sha256`; the server image is built from this checkout. Complete image references in `.env` select unvalidated experiments; see [preparation](infra/bootstrap/README.md). Terms are in [CONTEXT.md](CONTEXT.md); guarantees in the [design](docs/DESIGN.md).
+Every shipped image default, including the server and workerd, is pinned as `tag@sha256`. Complete image references in `.env` select unvalidated experiments; see [preparation](infra/bootstrap/README.md). Terms are in [CONTEXT.md](CONTEXT.md); guarantees in the [design](docs/DESIGN.md).
 
 ## Built on
 
@@ -106,7 +106,10 @@ Each runs alone. Shared conventions live in [docs/conventions.md](docs/conventio
 bun run check   # typecheck, lint, generated-contract drift, dashboard build
 bun run test    # tests against a real embedded Postgres
 docker compose --env-file .env config -q  # after prepare creates .env
+docker compose --env-file .env -f compose.yaml -f compose.dev.yaml build  # server image from this checkout
 ```
+
+List the development overlay last; `-f compose.yaml -f compose.compute.yaml -f compose.dev.yaml --profile compute build` also builds workerd. Preparation launches the saved Compose files, so set `BP_SERVER_IMAGE=agent-backplane-server:local` (and `BP_WORKERD_IMAGE=agent-backplane-workerd:local`) in `.env` to run those builds.
 
 For host development, pass the cluster-owner URL only to migration:
 `BP_ADMIN_DATABASE_URL=postgres://postgres:YOUR_PASSWORD@localhost:5432/backplane bun run migrate`.

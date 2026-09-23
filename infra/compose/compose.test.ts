@@ -119,13 +119,33 @@ test("every merged service uses journald without a Docker file cache or Alloy de
 });
 
 
-test("bare Compose defaults to the local recipe and preserves explicit image selection", async () => {
+test("bare Compose defaults to published digest-pinned images; only the development overlay builds", async () => {
+  const blobs = ["BP_RUSTFS_ROOT_USER=fixture", "BP_RUSTFS_ROOT_PASSWORD=fixture", "BP_BLOB_S3_ACCESS_KEY=fixture", "BP_BLOB_S3_SECRET_KEY=fixture", "BP_COMPUTE_TOKEN=fixture"];
+  const published = await config(["compose.blobs.yaml", "compose.compute.yaml"], "*", blobs);
+  const server = /^ghcr\.io\/autonomiceng\/agent-backplane-server:[\w.-]+@sha256:[a-f0-9]{64}$/;
+  expect(published.services.server.image).toMatch(server);
+  for (const name of ["migrate", "data-init", "storage-init", "blob-image-check", "blob-bootstrap"]) expect(published.services[name].image).toBe(published.services.server.image);
+  expect(published.services["blob-bootstrap"].environment.BP_BLOB_BOOTSTRAP_IMAGE).toBe(published.services.server.image);
+  expect(published.services.workerd.image).toMatch(/^ghcr\.io\/autonomiceng\/agent-backplane-workerd:[\w.-]+@sha256:[a-f0-9]{64}$/);
+  expect(JSON.stringify(published.services)).not.toMatch(/"(build|pull_policy)":/);
+  const dev = await config(["compose.blobs.yaml", "compose.compute.yaml", "compose.dev.yaml"], "*", blobs);
+  for (const name of ["migrate", "data-init", "storage-init", "server"]) expect(dev.services[name]).toMatchObject({ image: "agent-backplane-server:local",
+    build: { context: root, dockerfile: "infra/compose/server.Dockerfile" } });
+  for (const name of ["blob-image-check", "blob-bootstrap"]) expect(dev.services[name].image).toBe("agent-backplane-server:local");
+  expect(dev.services["blob-bootstrap"].environment.BP_BLOB_BOOTSTRAP_IMAGE).toBe("agent-backplane-server:local");
+  expect(dev.services.workerd).toMatchObject({ image: "agent-backplane-workerd:local", platform: "linux/amd64",
+    build: { context: join(root, "infra/compute/image") }, environment: { BP_WORKERD_IMAGE: "agent-backplane-workerd:local" } });
+  const operator = await config(["compose.dev.yaml"], undefined, ["BP_SERVER_IMAGE=server:operator"]);
+  expect(operator.services.server.image).toBe("server:operator");
+});
+
+test("bare Compose preserves explicit workerd image selection", async () => {
   const digest = "a".repeat(64);
   const settings = ["BP_COMPUTE_TOKEN=fixture", "BP_WORKERD_IMAGE=fixture:local", `BP_WORKERD_BINARY_SHA256=${digest}`];
   const tagged = await config(["compose.compute.yaml"], "compute", settings);
   expect(tagged.services.workerd.image).toBe("fixture:local");
   expect(tagged.services.workerd.environment.BP_WORKERD_HOST_IMAGE_ID).toBe("");
-  expect(tagged.services.workerd.pull_policy).toBe("never");
+  expect(tagged.services.workerd.pull_policy).toBeUndefined();
   expect(tagged.services.workerd.entrypoint).toEqual(["/bin/sh", "/compute/start.sh"]);
   expect(tagged.services.server.environment.BP_WORKERD_RUNTIME_ID).toBe(`workerd-binary-sha256:${digest}`);
   const pinned = await config(["compose.compute.yaml"], "compute", [...settings, `BP_WORKERD_EFFECTIVE_IMAGE=sha256:${digest}`, `BP_WORKERD_HOST_IMAGE_ID=sha256:${digest}`]);
@@ -137,12 +157,9 @@ test("bare Compose defaults to the local recipe and preserves explicit image sel
   expect(edited.services.workerd.environment.BP_WORKERD_HOST_IMAGE_ID).toBe("");
   const local = await config(["compose.compute.yaml"], "compute", ["BP_COMPUTE_TOKEN=fixture"]);
   const empty = await config(["compose.compute.yaml"], "compute", ["BP_COMPUTE_TOKEN=fixture", "BP_WORKERD_IMAGE="]);
-  expect(local.services.workerd.image).toBe("agent-backplane-workerd:1.20260918.1");
+  expect(local.services.workerd.image).toMatch(/^ghcr\.io\/autonomiceng\/agent-backplane-workerd:[\w.-]+@sha256:[a-f0-9]{64}$/);
   expect(empty.services.workerd.image).toBe(local.services.workerd.image);
   expect(local.services.workerd.environment.BP_WORKERD_IMAGE).toBe(local.services.workerd.image);
   expect(empty.services.workerd.environment.BP_WORKERD_IMAGE).toBe(local.services.workerd.image);
   expect(local.services.workerd.environment.BP_WORKERD_HOST_IMAGE_ID).toBe("");
-  expect(local.services.workerd.pull_policy).toBe("never");
-  expect(local.services.workerd.build).toBeUndefined();
-  expect(tagged.services.workerd.build).toBeUndefined();
 });

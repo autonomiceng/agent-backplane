@@ -8,6 +8,7 @@ import { resolveAccess } from "../compose/validate-edge.ts";
 import { defaultWorkerdBinary } from "./workerd-image.ts";
 
 const probeContainers = new Map<string, string[]>();
+const publishedWorkerd = `registry.example/workerd:main-abc1234@sha256:${"f".repeat(64)}`;
 const contractIpam = `bridge ${JSON.stringify([{ Subnet: "172.30.0.0/24", IPRange: "172.30.0.128/25", Gateway: "172.30.0.1" }])}`;
 const fakeRunner: Runner = async (args, env) => {
   if (args[0] === "create") { const id = crypto.randomUUID().replaceAll("-", "").repeat(2); probeContainers.set(id, args); return id; }
@@ -27,7 +28,9 @@ const fakeRunner: Runner = async (args, env) => {
   }
   if (args.includes("config")) {
     const environment = { BP_BLOB_BACKEND: env.COMPOSE_PROFILES?.split(",").includes("blobs") ? "s3" : "filesystem" };
-    return JSON.stringify({ services: { server: { environment: { ...environment, BP_COMPUTE_URL: env.COMPOSE_PROFILES?.split(",").includes("compute") ? "http://workerd:8080" : "" } }, "storage-init": { environment } } });
+    const compute = env.COMPOSE_PROFILES?.split(",").includes("compute");
+    return JSON.stringify({ services: { server: { environment: { ...environment, BP_COMPUTE_URL: compute ? "http://workerd:8080" : "" } }, "storage-init": { environment },
+      ...(compute ? { workerd: { environment: { BP_WORKERD_IMAGE: env.BP_WORKERD_IMAGE || publishedWorkerd } } } : {}) } });
   }
   if (args.some(arg => arg.includes("/health/operations"))) return JSON.stringify({ status: "degraded", capabilities: {
     files: { state: "healthy", backend: env.COMPOSE_PROFILES?.split(",").includes("blobs") ? "s3" : "filesystem", observedAt: new Date().toISOString() },
@@ -387,7 +390,8 @@ test("fresh full and minimal save native Compose selections, including independe
     expect(saved).toContain(`COMPOSE_FILE='${[join(root, "compose.yaml"), ...profiles.map(p => join(root, `compose.${p}.yaml`))].join(":")}'`);
     expect(saved).toContain(`BP_BLOB_BACKEND='${mode === "minimal" ? "filesystem" : "s3"}'`);
     expect(saved.includes("BP_COMPUTE_TOKEN=")).toBe(mode !== "minimal");
-    expect(calls.some(call => call[0] === "build")).toBe(mode !== "minimal");
+    expect(calls.some(call => call[0] === "build")).toBe(false);
+    expect(calls.filter(call => call[0] === "pull")).toEqual(mode === "minimal" ? [] : [["pull", "--platform", "linux/amd64", publishedWorkerd]]);
     expect(calls.some(call => call[0] === "create")).toBe(mode !== "minimal");
     expect(calls.findIndex(call => call.includes("config"))).toBeLessThan(calls.findIndex(call => call[0] === "volume" && call[1] === "create"));
   });
@@ -395,18 +399,18 @@ test("fresh full and minimal save native Compose selections, including independe
     if (source !== undefined) await writeFile(path, source);
     await expect(prepare(args, {}, async (command, env) => {
       const result = await runner(command, env);
-      if (command[0] === "build") throw Error("artifact build failed");
+      if (command[0] === "pull") throw Error("artifact pull failed");
       return result;
-    }, record)).rejects.toThrow("artifact build failed");
+    }, record)).rejects.toThrow("artifact pull failed");
     expect(await readFile(path, "utf8").catch(error => { if (error.code === "ENOENT") return undefined; throw error; })).toBe(source);
     expect(mutations(calls)).toEqual([]); expect(records).toEqual([]);
-    expect(calls.findIndex(call => call.includes("config"))).toBeLessThan(calls.findIndex(call => call[0] === "build"));
+    expect(calls.findIndex(call => call.includes("config"))).toBeLessThan(calls.findIndex(call => call[0] === "pull"));
     await expect(lstat(join(directory, "data"))).rejects.toMatchObject({ code: "ENOENT" });
     calls.length = 0;
     await prepare([...args, "--mode", "minimal", "--profile", ""], {}, runner, record);
     expect(await readFile(path, "utf8")).toContain("COMPOSE_PROFILES=''");
     expect(await readFile(path, "utf8")).toContain("BP_BLOB_BACKEND='filesystem'");
-    expect(calls.some(call => call[0] === "build" || call[0] === "create")).toBe(false);
+    expect(calls.some(call => call[0] === "pull" || call[0] === "create")).toBe(false);
   });
 });
 
@@ -422,7 +426,7 @@ test("complete full and minimal selections preserve project, files, secrets and 
     const up = calls.find(call => call.includes("up"));
     expect(up).toContain("original"); expect(up).toContain("--no-build");
     expect(up?.includes("compute")).toBe(mode === "full");
-    expect(calls.some(call => call[0] === "build")).toBe(false);
+    expect(calls.some(call => call[0] === "build" || call[0] === "pull")).toBe(false);
     expect(calls.filter(call => call[0] === "volume" && call[1] === "create").every(call => call.at(-1)?.startsWith("original_"))).toBe(true);
     expect(calls.find(call => call[0] === "network" && call[1] === "inspect")?.at(-1)).toBe("shared");
   });

@@ -113,7 +113,9 @@ def drill(offline=False, s3=False):
             for volume in volumes:
                 command(['docker', 'volume', 'create', '--label', 'com.docker.compose.project=' + project, volume])
                 owned_volumes.append(volume)
-            command(compose + ['up', '--build', '-d', '--wait', '--wait-timeout', '180'])
+            # Compose pins the published server; the drill exercises this checkout's build.
+            command(['docker', 'build', '-f', str(ROOT / 'infra/compose/server.Dockerfile'), '-t', values['BP_SERVER_IMAGE'], str(ROOT)])
+            command(compose + ['up', '-d', '--wait', '--wait-timeout', '180'])
             stack = Stack(env_file)
             built_image = stack.images['server']['id']
             capability = root / 'capability'
