@@ -88,7 +88,7 @@ This is one of four repos that deploy the same way and work together on one host
 - [observability-stack](https://github.com/autonomiceng/observability-stack): Grafana, Loki, Tempo and Mimir. Can collect this stack's journal logs, and its metrics when you set an operations token. Collection is optional; see [logging](docs/operations/logging.md).
 - [platform-edge](https://github.com/autonomiceng/platform-edge): one Caddy for ports 80 and 443 when more than one stack shares a host.
 
-Each runs alone. Shared conventions live in the gateway's [docs/conventions.md](https://github.com/autonomiceng/llm-gateway-stack/blob/main/docs/conventions.md).
+Each runs alone. Shared conventions live in [docs/conventions.md](docs/conventions.md), vendored from platform-edge.
 
 ## Day two
 
