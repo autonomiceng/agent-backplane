@@ -17,18 +17,18 @@ It runs on one machine as one Bun process in front of PostgreSQL 18. A CLI and a
 
 ## Quick start
 
-You need Docker with the Compose plugin, Python 3.11 and a Linux host with journald. Compose pulls published, digest-pinned images and the first user enrolls through the CLI inside the server image, so nothing is built on the host and Bun is not installed on it. Other Docker hosts need an [operator logging override](docs/operations/logging.md). Prepare a backup mount (any directory works for a first look; production wants an encrypted, off-host one), then:
+You need Docker with the Compose plugin, Python 3.11 and a Linux host with journald. Compose pulls published, digest-pinned images and the first user enrolls through the CLI inside the server image, so nothing is built on the host and Bun is not installed on it. Other Docker hosts need an [operator logging override](docs/operations/logging.md).
 
 ```sh
 git clone https://github.com/autonomiceng/agent-backplane.git && cd agent-backplane
-python3 scripts/bootstrap.py --backup-dir /mnt/backplane-backups --capability-file "$HOME/.bp-enrollment"
+python3 scripts/bootstrap.py --capability-file "$HOME/.bp-enrollment"
 # then run the `next` command bootstrap printed, for example:
-docker compose -f compose.yaml -f compose.enroll.yaml run --rm --user "$(id -u):$(id -g)" \
+BP_SERVER_IMAGE=<the server image> docker compose -f compose.yaml -f compose.enroll.yaml run --rm --user "$(id -u):$(id -g)" \
   -v "$HOME/.bp-enrollment:/tmp/capability:ro" -v "$HOME/.local/state/backplane:$HOME/.local/state/backplane" \
   -e BP_DATA_DIR="$HOME/.local/state/backplane" enroll --url http://localhost:3000 --email you@example.com
 ```
 
-The first command writes `.env`, creates the `platform` network with the shared allocation (`BP_PLATFORM_SUBNET=172.30.0.0/24`, `BP_PLATFORM_IP_RANGE=172.30.0.128/25`, see [access setup](docs/operations/ingress.md)), starts Postgres and the server, waits for them and prints the enrollment command. The second enrolls you as the first user and creates a Workspace and a Principal. Paste the printed `mcpServers.backplane` block into your agent's `.mcp.json`, and open `http://localhost:3000/dashboard`. Agent machines run the `bp` CLI from a Bun install of this checkout (`bun install`, then link `packages/cli/runtime/main.ts` as `bp`) or the compiled artifact; see [agent client setup](skills/backplane/references/client-setup.md).
+Backups land in `./backups` beside `.env` until you pass `--backup-dir` with an encrypted, off-host mount. The first command writes `.env`, creates the `platform` network with the shared allocation (`BP_PLATFORM_SUBNET=172.30.0.0/24`, `BP_PLATFORM_IP_RANGE=172.30.0.128/25`, see [access setup](docs/operations/ingress.md)), starts Postgres and the server, waits for them and prints the enrollment command. The second enrolls you as the first user and creates a Workspace and a Principal. Paste the printed `mcpServers.backplane` block into your agent's `.mcp.json`, and open `http://localhost:3000/dashboard`. Agent machines run the `bp` CLI from a Bun install of this checkout (`bun install`, then link `packages/cli/runtime/main.ts` as `bp`) or the compiled artifact; see [agent client setup](skills/backplane/references/client-setup.md).
 
 A fresh install is minimal. `--profile blobs` adds S3 blob storage on RustFS, `--profile compute` a workerd sandbox for small functions, and `--profile edge` a standalone edge. Choose local HTTP and self-signed HTTPS, trusted HTTPS for your own domain, or access behind another gateway in [access setup](docs/operations/ingress.md). See [bootstrap and recovery](infra/bootstrap/README.md).
 

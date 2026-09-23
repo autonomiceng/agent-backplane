@@ -161,3 +161,15 @@ test("bare Compose preserves explicit workerd image selection", async () => {
   expect(empty.services.workerd.environment.BP_WORKERD_IMAGE).toBe(local.services.workerd.image);
   expect(local.services.workerd.environment.BP_WORKERD_HOST_IMAGE_ID).toBe("");
 });
+
+test("enrollment runs the CLI from the server image on the host network without a forced password", async () => {
+  const enroll = await config(["compose.enroll.yaml"], "enroll", []);
+  expect(enroll.services.enroll.image).toBe(enroll.services.server.image);
+  expect(enroll.services.enroll.network_mode).toBe("host");
+  expect(enroll.services.enroll.entrypoint).toEqual(["bun", "packages/cli/runtime/main.ts", "bootstrap", "--capability-file", "/tmp/capability"]);
+  // An empty BP_BOOTSTRAP_PASSWORD would be taken as the password; unset renders as null (not passed).
+  expect(enroll.services.enroll.environment.BP_BOOTSTRAP_PASSWORD).toBeNull();
+  expect(enroll.services.enroll.ports).toBeUndefined();
+  const up = await config(["compose.enroll.yaml"], undefined, []);
+  expect(up.services.enroll).toBeUndefined();
+});

@@ -1,8 +1,9 @@
 # First-User enrollment with the CLI inside the server image, so Bun never runs on the host.
-# scripts/bootstrap.py prints the exact `run` line: it mounts the capability file read-only under
-# /tmp (the CLI accepts a root-owned sticky parent) and the operator's CLI state directory at its
-# own path, and runs as the operator's uid so the credential file lands on the host owned by them.
-# Never listed in COMPOSE_FILE; `docker compose up` ignores it.
+# scripts/bootstrap.py prints the exact `run` line: it selects the image the server runs through
+# BP_SERVER_IMAGE, mounts the capability file read-only under /tmp (the CLI accepts a root-owned
+# sticky parent) and the operator's CLI state directory at its own path, and runs as the operator's
+# uid so the credential file lands on the host owned by them. Never listed in COMPOSE_FILE;
+# `docker compose up` ignores it.
 services:
   enroll:
     image: ${BP_SERVER_IMAGE:-ghcr.io/autonomiceng/agent-backplane-server:main-91de7da@sha256:5285c2593406ec16fc09217252c534c206643d13988e9fc85a3403012b4a5299}
@@ -11,5 +12,5 @@ services:
     network_mode: host
     entrypoint: ["bun", "packages/cli/runtime/main.ts", "bootstrap", "--capability-file", "/tmp/capability"]
     environment:
-      # Noninteractive password input; the terminal prompt is used when this is empty.
-      BP_BOOTSTRAP_PASSWORD: ${BP_BOOTSTRAP_PASSWORD:-}
+      # Passed through only when set in the operator's shell; unset keeps the terminal prompt.
+      - BP_BOOTSTRAP_PASSWORD

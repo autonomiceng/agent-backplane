@@ -3,12 +3,12 @@
 The host needs Docker with the Compose plugin, Python 3.11 and journald (other hosts need a [logging override](../../docs/operations/logging.md)). Bun never runs on the host: Compose pulls the published, digest-pinned images and the first User enrolls through the CLI inside the server image.
 
 ```sh
-python3 scripts/bootstrap.py --backup-dir /mnt/backplane-backups --capability-file "$HOME/.bp-enrollment"
+python3 scripts/bootstrap.py --capability-file "$HOME/.bp-enrollment"
 ```
 
 Bootstrap copies `.env.example` to `.env` on the first run, generates the missing secrets once (present values are never rewritten, unrelated lines are preserved, the file is written atomically with mode `0600`), records `COMPOSE_PROJECT_NAME`, `COMPOSE_FILE`, `COMPOSE_PROFILES` and `BP_BLOB_BACKEND` literally, validates the browser URL, creates or validates the Platform Network with the [shared allocation](../../docs/operations/ingress.md), creates the durable volumes named with `BP_VOLUME_PREFIX`, starts the selection with `up --wait`, waits for `/health/ready` on the direct port and for the selected Files and Functions capabilities, exports the pending enrollment capability to `--capability-file`, and prints one JSON line whose `next` is the exact enrollment command. Errors are one JSON line on stderr. Exit codes: 0 ready, 1 refused, 2 usage, 3 not ready.
 
-Flags: `--env-file PATH` (default `.env`), `--dry-run` (render and validate the plan, write nothing, call no Docker), `--compose-project NAME`, `--profile NAME` (repeatable: `blobs`, `compute`, `edge`, `gateway`; `''` records none), `--access-mode local|public|proxy`, `--public-url URL`, `--backup-dir PATH`, `--build` (build the server and workerd images from this checkout through `compose.dev.yaml`).
+Flags: `--env-file PATH` (default `.env`), `--dry-run` (render and validate the plan, write nothing, call no Docker), `--compose-project NAME`, `--profile NAME` (repeatable: `blobs`, `compute`, `edge`, `gateway`; `''` records none), `--access-mode local|public|proxy`, `--public-url URL`, `--backup-dir PATH` (an existing directory; the default `./backups` beside the env file is created for a first look, production wants an encrypted off-host mount), `--build` (build the server and workerd images from this checkout through `compose.dev.yaml`; refused when `BP_SERVER_IMAGE` or `BP_WORKERD_IMAGE` names an explicit image, which bootstrap never builds over).
 
 A fresh install is minimal: Postgres, the server and filesystem Files. `--profile blobs` adds RustFS-backed Files, `--profile compute` adds Functions, `--profile edge` adds a standalone Caddy (local HTTP and self-signed HTTPS, or trusted HTTPS in public mode), `--profile gateway` with `--access-mode proxy --public-url URL` adds the internal Caddy behind Platform Edge. Edge and gateway are mutually exclusive. See [access setup](../../docs/operations/ingress.md).
 
@@ -21,7 +21,7 @@ Selected Functions pull the published amd64 workerd image pinned in `compose.com
 When enrollment is pending, bootstrap prints the exact command. Its shape:
 
 ```sh
-docker compose -f compose.yaml -f compose.enroll.yaml run --rm \
+BP_SERVER_IMAGE=<the image the server runs> docker compose -f compose.yaml -f compose.enroll.yaml run --rm \
   --user "$(id -u):$(id -g)" \
   -v "$HOME/.bp-enrollment:/tmp/capability:ro" \
   -v "$HOME/.local/state/backplane:$HOME/.local/state/backplane" \
@@ -29,7 +29,7 @@ docker compose -f compose.yaml -f compose.enroll.yaml run --rm \
   enroll --url http://localhost:3000 --email you@example.com
 ```
 
-`compose.enroll.yaml` runs `bp bootstrap` from the server image with host networking, so `--url` is the same browser URL agents on this host use. The capability file is mounted read-only; the CLI state directory (`$XDG_STATE_HOME/backplane` or `~/.local/state/backplane`, created by bootstrap with mode `0700`) is mounted at its own path and the container runs as your uid, so the checkpoint and the credential file land on the host owned by you and the printed paths are valid host paths. Enter the password at the terminal or set `BP_BOOTSTRAP_PASSWORD`. The overlay is never listed in `COMPOSE_FILE`; `docker compose up` ignores it. The server image must contain the CLI's contract and command table (`infra/compose/server.Dockerfile` copies them).
+`compose.enroll.yaml` runs `bp bootstrap` from the image the server runs (bootstrap reads it from the rendered Compose configuration, so a `--build` or `BP_SERVER_IMAGE` selection is honoured) with host networking, so `--url` is the same browser URL agents on this host use. The capability file is mounted read-only; the CLI state directory (`$XDG_STATE_HOME/backplane` or `~/.local/state/backplane`, created by bootstrap with mode `0700`) is mounted at its own path and the container runs as your uid, so the checkpoint and the credential file land on the host owned by you and the printed paths are valid host paths. Enter the password at the terminal or set `BP_BOOTSTRAP_PASSWORD`. The overlay is never listed in `COMPOSE_FILE`; `docker compose up` ignores it. The server image must contain the CLI's contract and command table: `infra/compose/server.Dockerfile` copies them from this commit on, so enrollment needs a server image published from it or later (or `--build`). The published pin in `compose.yaml` is bumped after each publish.
 
 The first Workspace and Principal are named `default`. Successful output is JSON containing their IDs and an MCP configuration:
 

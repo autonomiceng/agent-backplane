@@ -49,7 +49,7 @@ def runner_with(volumes=(), containers=(), network_exists=True, ipam=CONTRACT_IP
             profiles = env.get("COMPOSE_PROFILES", "").split(",")
             if "config" in argv:
                 backend = "s3" if "blobs" in profiles else "filesystem"
-                services = {"server": {"environment": {"BP_BLOB_BACKEND": backend}}, "storage-init": {"environment": {"BP_BLOB_BACKEND": backend}}}
+                services = {"server": {"image": "server:rendered", "environment": {"BP_BLOB_BACKEND": backend}}, "storage-init": {"environment": {"BP_BLOB_BACKEND": backend}}}
                 if "compute" in profiles:
                     services["server"]["environment"]["BP_COMPUTE_URL"] = "http://workerd:8080"
                     services["workerd"] = {"environment": {"BP_WORKERD_IMAGE": env.get("BP_WORKERD_IMAGE") or PUBLISHED}}
@@ -93,7 +93,6 @@ class BootstrapTests(unittest.TestCase):
         self.env = self.dir / ".env"
         self.capability = self.dir / "capability"
         self.backup = self.dir / "backups"
-        self.backup.mkdir()
         self.environ = patch.dict(os.environ, {"HOME": self.tmp.name, "PATH": os.environ["PATH"]}, clear=True)
         self.environ.start()
 
@@ -103,7 +102,7 @@ class BootstrapTests(unittest.TestCase):
 
     def bootstrap(self, *extra, runner=None, http=None, profiles=()):
         runner = runner or runner_with()
-        argv = ["--env-file", str(self.env), "--capability-file", str(self.capability), "--backup-dir", str(self.backup),
+        argv = ["--env-file", str(self.env), "--capability-file", str(self.capability),
                 *(part for name in profiles for part in ("--profile", name)), *extra]
         out = io.StringIO()
         with patch.object(bootstrap, "http_get", http or fake_http("pending", "s3" if "blobs" in profiles else "filesystem")), \
@@ -120,10 +119,13 @@ class BootstrapTests(unittest.TestCase):
             self.assertEqual(len(re.findall(rf"^{key}='[a-f0-9]{{{size * 2}}}'$", text, re.M)), 1, key)
         self.assertNotIn("BP_AUTH_SECRET=\n", text, "template placeholders are replaced in place")
         self.assertIn("COMPOSE_PROFILES='blobs,compute'", text)
+        self.assertIn(f"BP_BACKUP_DIR='{self.backup}'", text, "the default backup directory sits beside the env file")
+        self.assertTrue(self.backup.is_dir())
         self.assertIn("BP_BLOB_BACKEND='s3'", text)
         self.assertEqual(result["enrollment"], "pending")
         self.assertEqual(self.capability.read_text(), "c" * 64 + "\n")
         self.assertEqual(oct(self.capability.stat().st_mode & 0o777), "0o600")
+        self.assertTrue(result["next"].startswith("BP_SERVER_IMAGE=server:rendered docker compose "), result["next"])
         self.assertIn("compose.enroll.yaml", result["next"])
         self.assertIn(f"--user {os.getuid()}:{os.getgid()}", result["next"])
         self.assertIn(f"{self.capability}:/tmp/capability:ro", result["next"])
@@ -133,9 +135,11 @@ class BootstrapTests(unittest.TestCase):
         with self.env.open("a") as handle:
             handle.write("MY_CUSTOM=${KEEP_THIS}\n# a comment\n")
         before = self.env.read_text()
+        self.env.chmod(0o644)
         code, _, _ = self.bootstrap(profiles=("blobs", "compute"))
         self.assertEqual(code, 0)
         self.assertEqual(self.env.read_text(), before)
+        self.assertEqual(oct(self.env.stat().st_mode & 0o777), "0o600", "an unchanged env file is tightened on every run")
 
     def test_rerun_preserves_recorded_profiles_and_refuses_a_conflicting_explicit_set(self):
         code, _, _ = self.bootstrap("--access-mode", "proxy", "--public-url", "https://backplane.example.com", profiles=("gateway", "blobs", "compute"))
@@ -215,7 +219,8 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(sorted(plan["generate"]), sorted(bootstrap.CORE_SECRETS))
         self.assertEqual(plan["network"], {"name": "platform", "subnet": "172.30.0.0/24", "ipRange": "172.30.0.128/25", "gateway": "172.30.0.1"})
         self.assertEqual(plan["compose"][-3:], ["up", "-d", "--wait"])
-        self.assertTrue(any("backup-dir" in warning for warning in plan["warnings"]))
+        self.assertEqual(plan["warnings"], [])
+        self.assertEqual(plan["backupDir"], str(self.backup), "the default backup directory is created on the real run")
 
     def test_missing_secret_over_existing_installation_state_is_refused(self):
         code, _, _ = self.bootstrap()
@@ -236,6 +241,14 @@ class BootstrapTests(unittest.TestCase):
         with self.assertRaises(bootstrap.Refused) as refused:
             self.bootstrap()
         self.assertEqual(refused.exception.code, "existing_selection_required")
+        self.env.unlink()
+        runner = runner_with()
+        with self.assertRaises(bootstrap.Refused) as refused:
+            with patch.object(bootstrap, "http_get", fake_http()), contextlib.redirect_stdout(io.StringIO()):
+                bootstrap.bootstrap(["--env-file", str(self.env)], runner)
+        self.assertEqual(refused.exception.code, "capability_file_required")
+        self.assertFalse(any(c[1:3] in (["volume", "create"], ["network", "create"]) or "up" in c for c in runner.calls))
+        self.assertFalse(self.env.exists())
 
     def test_compose_command_lists_the_recorded_files_and_profiles_in_order(self):
         files = [ROOT / "compose.yaml", ROOT / "compose.gateway.yaml", ROOT / "compose.blobs.yaml", ROOT / "compose.compute.yaml"]
@@ -257,13 +270,24 @@ class BootstrapTests(unittest.TestCase):
         with self.assertRaises(bootstrap.Refused) as refused:
             self.bootstrap("--build", http=fake_http("claimed", "s3"))
         self.assertEqual(refused.exception.code, "selection_conflict")
+        self.env.unlink()
+        code, _, calls = self.bootstrap("--build")
+        self.assertEqual(code, 0)
+        build = next(c for c in calls if c[1] == "compose" and c[-1] == "build")
+        self.assertEqual(build[build.index("--env-file") + 1], "/dev/null", "a fresh build cannot read an env file that does not exist yet")
+        self.assertIn(str(ROOT / "compose.dev.yaml"), build)
+        self.assertEqual(next(c for c in calls if "up" in c)[-4], "--build")
+        self.env.write_text("BP_SERVER_IMAGE=custom:tag\n")
+        with self.assertRaises(bootstrap.Refused) as refused:
+            self.bootstrap("--build")
+        self.assertEqual(refused.exception.code, "build_conflicts_with_image_override")
 
     def test_readiness_timeout_exits_3_with_not_ready(self):
         def refused(url, headers=None, timeout=5.0):
             raise ConnectionRefusedError(111, "Connection refused")
         original = bootstrap.wait_ready
         err = io.StringIO()
-        argv = ["bootstrap.py", "--env-file", str(self.env), "--capability-file", str(self.capability), "--backup-dir", str(self.backup)]
+        argv = ["bootstrap.py", "--env-file", str(self.env), "--capability-file", str(self.capability)]
         with patch.object(bootstrap, "http_get", refused), patch.object(bootstrap.time, "sleep"), \
                 patch.object(bootstrap, "wait_ready", lambda base: original(base, timeout=0)), \
                 patch.object(bootstrap, "run", runner_with()), patch.object(sys, "argv", argv), contextlib.redirect_stderr(err):

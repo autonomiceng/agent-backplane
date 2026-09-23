@@ -21,7 +21,9 @@ import re
 import secrets
 import shlex
 import subprocess
+import stat
 import sys
+import tempfile
 import time
 import urllib.parse
 import uuid
@@ -71,6 +73,9 @@ SUPERVISOR_VERSION = "1.4.2"
 CAPABILITY_PATH = "/data/enrollment/capability"
 STATUS_DIAGNOSTICS = ("status_path_unsafe", "status_path_unavailable", "status_record_invalid", "status_selection_mismatch")
 NOT_READY = ("not_ready", "compose_up_failed", "selected_capabilities_not_ready")
+# Parsed subprocess output (compose config JSON) and the diagnostic tail kept from stderr.
+OUTPUT_LIMIT = 4 * 1024 * 1024
+DIAGNOSTIC_LIMIT = 4096
 
 
 class Refused(Exception):
@@ -84,16 +89,30 @@ Runner = Callable[..., subprocess.CompletedProcess[str]]
 
 
 def run(argv: list[str], *, timeout: float | None = None, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
-    # Compose startup has its own 300s health budget; image pulls need their own room.
+    """Bounded capture: stdout up to OUTPUT_LIMIT for parsing, the stderr tail for diagnostics."""
+    # Compose startup has its own 300s health budget; image pulls and builds need their own room.
     budget = timeout if timeout is not None else (900 if "pull" in argv or "build" in argv else 360 if "up" in argv else 120)
-    try:
-        return subprocess.run(argv, text=True, capture_output=True, check=False, timeout=budget, env=env, stdin=subprocess.DEVNULL)
-    except subprocess.TimeoutExpired:
-        raise Refused("docker_timeout", f"{argv[0]} {argv[1] if len(argv) > 1 else ''} exceeded its {budget:.0f}s deadline") from None
+    with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+        try:
+            code = subprocess.run(argv, stdout=out, stderr=err, stdin=subprocess.DEVNULL, check=False, timeout=budget, env=env).returncode
+        except subprocess.TimeoutExpired:
+            raise Refused("docker_timeout", f"{argv[0]} {argv[1] if len(argv) > 1 else ''} exceeded its {budget:.0f}s deadline") from None
+        out.seek(0)
+        stdout = out.read(OUTPUT_LIMIT).decode("utf-8", "replace")
+        err.seek(max(0, err.seek(0, os.SEEK_END) - DIAGNOSTIC_LIMIT))
+        stderr = err.read().decode("utf-8", "replace")
+    return subprocess.CompletedProcess(argv, code, stdout, stderr)
 
 
 def output(result: subprocess.CompletedProcess[str]) -> str:
     return (result.stderr or result.stdout).strip()[-2000:]
+
+
+def check_private_file(path: Path, code: str) -> None:
+    """A regular file owned by the caller, one link, no symlink, readable by nobody else."""
+    info = os.lstat(path)
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_nlink != 1 or info.st_mode & 0o077:
+        raise Refused(code, f"{path} must be a regular file owned by you with mode 0600 and no other links")
 
 
 def docker(runner: Runner, argv: list[str], env: dict[str, str], code: str = "docker_command_failed", **options) -> str:
@@ -159,6 +178,9 @@ class EnvFile:
     def write(self) -> None:
         text = self.render()
         if text == self.source:
+            # Secrets live here whatever created the file; tighten an owned file on every run.
+            if self.path.stat().st_mode & 0o177:
+                os.chmod(self.path, 0o600)
             return
         temporary = self.path.with_name(f"{self.path.name}.{uuid.uuid4().hex}")
         fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -182,8 +204,12 @@ def read_env(path: Path, template: Path) -> EnvFile:
     """An absent or empty env file starts from the template; nothing is recorded until write()."""
     if path.is_symlink():
         raise Refused("unsafe_env_file", f"{path} must not be a symlink")
-    if path.exists() and path.stat().st_size:
-        return EnvFile(path, path.read_text(encoding="utf-8"))
+    if path.exists():
+        info = os.lstat(path)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_nlink != 1:
+            raise Refused("unsafe_env_file", f"{path} must be a regular file owned by you with no other links")
+        if info.st_size:
+            return EnvFile(path, path.read_text(encoding="utf-8"))
     env = EnvFile(path, template.read_text(encoding="utf-8"))
     env.source = None
     return env
@@ -564,6 +590,7 @@ def export_capability(runner: Runner, env: dict[str, str], compose: list[str], p
     if not re.fullmatch(r"[a-f0-9]{64}\n?", capability):
         raise Refused("invalid_capability", "the server published no usable enrollment capability")
     if path.exists():
+        check_private_file(path, "unsafe_capability_file")
         if path.read_text(encoding="utf-8") != capability:
             raise Refused("capability_recovery_required", f"{path} holds another capability; move it aside before rerunning")
         return
@@ -577,8 +604,9 @@ def cli_state_dir() -> Path:
     return Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state") / "backplane"
 
 
-def enrollment_command(root: Path, env_file: Path, origin: str, capability: Path, state: Path) -> str:
-    argv = ["docker", "compose", "--project-directory", str(root), "--env-file", str(env_file),
+def enrollment_command(root: Path, env_file: Path, origin: str, capability: Path, state: Path, image: str) -> str:
+    """The enrollment container runs the image the server runs, including a local `--build`."""
+    argv = [f"BP_SERVER_IMAGE={image}", "docker", "compose", "--project-directory", str(root), "--env-file", str(env_file),
             "-f", str(root / "compose.yaml"), "-f", str(root / "compose.enroll.yaml"), "run", "--rm",
             "--user", f"{os.getuid()}:{os.getgid()}", "-v", f"{capability}:/tmp/capability:ro", "-v", f"{state}:{state}",
             "-e", f"BP_DATA_DIR={state}", "enroll", "--url", origin, "--email"]
@@ -604,6 +632,8 @@ def bootstrap(argv: list[str], runner: Runner | None = None) -> int:
     parser.add_argument("--backup-dir")
     parser.add_argument("--build", action="store_true", help="build the server and workerd images from this checkout (compose.dev.yaml)")
     args = parser.parse_args(argv)
+    if Path(args.env_file).is_symlink():
+        raise Refused("unsafe_env_file", f"{args.env_file} must not be a symlink")
     env_file = Path(args.env_file).resolve()
     template = ROOT / ".env.example"
     explicit = None if args.profile is None else [name for name in args.profile if name]
@@ -684,6 +714,8 @@ def settings(env: EnvFile, args, selection: dict) -> dict:
             raise Refused("env_conflict", f"{key}={entries[key]} is recorded in {env.path}; edit the file to change it")
         if key not in entries or env.source is None:
             env.save(key, value)
+    # A first look needs no separate mount; production replaces this with an encrypted off-host one.
+    env.default("BP_BACKUP_DIR", str(env.path.parent / "backups"))
     profiles = selection["profiles"]
     access = resolve_access(entries, "edge" in profiles)
     if "gateway" in profiles and access["mode"] != "proxy":
@@ -716,8 +748,8 @@ def plan(args, env_file: Path, template: Path, explicit: list[str] | None) -> in
     selection = select(env, args, explicit)
     resolved = settings(env, args, selection)
     missing = sorted(key for key in resolved["secrets"] if key not in env.entries)
-    backup = env.entries.get("BP_BACKUP_DIR")
-    warnings = [] if backup and Path(backup).is_dir() else ["set --backup-dir (BP_BACKUP_DIR) to an existing directory before a real run"]
+    backup = Path(env.entries["BP_BACKUP_DIR"])
+    warnings = [] if backup.is_dir() or backup == env_file.parent / "backups" else [f"backup directory {backup} does not exist; create the mount or pass --backup-dir"]
     if not selection["fresh"] and missing:
         warnings.append("an existing installation is missing secrets: " + ", ".join(missing) + "; restore the original env file")
     print(json.dumps({
@@ -725,7 +757,7 @@ def plan(args, env_file: Path, template: Path, explicit: list[str] | None) -> in
         "profiles": selection["profiles"], "composeFiles": selection["files"], "accessMode": resolved["access"]["mode"],
         "url": resolved["access"]["origin"], "blobBackend": "s3" if "blobs" in selection["profiles"] else "filesystem",
         "network": {"name": resolved["network"], "subnet": resolved["subnet"], "ipRange": resolved["ip_range"], "gateway": resolved["gateway"]},
-        "volumes": volume_names(resolved["prefix"], selection["profiles"]), "generate": missing,
+        "volumes": volume_names(resolved["prefix"], selection["profiles"]), "backupDir": str(backup), "generate": missing,
         "compose": compose_command(selection["project"], env_file, selection["files"], selection["profiles"]) + ["up", "-d", "--wait"],
         "warnings": warnings,
     }))
@@ -737,11 +769,18 @@ def prepare(args, env_file: Path, template: Path, explicit: list[str] | None, ru
     selection = select(env, args, explicit)
     resolved = settings(env, args, selection)
     entries, profiles, files, project = env.entries, selection["profiles"], selection["files"], selection["project"]
-    backup = entries.get("BP_BACKUP_DIR")
-    if not backup or not Path(backup).is_dir():
-        raise Refused("backup_directory_required", "set --backup-dir (BP_BACKUP_DIR) to an existing directory; the server reads Checkpoints from it")
+    backup = Path(entries["BP_BACKUP_DIR"])
+    if backup == env_file.parent / "backups":
+        # Postgres and the server traverse it as their own users; backup-init owns the leaves.
+        backup.mkdir(mode=0o755, exist_ok=True)
+    if not backup.is_dir():
+        raise Refused("backup_directory_required", f"{backup} does not exist; mount it or pass --backup-dir, the server reads Checkpoints from it")
+    if args.build and (entries.get("BP_SERVER_IMAGE") or entries.get("BP_WORKERD_IMAGE")):
+        raise Refused("build_conflicts_with_image_override", "--build would build over the explicit BP_SERVER_IMAGE or BP_WORKERD_IMAGE; clear the override or omit --build")
     child = {key: value for key, value in os.environ.items() if not key.startswith(("BP_", "COMPOSE_"))}
     found, volumes = installation_state(runner, child, project, resolved["prefix"])
+    if args.capability_file is None and selection["fresh"] and not found:
+        raise Refused("capability_file_required", "a fresh installation enrolls its first User; pass --capability-file PATH before anything is created")
     missing = sorted(key for key in resolved["secrets"] if key not in entries)
     if found and missing:
         raise Refused("existing_installation_missing_secrets",
@@ -764,6 +803,7 @@ def prepare(args, env_file: Path, template: Path, explicit: list[str] | None, ru
     try:
         config = json.loads(docker(runner, [*preflight[1:], "config", "--format", "json"], child, "invalid_compose_config"))
         server, storage_init = config["services"]["server"]["environment"], config["services"]["storage-init"]["environment"]
+        server_image = config["services"]["server"]["image"]
     except (ValueError, KeyError, TypeError):
         raise Refused("invalid_compose_config", "the selected Compose files do not render the server and storage-init services") from None
     backend = server.get("BP_BLOB_BACKEND") or "filesystem"
@@ -774,7 +814,7 @@ def prepare(args, env_file: Path, template: Path, explicit: list[str] | None, ru
                       "perform an explicit storage migration and record its result first")
     env.save("BP_BLOB_BACKEND", backend)
     if args.build:
-        docker(runner, [*compose[1:], "build"], child, "compose_build_failed")
+        docker(runner, [*preflight[1:], "build"], child, "compose_build_failed")
     identity = None
     if "compute" in profiles:
         workerd = config["services"].get("workerd", {}).get("environment", {}) if isinstance(config["services"].get("workerd"), dict) else {}
@@ -812,7 +852,7 @@ def prepare(args, env_file: Path, template: Path, explicit: list[str] | None, ru
         "project": project, "envFile": str(env_file), "profiles": profiles, "composeFiles": files, "url": origin,
         "enrollment": enrollment, "capabilityFile": str(capability) if enrollment == "pending" else None,
         "rustfsConsole": resolved["console"]["origin"] + "/rustfs/console/" if resolved["console"]["enabled"] == "true" else None,
-        "next": enrollment_command(ROOT, env_file, origin, capability, cli_state_dir()) if enrollment == "pending"
+        "next": enrollment_command(ROOT, env_file, origin, capability, cli_state_dir(), server_image) if enrollment == "pending"
         else f"Enrollment is complete; open {origin}/dashboard or run bp with the saved credentials.",
     }))
     return 0
