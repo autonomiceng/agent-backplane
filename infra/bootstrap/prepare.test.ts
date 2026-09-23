@@ -327,7 +327,7 @@ test("an absent Platform Network is created with the configured allocation; inva
     await prepare(args, {}, absent, record);
     expect(calls.filter(call => call[0] === "network" && call[1] === "create")).toEqual([networkCreate("10.20.0.0/16", "10.20.128.0/17", "10.20.0.1")]);
     for (const [subnet, range, proxies] of [["172.30.0.0/24", "172.30.1.0/25", ""], ["172.30.0.1/24", "172.30.0.128/25", ""], ["172.30.0/24", "172.30.0.128/25", ""],
-      ["172.30.0.0/24", "172.30.0.128/025", ""], ["fd00::/64", "fd00::/80", ""], ["172.30.0.0/24", "172.30.0.0/25", ""], ["172.30.0.1/32", "172.30.0.1/32", ""], ["172.30.0.0/24", "172.30.0.128/25", "BP_TRUSTED_PROXIES='172.30.0.200'\n"]]) {
+      ["172.30.0.0/24", "172.30.0.128/025", ""], ["fd00::/64", "fd00::/80", ""], ["172.30.0.0/24", "172.30.0.0/25", ""], ["172.30.0.1/32", "172.30.0.1/32", ""], ["172.30.0.0/24", "172.30.0.1/32", ""], ["172.30.0.0/24", "172.30.0.255/32", ""], ["172.30.0.0/24", "172.30.0.128/25", "BP_TRUSTED_PROXIES='172.30.0.200'\n"]]) {
       await writeFile(path, `${saved}BP_PLATFORM_SUBNET=${subnet}\nBP_PLATFORM_IP_RANGE=${range}\n${proxies}`);
       calls.length = 0;
       await expect(prepare(args, {}, absent, record)).rejects.toMatchObject({ error: "invalid_platform_network", exit: 1 });

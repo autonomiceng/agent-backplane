@@ -179,8 +179,9 @@ export async function prepare(argv: string[], env: Environment, run: Runner = do
     if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(network)) throw new CliError("invalid_platform_network", 1);
     const subnet = entries.BP_PLATFORM_SUBNET ?? platform.subnet, ipRange = entries.BP_PLATFORM_IP_RANGE ?? platform.ipRange;
     const pool = ipv4Network(subnet), dynamic = ipv4Network(ipRange);
-    // The derived gateway is the subnet's first host, so the subnet needs usable host addresses.
-    if (!pool || !dynamic || pool.end - pool.start < 3 || dynamic.start < pool.start || dynamic.end > pool.end) throw new CliError("invalid_platform_network", 1);
+    // The derived gateway is the subnet's first host; the range needs an allocatable host besides it.
+    if (!pool || !dynamic || dynamic.start < pool.start || dynamic.end > pool.end
+      || Math.min(dynamic.end, pool.end - 1) < Math.max(dynamic.start, pool.start + 2)) throw new CliError("invalid_platform_network", 1);
     // Docker could hand a trusted proxy address inside the dynamic range to any attached container.
     if ((entries.BP_TRUSTED_PROXIES || platform.edge).split(" ").map(peer => ipv4Network(peer.includes("/") ? peer : `${peer}/32`))
       .some(peer => peer && peer.start >= dynamic.start && peer.start <= dynamic.end)) throw new CliError("invalid_platform_network", 1);
