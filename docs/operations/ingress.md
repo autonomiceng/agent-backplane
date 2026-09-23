@@ -1,35 +1,35 @@
 # Access setup
 
-Choose `BP_ACCESS_MODE` in the environment file used by preparation:
+Choose `BP_ACCESS_MODE` with `--access-mode` or in the environment file used by bootstrap:
 
 | Mode | What you get | Setup |
 | --- | --- | --- |
 | Local (`local`, default) | HTTP and self-signed HTTPS, no domain needed | Add `--profile edge` for both protocols. Core alone serves HTTP on port 3000. |
 | Public (`public`) | Automatically renewed trusted HTTPS certificates for your own domain | Set `BP_PUBLIC_DOMAIN`, publish the edge on `BP_BIND_HOST=0.0.0.0`, and add `--profile edge`. |
-| Behind another gateway (`proxy`) | That gateway handles HTTPS; this stack receives HTTP internally | Set `BP_PUBLIC_URL` to the gateway's backplane URL and omit `--profile edge`. |
+| Behind another gateway (`proxy`) | That gateway handles HTTPS; this stack receives HTTP internally | Pass `--access-mode proxy --public-url` with the gateway's backplane URL and omit `--profile edge`. |
 
-For local mode, run preparation from this checkout with an existing encrypted backup mount:
+For local mode, run bootstrap from this checkout with an existing encrypted backup mount:
 
 ```sh
-bun infra/bootstrap/prepare.ts --access-mode local --profile edge \
+python3 scripts/bootstrap.py --access-mode local --profile edge \
   --backup-dir /mnt/backplane-backups --capability-file "$HOME/.bp-enrollment"
 ```
 
-The local edge serves HTTP on port 80 and HTTPS on port 443 together, without redirecting HTTP or telling browsers to require HTTPS. Preparation defaults the configured browser address to `http://localhost` for that setup. Without the edge profile it defaults to `http://localhost:3000`. Set `BP_HTTP_PORT`, `BP_HTTPS_PORT` or `BP_PORT` before preparation to change the published ports. Core's container always receives HTTP on port 3000 and its host port stays on `127.0.0.1`.
+The local edge serves HTTP on port 80 and HTTPS on port 443 together, without redirecting HTTP or telling browsers to require HTTPS. Bootstrap defaults the configured browser address to `http://localhost` for that setup. Without the edge profile it defaults to `http://localhost:3000`. Set `BP_HTTP_PORT`, `BP_HTTPS_PORT` or `BP_PORT` before bootstrap to change the published ports. Core's container always receives HTTP on port 3000 and its host port stays on `127.0.0.1`.
 
-The local HTTPS listener covers `localhost`, `127.0.0.1`, and `backplane.localhost`. With `BP_PUBLIC_DOMAIN=example.com`, the configured hostname becomes `backplane.example.com` and preparation defaults to its HTTPS origin. Set up DNS or a hosts entry for a custom hostname. Local HTTPS clients need the trust setup below.
+The local HTTPS listener covers `localhost`, `127.0.0.1`, and `backplane.localhost`. With `BP_PUBLIC_DOMAIN=example.com`, the configured hostname becomes `backplane.example.com` and bootstrap defaults to its HTTPS origin. Set up DNS or a hosts entry for a custom hostname. Local HTTPS clients need the trust setup below.
 
-For public mode, put `BP_ACCESS_MODE=public`, `BP_PUBLIC_DOMAIN=example.com`, and `BP_BIND_HOST=0.0.0.0` in the selected environment file, then run preparation with `--profile edge`. Point `backplane.example.com` at this host and allow inbound ports 80 and 443. A loopback bind is also supported if a separate TCP forwarder makes those ports publicly reachable; a loopback bind alone cannot obtain public certificates. HTTP redirects to the configured HTTPS address; `/health` stays available over HTTP for health checks. HTTPS tells browsers to require HTTPS on future visits.
+For public mode, put `BP_ACCESS_MODE=public`, `BP_PUBLIC_DOMAIN=example.com`, and `BP_BIND_HOST=0.0.0.0` in the selected environment file, then run bootstrap with `--profile edge`. Point `backplane.example.com` at this host and allow inbound ports 80 and 443. A loopback bind is also supported if a separate TCP forwarder makes those ports publicly reachable; a loopback bind alone cannot obtain public certificates. HTTP redirects to the configured HTTPS address; `/health` stays available over HTTP for health checks. HTTPS tells browsers to require HTTPS on future visits.
 
-For Platform Edge, use `BP_ACCESS_MODE=proxy` and the exact external `BP_PUBLIC_URL`. Add `--profile gateway` to preparation. Platform Edge forwards to the internal Caddy at `bp-gateway:80` on `BP_PLATFORM_NETWORK` (default `platform`). Platform Edge owns certificate issuance and any HTTP-to-HTTPS redirects. The internal gateway listens only on HTTP port 80 and retains operator-route exclusions. Keep the standalone edge profile off when another gateway owns ports 80 and 443.
+For Platform Edge, run bootstrap with `--access-mode proxy --public-url <exact external URL> --profile gateway`. Platform Edge forwards to the internal Caddy at `bp-gateway:80` on `BP_PLATFORM_NETWORK` (default `platform`). Platform Edge owns certificate issuance and any HTTP-to-HTTPS redirects. The internal gateway listens only on HTTP port 80 and retains operator-route exclusions. Keep the standalone edge profile off when another gateway owns ports 80 and 443.
 
-The Platform Network has one allocation on every host, defined in the [platform contract](../conventions.md#platform-contract): subnet `172.30.0.0/24` (`BP_PLATFORM_SUBNET`), dynamic range `172.30.0.128/25` (`BP_PLATFORM_IP_RANGE`) and gateway `172.30.0.1`, the subnet's first host. Platform Edge holds the reserved address `172.30.0.2` outside the dynamic range, and `BP_TRUSTED_PROXIES` defaults to `172.30.0.2/32`, so no Edge address discovery is needed. Whichever bootstrap runs first creates the network with these parameters. Preparation validates an existing network and refuses a different subnet, range or gateway, or a network with no IPv4 IPAM configuration, with `platform_network_mismatch` and the observed and expected values. To repair a network created before this contract, stop every stack on it, run `docker network rm` on the network the error names, then rerun preparation. Preparation also refuses a dynamic range that contains a trusted IPv4 proxy address.
+The Platform Network has one allocation on every host, defined in the [platform contract](../conventions.md#platform-contract): subnet `172.30.0.0/24` (`BP_PLATFORM_SUBNET`), dynamic range `172.30.0.128/25` (`BP_PLATFORM_IP_RANGE`) and gateway `172.30.0.1`, the subnet's first host. Platform Edge holds the reserved address `172.30.0.2` outside the dynamic range, and `BP_TRUSTED_PROXIES` defaults to `172.30.0.2/32`, so no Edge address discovery is needed. Whichever bootstrap runs first creates the network with these parameters. Bootstrap validates an existing network and refuses a different subnet, range or gateway, or a network with no IPv4 IPAM configuration, with `platform_network_mismatch` and the observed and expected values. To repair a network created before this contract, stop every stack on it, run `docker network rm` on the network the error names, then rerun bootstrap. Bootstrap also refuses a dynamic range that contains a trusted IPv4 proxy address.
 
-Preparation preserves existing secrets and rejects conflicting mode/origin settings before starting services. Set one mode directly; the previous scheme, issuer and edge override settings are unsupported. No configuration or data migration runs. Existing volume names and backup contents remain unchanged. On a host with several deployments, choose distinct `BP_VOLUME_PREFIX` and `BP_PLATFORM_NETWORK` values so the `bp-server` and `bp-gateway` aliases resolve uniquely; each additional network needs its own non-overlapping `BP_PLATFORM_SUBNET` and `BP_PLATFORM_IP_RANGE`.
+Bootstrap preserves existing secrets and rejects conflicting mode/origin settings before starting services. Set one mode directly; the previous scheme, issuer and edge override settings are unsupported. No configuration or data migration runs. Existing volume names and backup contents remain unchanged. On a host with several deployments, choose distinct `BP_VOLUME_PREFIX` and `BP_PLATFORM_NETWORK` values so the `bp-server` and `bp-gateway` aliases resolve uniquely; each additional network needs its own non-overlapping `BP_PLATFORM_SUBNET` and `BP_PLATFORM_IP_RANGE`.
 
 ## Browser address for authentication
 
-`BP_PUBLIC_URL` is one configured origin, even when both listener protocols are available. Choose the address used for browser login and the CLI. A local edge accepts an explicitly selected HTTP loopback origin or HTTPS origin on one of its certificate names and corresponding published ports. Other listener addresses can serve requests, but authenticated browser mutations still require the configured browser Origin; sessions and secure-cookie attributes follow its scheme. Public mode requires the derived `https://backplane.<BP_PUBLIC_DOMAIN>` origin, including a non-default HTTPS port. Behind another gateway, preparation preserves the configured gateway origin.
+`BP_PUBLIC_URL` is one configured origin, even when both listener protocols are available. Choose the address used for browser login and the CLI. A local edge accepts an explicitly selected HTTP loopback origin or HTTPS origin on one of its certificate names and corresponding published ports. Other listener addresses can serve requests, but authenticated browser mutations still require the configured browser Origin; sessions and secure-cookie attributes follow its scheme. Public mode requires the derived `https://backplane.<BP_PUBLIC_DOMAIN>` origin, including a non-default HTTPS port. Behind another gateway, bootstrap preserves the configured gateway origin.
 
 Origins normalize case, IDNA and default ports. Credentials, paths, query strings, fragments, whitespace and backslashes are rejected. `BP_AUTH_URL`, if supplied separately, must normalize to the same configured browser address; it no longer supplies a fallback origin. CLI and MCP accept `BP_PUBLIC_URL` or the CLI endpoint setting `BP_URL` and reject conflicts before sending credentials. They never follow credential-bearing redirects.
 
@@ -49,16 +49,17 @@ docker compose --env-file .env --project-name agent-backplane \
   cp edge:/data/caddy/pki/authorities/local/root.crt ./edge-root.crt
 ```
 
-Use the same environment file and project name as preparation: replace `.env` if you supplied `--env-file PATH`, and replace `agent-backplane` if you supplied `--compose-project NAME`.
+Use the same environment file and project name as bootstrap: replace `.env` if you supplied `--env-file PATH`, and replace `agent-backplane` if you supplied `--compose-project NAME`.
 
 Verify and distribute that certificate through an authenticated channel, then install it into each browser, OS or runtime trust store. Never distribute `root.key` or disable certificate verification. If choosing a configured HTTPS address for local bootstrap, install trust before running the emitted `bp bootstrap` command. See [Caddy local HTTPS](https://caddyserver.com/docs/automatic-https#local-https).
 
 ## Verification
 
-Configuration tests render isolated environment files without contacting Docker's daemon:
+Configuration tests render isolated environment files without contacting Docker's daemon; the bootstrap tests use a fake runner and never call Docker:
 
 ```sh
-bun test infra/bootstrap/prepare.test.ts infra/compose/validate-edge.test.ts infra/compose/compose.test.ts apps/server/platform/config.test.ts
+python3 -m unittest discover -s tests -p 'test_bootstrap*.py'
+bun test infra/compose/compose.test.ts apps/server/platform/config.test.ts
 ```
 
 The disposable listener probes require Docker with journald and the pinned Caddy image already cached. They use a unique project, random loopback ports, a dedicated network with outbound certificate requests blocked, and temporary certificate storage. Only the public CA certificate is exported. No application database or installed deployment is used:
@@ -81,7 +82,7 @@ docker compose --env-file .env --project-name agent-backplane \
   -f compose.yaml -f compose.gateway.yaml --profile gateway up -d --wait
 ```
 
-If preparation used `--env-file PATH` or `--compose-project NAME`, replace `.env`
+If bootstrap used `--env-file PATH` or `--compose-project NAME`, replace `.env`
 and `agent-backplane` with those same values. Keep those options on subsequent
 Compose commands so the public URL, volume prefix and network come from the
 prepared deployment.
@@ -99,8 +100,9 @@ published console link or forwarding route, and standalone Caddy requests no
 console certificate. Reserved HTTP console hosts return 404.
 
 On an existing RustFS installation, set `BP_RUSTFS_CONSOLE=true` in its private
-environment file and prepare with `--profile blobs` plus either `--profile edge`
-or `--profile gateway`. Enabling the console never selects a storage backend.
+environment file and rerun bootstrap without `--profile`, so the complete recorded
+selection (which must already include `blobs` and `edge` or `gateway`) is reused; a partial
+`--profile` set is refused. Enabling the console never selects a storage backend.
 Keep the original profiles, credentials, bucket, source bytes and volumes;
 a filesystem deployment requires an explicit storage migration first. An explicit
 `BP_BLOB_BACKEND=filesystem` conflicts with enabling this console.
@@ -152,17 +154,17 @@ with `Accept: text/html` redirects to `/rustfs/console/`; other requests retain
 their path, method and Host for native login and SigV4. Platform Edge publication
 on port 8450 is a separate follow-up; this setup does not publish that port.
 
-Run preparation again with the same environment file, project and profiles after
+Run bootstrap again with the same environment file, project and profiles after
 editing these settings. It validates before Docker calls, preserves credentials
 and user settings, and refreshes the derived `BP_RUSTFS_URL_HOST` and
 `BP_RUSTFS_AUTHORITY` fields used by Caddy. Subsequent bare Compose commands must
-use that prepared file. Preparation prints the console link only when enabled.
+use that prepared file. Bootstrap prints the console link only when enabled.
 Sign in using `BP_RUSTFS_ROOT_USER` and `BP_RUSTFS_ROOT_PASSWORD` from that private
 file. These are human administration credentials, not Backplane User credentials.
 Agents must use the Files API with Principal and Run context to preserve provenance;
 native storage administration bypasses those application records.
 
-Pure preparation tests do not establish installed login or ingress qualification.
+Pure bootstrap tests do not establish installed login or ingress qualification.
 Release checks must cover actual root-key browser login, signed account info,
 trusted-peer allow/deny, standalone/proxy routing, and disabled 404 behavior.
 

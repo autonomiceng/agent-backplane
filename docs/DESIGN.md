@@ -51,14 +51,18 @@ The backplane gives every group of collaborating agents a Workspace with a Postg
         [overlay edge]   Caddy
 ```
 
-Compose overlays: the base file starts Postgres and the server. Fresh bootstrap defaults to
-full mode with `blobs` and `compute`, providing RustFS-backed Files and Functions.
-Explicit `--mode minimal` selects core and filesystem Files without workerd. The
-`edge` or `gateway` ingress profile is selected separately. Bootstrap saves the native
-Compose project, ordered files, profiles and Files backend; ordinary Compose commands
-reuse that selection. Existing selections remain authoritative, and requested mode
-changes require an explicit upgrade or storage migration (ADR-0009). This preparatory
-policy awaits root's actual host console/runtime qualification before release promotion.
+Compose overlays: the base file starts Postgres and the server. `python3 scripts/bootstrap.py`
+(standard library only; Docker and Python are the host's only prerequisites) locks the env
+file, generates missing secrets, creates the Platform Network and durable volumes, starts the
+selection with `up --wait`, waits for readiness and exports the pending enrollment capability.
+A fresh install is minimal: core plus filesystem Files, no workerd. `--profile blobs` and
+`--profile compute` opt into RustFS-backed Files and Functions; the `edge` or `gateway`
+ingress profile is selected separately. Bootstrap records the native Compose project,
+ordered files, profiles and Files backend in `.env`; ordinary Compose commands reuse that
+selection, a rerun preserves it, and a conflicting explicit profile set is refused.
+Capability or storage changes are explicit upgrades or migrations (ADR-0009). The first
+User enrolls through the CLI inside the server image (`compose.enroll.yaml`), so Bun never
+runs on the host.
 
 ## Tenancy and identity
 
@@ -111,9 +115,9 @@ Hero view: the Run timeline, showing which harnesses touched which tables, queue
 
 ## Files and Functions (selectable overlays, experimental)
 
-Blobs: Workspace-scoped, provenance-stamped storage. Filesystem storage ships in minimal mode; fresh full preparation selects the S3 overlay with digest-pinned RustFS 1.0.0. Backend switches require explicit migration. See ADR-0009.
+Blobs: Workspace-scoped, provenance-stamped storage. Filesystem storage ships with core; `--profile blobs` selects the S3 overlay with digest-pinned RustFS 1.0.0. Backend switches require explicit migration. See ADR-0009.
 
-Compute: single-node workerd, one isolate per submitted function, invoked over HTTP with the Workspace credential bound. Deployment and invocation provenance are recorded separately. Minimal mode omits both overlays. Selected Functions pull the published, digest-pinned workerd image
+Compute: single-node workerd, one isolate per submitted function, invoked over HTTP with the Workspace credential bound. Deployment and invocation provenance are recorded separately. A fresh install omits both overlays. Selected Functions pull the published, digest-pinned workerd image
 when its image override is absent or blank. Bootstrap success requires core readiness
 and fresh authenticated Files/Functions observations from the existing operations sampler.
 The sampler reads the storage binding/marker and verifies runtime identity with a loader

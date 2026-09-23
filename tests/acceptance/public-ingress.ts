@@ -5,7 +5,6 @@ import { request as httpRequest, type IncomingMessage } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 import { resolve } from "node:path";
-import { validateEdge } from "../../infra/compose/validate-edge.ts";
 import { record } from "../../packages/cli/runtime/http.ts";
 
 function required(name: string): string { const value = Bun.env[name]; assert(value, `${name} is required; ingress acceptance never skips`); return value; }
@@ -24,7 +23,8 @@ async function text(response: IncomingMessage): Promise<string> {
 }
 async function scenario() {
   assert(Bun.which("docker"), "docker is required; ingress acceptance never skips");
-  const edge = validateEdge(Bun.env); assert.equal(edge.mode, "local", "acceptance requires BP_ACCESS_MODE=local");
+  assert.equal(Bun.env.BP_ACCESS_MODE ?? "local", "local", "acceptance requires BP_ACCESS_MODE=local");
+  const edge = { origin: new URL(required("BP_PUBLIC_URL")).origin, host: `backplane.${Bun.env.BP_PUBLIC_DOMAIN || "localhost"}`.toLowerCase() };
   assert(edge.origin.startsWith("https:"), "acceptance requires a canonical HTTPS origin");
   const ca = await readFile(required("BP_EDGE_CA_CERT")), token = required("BP_OPERATIONS_TOKEN");
   const email = required("BP_USER_EMAIL"), password = required("BP_USER_PASSWORD");

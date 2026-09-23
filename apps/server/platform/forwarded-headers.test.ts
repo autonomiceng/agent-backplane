@@ -13,7 +13,6 @@ import { readConfig, resolvePublicOrigin } from "./config.ts";
 import { originDiagnostic, unavailable } from "./readiness.ts";
 import { readOperationsConfig } from "./operations.ts";
 import { credentials } from "../../../packages/cli/runtime/credentials.ts";
-import { validateEdge } from "../../../infra/compose/validate-edge.ts";
 
 const email = "ingress@example.com", password = "ingress-enrollment-password", operator = "ingress-operator-token";
 const spoof = { forwarded: 'for=198.51.100.9;host=evil.example;proto=http', "x-forwarded-host": "evil.example",
@@ -58,11 +57,6 @@ test("spoofed proxy headers bypass authentication or operator authorization", as
   expect(() => credentials({ BP_PUBLIC_URL: "https://a.example", BP_URL: "https://b.example", BP_KEY: "invalid" }, "principal", undefined)).toThrow("BP_URL_conflict");
   expect(() => client({ BP_URL: "https://a.example", BP_AUTH_URL: "https://b.example" })).toThrow("BP_URL_conflict");
   expect(() => client({ BP_PUBLIC_URL: "http://a.example", BP_ALLOW_INSECURE_ORIGIN: "true" })).toThrow("BP_URL_invalid");
-  const edge = { BP_PUBLIC_URL: "https://backplane.example.com", BP_PUBLIC_DOMAIN: "example.com", BP_ACCESS_MODE: "public" };
-  expect(validateEdge(edge).origin).toBe(edge.BP_PUBLIC_URL);
-  expect(() => validateEdge({ ...edge, BP_PUBLIC_DOMAIN: "example.com:443" })).toThrow();
-  expect(() => validateEdge({ ...edge, BP_ACCESS_MODE: "proxy" })).toThrow();
-  expect(() => validateEdge({ ...edge, BP_PUBLIC_URL: "https://other.example" })).toThrow();
 
   const f = await fixture("http://localhost");
   try {

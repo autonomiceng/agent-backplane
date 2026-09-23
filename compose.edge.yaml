@@ -24,7 +24,7 @@ services:
     environment:
       BP_ACCESS_MODE: ${BP_ACCESS_MODE:-local}
       BP_EDGE_HOST: backplane.${BP_PUBLIC_DOMAIN:-localhost}
-      BP_PUBLIC_URL: ${BP_PUBLIC_URL:?run infra/bootstrap/prepare.ts to set the browser URL}
+      BP_PUBLIC_URL: ${BP_PUBLIC_URL:?run scripts/bootstrap.py to set the browser URL}
       BP_RUSTFS_CONSOLE: ${BP_RUSTFS_CONSOLE:-false}
       BP_RUSTFS_HOST: ${BP_RUSTFS_HOST:-rustfs.${BP_PUBLIC_DOMAIN:-localhost}}
       BP_RUSTFS_URL_HOST: ${BP_RUSTFS_URL_HOST:-unused.invalid}

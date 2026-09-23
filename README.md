@@ -17,29 +17,20 @@ It runs on one machine as one Bun process in front of PostgreSQL 18. A CLI and a
 
 ## Quick start
 
-You need Docker with the Compose plugin, Bun 1.4 for preparation and the `bp` CLI, and a Linux host with journald. Compose pulls published, digest-pinned images; nothing is built on the host. Other Docker hosts need an [operator logging override](docs/operations/logging.md). [mise](https://mise.jdx.dev) installs the pinned tools: `mise install`.
+You need Docker with the Compose plugin, Python 3.11 and a Linux host with journald. Compose pulls published, digest-pinned images and the first user enrolls through the CLI inside the server image, so nothing is built on the host and Bun is not installed on it. Other Docker hosts need an [operator logging override](docs/operations/logging.md).
 
 ```sh
-git clone https://github.com/autonomiceng/agent-backplane.git
-cd agent-backplane
-mise install
-eval "$(mise activate bash)"
-bun install
-mkdir -p "$HOME/.local/bin" && ln -sf "$PWD/packages/cli/runtime/main.ts" "$HOME/.local/bin/bp"
+git clone https://github.com/autonomiceng/agent-backplane.git && cd agent-backplane
+python3 scripts/bootstrap.py --capability-file "$HOME/.bp-enrollment"
+# then run the `next` command bootstrap printed, for example:
+BP_SERVER_IMAGE=<the server image> docker compose -f compose.yaml -f compose.enroll.yaml run --rm --user "$(id -u):$(id -g)" \
+  -v "$HOME/.bp-enrollment:/tmp/capability:ro" -v "$HOME/.local/state/backplane:$HOME/.local/state/backplane" \
+  -e BP_DATA_DIR="$HOME/.local/state/backplane" enroll --url http://localhost:3000 --email you@example.com
 ```
 
-Prepare a backup mount (any directory works for a first look; production wants an encrypted, off-host one), then:
+Backups land in `./backups` beside `.env` until you pass `--backup-dir` with an encrypted, off-host mount. The first command writes `.env`, creates the `platform` network with the shared allocation (`BP_PLATFORM_SUBNET=172.30.0.0/24`, `BP_PLATFORM_IP_RANGE=172.30.0.128/25`, see [access setup](docs/operations/ingress.md)), starts Postgres and the server, waits for them and prints the enrollment command. The second enrolls you as the first user and creates a Workspace and a Principal. Paste the printed `mcpServers.backplane` block into your agent's `.mcp.json`, and open `http://localhost:3000/dashboard`. Agent machines run the `bp` CLI from a Bun install of this checkout (`bun install`, then link `packages/cli/runtime/main.ts` as `bp`) or the compiled artifact; see [agent client setup](skills/backplane/references/client-setup.md).
 
-```sh
-bun infra/bootstrap/prepare.ts --public-url http://localhost:3000 \
-  --backup-dir /mnt/backplane-backups --capability-file "$HOME/.bp-enrollment"
-bp bootstrap --url http://localhost:3000 --email you@example.com \
-  --capability-file "$HOME/.bp-enrollment"
-```
-
-The first command writes `.env`, creates the `platform` network with the shared allocation (`BP_PLATFORM_SUBNET=172.30.0.0/24`, `BP_PLATFORM_IP_RANGE=172.30.0.128/25`, see [access setup](docs/operations/ingress.md)), starts Postgres and the server and waits for them. The second enrolls you as the first user and creates a Workspace and a Principal. Paste the printed `mcpServers.backplane` block into your agent's `.mcp.json`, and open `http://localhost:3000/dashboard`.
-
-Optional profiles add S3 blob storage on RustFS, a workerd sandbox for small functions, and a standalone edge. Choose local HTTP and self-signed HTTPS, trusted HTTPS for your own domain, or access behind another gateway in [access setup](docs/operations/ingress.md). See [bootstrap and recovery](infra/bootstrap/README.md).
+A fresh install is minimal. `--profile blobs` adds S3 blob storage on RustFS, `--profile compute` a workerd sandbox for small functions, and `--profile edge` a standalone edge. Choose local HTTP and self-signed HTTPS, trusted HTTPS for your own domain, or access behind another gateway in [access setup](docs/operations/ingress.md). See [bootstrap and recovery](infra/bootstrap/README.md).
 
 ## What's inside
 
@@ -62,7 +53,7 @@ Optional profiles add S3 blob storage on RustFS, a workerd sandbox for small fun
 
 Each push to `main` and each `vX.Y.Z` release tag publishes `ghcr.io/autonomiceng/agent-backplane-server` (amd64, arm64) and `ghcr.io/autonomiceng/agent-backplane-workerd` (amd64). Compose uses them by default. See [published images](docs/operations/upgrade.md).
 
-Every shipped image default, including the server and workerd, is pinned as `tag@sha256`. Complete image references in `.env` select unvalidated experiments; see [preparation](infra/bootstrap/README.md). Terms are in [CONTEXT.md](CONTEXT.md); guarantees in the [design](docs/DESIGN.md).
+Every shipped image default, including the server and workerd, is pinned as `tag@sha256`. Complete image references in `.env` select unvalidated experiments; see [bootstrap](infra/bootstrap/README.md). Terms are in [CONTEXT.md](CONTEXT.md); guarantees in the [design](docs/DESIGN.md).
 
 ## Built on
 
@@ -105,17 +96,17 @@ Each runs alone. Shared conventions live in [docs/conventions.md](docs/conventio
 ```sh
 bun run check   # typecheck, lint, generated-contract drift, dashboard build
 bun run test    # tests against a real embedded Postgres
-docker compose --env-file .env config -q  # after prepare creates .env
+docker compose --env-file .env config -q  # after bootstrap creates .env
 docker compose --env-file .env -f compose.yaml -f compose.dev.yaml build  # server image from this checkout
 ```
 
-List the development overlay last; `-f compose.yaml -f compose.compute.yaml -f compose.dev.yaml --profile compute build` also builds workerd. Preparation launches the saved Compose files, so set `BP_SERVER_IMAGE=agent-backplane-server:local` (and `BP_WORKERD_IMAGE=agent-backplane-workerd:local`) in `.env` to run those builds.
+List the development overlay last; `-f compose.yaml -f compose.compute.yaml -f compose.dev.yaml --profile compute build` also builds workerd. `python3 scripts/bootstrap.py --build` on a fresh install records `compose.dev.yaml` in `COMPOSE_FILE` and builds both images from the checkout.
 
 For host development, pass the cluster-owner URL only to migration:
 `BP_ADMIN_DATABASE_URL=postgres://postgres:YOUR_PASSWORD@localhost:5432/backplane bun run migrate`.
 Set `BP_DATABASE_URL` to the separate `bp_server` login before `bun run dev`.
 
-CI runs both Bun gates and builds the server image on every push and pull request. See [CONTRIBUTING.md](CONTRIBUTING.md).
+CI runs both Bun gates, the bootstrap unit tests and a bootstrap dry run, and builds the server image on every push and pull request. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Security
 

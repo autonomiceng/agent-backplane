@@ -11,14 +11,13 @@ When asked to connect this repository to an existing Backplane, read [agent clie
 
 ## First installation
 
-When preparing a local installation, read [bootstrap prerequisites and recovery](../../infra/bootstrap/README.md), then run as the User:
+When preparing a local installation, read [bootstrap and enrollment](../../infra/bootstrap/README.md), then run as the User:
 
 ```sh
-bun infra/bootstrap/prepare.ts --public-url http://localhost:3000 \
-  --backup-dir /mnt/backplane-backups --capability-file "$HOME/.bp-enrollment"
-bp bootstrap --url http://localhost:3000 --email user@example.com \
-  --capability-file "$HOME/.bp-enrollment"
+python3 scripts/bootstrap.py --backup-dir /mnt/backplane-backups --capability-file "$HOME/.bp-enrollment"
 ```
+
+Then run the enrollment command bootstrap prints as `next` (`docker compose -f compose.yaml -f compose.enroll.yaml run --rm ... enroll --url http://localhost:3000 --email user@example.com`).
 
 Enter the password at the terminal or set BP_BOOTSTRAP_PASSWORD. Install the emitted MCP configuration, which references a private BP_CREDENTIALS_FILE. CLI commands accept the same file. Reruns validate saved credentials. Exit 0 means done; exit 1 means usage or invalid input; exit 2 requires readiness, adoption, capability or identity recovery; exit 3 requires explicit key recovery. Investigate uncertain creation before adopting an ID. Keep checkpoint and credential files private.
 

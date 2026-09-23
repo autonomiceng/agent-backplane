@@ -85,3 +85,11 @@ _Avoid_: Log line, change event, notification
 **Checkpoint**:
 A complete, fenced recovery set for the local deployment: PostgreSQL base backup and required WAL, durable filesystem stores, the server image, and a manifest with identity, audit heads and checksums. Named by its UTC capture timestamp.
 _Avoid_: Snapshot (when meaning the coordinated recovery set)
+
+**Bootstrap**:
+`python3 scripts/bootstrap.py`: the host entrypoint that records the Compose selection in `.env`, generates secrets once, creates the Platform Network and volumes, starts the stack and exports the enrollment capability. A fresh install is minimal; profiles are opt-in; a recorded selection is preserved on rerun.
+_Avoid_: Prepare, preparation, installer
+
+**Enrollment**:
+Creating the first User from the capability file with `bp bootstrap`, run through `compose.enroll.yaml` inside the server image. Enrollment is pending until claimed; the claim is permanent (ADR-0020).
+_Avoid_: Sign-up, onboarding, registration

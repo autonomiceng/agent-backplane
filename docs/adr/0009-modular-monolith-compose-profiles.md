@@ -68,3 +68,14 @@ This trades a registry dependency and a manual pin bump per published build for 
 need no build toolchain or build network. Bootstrap still never builds over or pulls an
 explicit override. Publication claims neither H-PROOF/F-GATE, B-DEFAULT approval nor arm64
 qualification.
+
+Amended 2026-09-23 (minimal default): Fresh installs default to minimal; full is opt-in.
+`python3 scripts/bootstrap.py` (standard library) replaces `infra/bootstrap/prepare.ts`; a
+fresh run selects core with filesystem Files and no workerd, and `--profile blobs` or
+`--profile compute` add RustFS Files and Functions. There is no `--mode` flag and no
+`--confirm-existing-selection`: the recorded `COMPOSE_PROFILES` is authoritative on rerun and
+a conflicting explicit profile set is refused. This restores the original off-by-default rule
+above for fresh installs and supersedes the full-mode default of the B-PROMOTE amendment.
+Existing installations keep their recorded selection; capability and storage changes remain
+explicit upgrades or migrations. The first User enrolls through the CLI inside the server
+image, so the host needs Docker and Python only.

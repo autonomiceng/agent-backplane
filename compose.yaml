@@ -44,8 +44,8 @@ services:
     environment:
       POSTGRES_DB: backplane
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${BP_POSTGRES_ADMIN_PASSWORD:?generate with infra/bootstrap/prepare.ts}
-      BP_POSTGRES_PASSWORD: ${BP_POSTGRES_PASSWORD:?generate with infra/bootstrap/prepare.ts}
+      POSTGRES_PASSWORD: ${BP_POSTGRES_ADMIN_PASSWORD:?generate with scripts/bootstrap.py}
+      BP_POSTGRES_PASSWORD: ${BP_POSTGRES_PASSWORD:?generate with scripts/bootstrap.py}
     volumes:
       - postgres-data:/var/lib/postgresql
       - ./infra/init/core:/docker-entrypoint-initdb.d:ro
@@ -67,7 +67,7 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      BP_ADMIN_DATABASE_URL: postgres://postgres:${BP_POSTGRES_ADMIN_PASSWORD:?generate with infra/bootstrap/prepare.ts}@postgres:5432/backplane
+      BP_ADMIN_DATABASE_URL: postgres://postgres:${BP_POSTGRES_ADMIN_PASSWORD:?generate with scripts/bootstrap.py}@postgres:5432/backplane
 
   data-init:
     image: *server-image
@@ -90,7 +90,7 @@ services:
       data-init:
         condition: service_completed_successfully
     environment:
-      BP_ADMIN_DATABASE_URL: postgres://postgres:${BP_POSTGRES_ADMIN_PASSWORD:?generate with infra/bootstrap/prepare.ts}@postgres:5432/backplane
+      BP_ADMIN_DATABASE_URL: postgres://postgres:${BP_POSTGRES_ADMIN_PASSWORD:?generate with scripts/bootstrap.py}@postgres:5432/backplane
       BP_DATA_DIR: /data
     volumes:
       - server-data:/data
@@ -111,7 +111,7 @@ services:
     mem_limit: 2g
     mem_reservation: 512m
     environment:
-      BP_DATABASE_URL: postgres://bp_server:${BP_POSTGRES_PASSWORD:?generate with infra/bootstrap/prepare.ts}@postgres:5432/backplane
+      BP_DATABASE_URL: postgres://bp_server:${BP_POSTGRES_PASSWORD:?generate with scripts/bootstrap.py}@postgres:5432/backplane
       NODE_ENV: production
       BP_RETENTION_PURGE_INTERVAL: ${BP_RETENTION_PURGE_INTERVAL:-1h}
       BP_PORT: 3000
