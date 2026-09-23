@@ -8,7 +8,7 @@ import { resolveAccess } from "../compose/validate-edge.ts";
 import { defaultWorkerdBinary } from "./workerd-image.ts";
 
 const probeContainers = new Map<string, string[]>();
-const contractIpam = JSON.stringify([{ Subnet: "172.30.0.0/24", IPRange: "172.30.0.128/25", Gateway: "172.30.0.1" }]);
+const contractIpam = `bridge ${JSON.stringify([{ Subnet: "172.30.0.0/24", IPRange: "172.30.0.128/25", Gateway: "172.30.0.1" }])}`;
 const fakeRunner: Runner = async (args, env) => {
   if (args[0] === "create") { const id = crypto.randomUUID().replaceAll("-", "").repeat(2); probeContainers.set(id, args); return id; }
   if (args[0] === "rm") { probeContainers.delete(args.at(-1) ?? ""); return ""; }
@@ -319,7 +319,7 @@ test("an absent Platform Network is created with the configured allocation; inva
       return runner(command, env);
     };
     await prepare([...args, "--mode", "minimal"], {}, absent, record);
-    expect(calls.find(call => call[0] === "network" && call[1] === "inspect")).toEqual(["network", "inspect", "--format", "{{json .IPAM.Config}}", "platform"]);
+    expect(calls.find(call => call[0] === "network" && call[1] === "inspect")).toEqual(["network", "inspect", "--format", "{{.Driver}} {{json .IPAM.Config}}", "platform"]);
     expect(calls.filter(call => call[0] === "network" && call[1] === "create")).toEqual([networkCreate("172.30.0.0/24", "172.30.0.128/25", "172.30.0.1")]);
     const saved = await readFile(path, "utf8");
     await writeFile(path, `${saved}BP_PLATFORM_SUBNET=10.20.0.0/16\nBP_PLATFORM_IP_RANGE=10.20.128.0/17\n`);
@@ -327,7 +327,7 @@ test("an absent Platform Network is created with the configured allocation; inva
     await prepare(args, {}, absent, record);
     expect(calls.filter(call => call[0] === "network" && call[1] === "create")).toEqual([networkCreate("10.20.0.0/16", "10.20.128.0/17", "10.20.0.1")]);
     for (const [subnet, range, proxies] of [["172.30.0.0/24", "172.30.1.0/25", ""], ["172.30.0.1/24", "172.30.0.128/25", ""], ["172.30.0/24", "172.30.0.128/25", ""],
-      ["172.30.0.0/24", "172.30.0.128/025", ""], ["fd00::/64", "fd00::/80", ""], ["172.30.0.0/24", "172.30.0.0/25", ""], ["172.30.0.0/24", "172.30.0.128/25", "BP_TRUSTED_PROXIES='172.30.0.200'\n"]]) {
+      ["172.30.0.0/24", "172.30.0.128/025", ""], ["fd00::/64", "fd00::/80", ""], ["172.30.0.0/24", "172.30.0.0/25", ""], ["172.30.0.1/32", "172.30.0.1/32", ""], ["172.30.0.0/24", "172.30.0.128/25", "BP_TRUSTED_PROXIES='172.30.0.200'\n"]]) {
       await writeFile(path, `${saved}BP_PLATFORM_SUBNET=${subnet}\nBP_PLATFORM_IP_RANGE=${range}\n${proxies}`);
       calls.length = 0;
       await expect(prepare(args, {}, absent, record)).rejects.toMatchObject({ error: "invalid_platform_network", exit: 1 });
@@ -339,27 +339,28 @@ test("an absent Platform Network is created with the configured allocation; inva
 test("an existing Platform Network with the contract allocation is reused", async () => {
   await selectionFixture(async ({ args, runner, record, calls }) => {
     await prepare([...args, "--mode", "minimal"], {}, runner, record);
-    expect(calls.filter(call => call[0] === "network" && call[1] !== "ls")).toEqual([["network", "inspect", "--format", "{{json .IPAM.Config}}", "platform"]]);
+    expect(calls.filter(call => call[0] === "network" && call[1] !== "ls")).toEqual([["network", "inspect", "--format", "{{.Driver}} {{json .IPAM.Config}}", "platform"]]);
     expect(calls.some(call => call.includes("up"))).toBe(true);
   });
 });
 
 test("an existing Platform Network with another allocation refuses with the observed values and the fix", async () => {
-  for (const ipam of ["null", "[]", JSON.stringify([{ Subnet: "172.18.0.0/16", Gateway: "172.18.0.1" }]),
-    JSON.stringify([{ Subnet: "172.30.0.0/24", IPRange: "172.30.0.128/25", Gateway: "172.30.0.2" }]),
-    JSON.stringify([JSON.parse(contractIpam)[0], { Subnet: "172.30.9.0/24", Gateway: "172.30.9.1" }])]) await selectionFixture(async ({ args, runner, record, calls }) => {
+  const contract = { Subnet: "172.30.0.0/24", IPRange: "172.30.0.128/25", Gateway: "172.30.0.1" };
+  for (const ipam of ["bridge null", "bridge []", `bridge ${JSON.stringify([{ Subnet: "172.18.0.0/16", Gateway: "172.18.0.1" }])}`,
+    `bridge ${JSON.stringify([{ ...contract, Gateway: "172.30.0.2" }])}`, `macvlan ${JSON.stringify([contract])}`,
+    `bridge ${JSON.stringify([contract, { Subnet: "172.30.9.0/24", Gateway: "172.30.9.1" }])}`]) await selectionFixture(async ({ args, runner, record, calls }) => {
     const error = await prepare([...args, "--mode", "minimal"], {}, async (command, env) =>
       command[0] === "network" && command[1] === "inspect" ? ipam : runner(command, env), record).catch(error => error);
     expect(error).toMatchObject({ error: "platform_network_mismatch", exit: 1 });
-    expect(error.details).toContain("expected subnet 172.30.0.0/24 ip-range 172.30.0.128/25 gateway 172.30.0.1");
-    expect(error.details).toContain(ipam === "null" || ipam === "[]" ? "has no IPv4 IPAM configuration" : "has subnet 172.");
+    expect(error.details).toContain("expected driver bridge subnet 172.30.0.0/24 ip-range 172.30.0.128/25 gateway 172.30.0.1");
+    expect(error.details).toContain(ipam.endsWith("null") || ipam.endsWith("[]") ? "has driver bridge no IPv4 IPAM configuration" : "subnet 172.");
     expect(error.details).toContain("docker network rm platform");
     expect(mutations(calls)).toEqual([]);
   });
 });
 
 test("a concurrent Platform Network creation is validated instead of failing", async () => {
-  for (const [ipam, outcome] of [[contractIpam, undefined], [JSON.stringify([{ Subnet: "172.18.0.0/16", Gateway: "172.18.0.1" }]), "platform_network_mismatch"], [undefined, "raced"]])
+  for (const [ipam, outcome] of [[contractIpam, undefined], [`bridge ${JSON.stringify([{ Subnet: "172.18.0.0/16", Gateway: "172.18.0.1" }])}`, "platform_network_mismatch"], [undefined, "raced"]])
     await selectionFixture(async ({ args, runner, record, calls }) => {
       let inspections = 0;
       const race: Runner = async (command, env) => {

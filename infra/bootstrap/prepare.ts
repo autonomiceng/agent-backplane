@@ -179,7 +179,8 @@ export async function prepare(argv: string[], env: Environment, run: Runner = do
     if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(network)) throw new CliError("invalid_platform_network", 1);
     const subnet = entries.BP_PLATFORM_SUBNET ?? platform.subnet, ipRange = entries.BP_PLATFORM_IP_RANGE ?? platform.ipRange;
     const pool = ipv4Network(subnet), dynamic = ipv4Network(ipRange);
-    if (!pool || !dynamic || dynamic.start < pool.start || dynamic.end > pool.end) throw new CliError("invalid_platform_network", 1);
+    // The derived gateway is the subnet's first host, so the subnet needs usable host addresses.
+    if (!pool || !dynamic || pool.end - pool.start < 3 || dynamic.start < pool.start || dynamic.end > pool.end) throw new CliError("invalid_platform_network", 1);
     // Docker could hand a trusted proxy address inside the dynamic range to any attached container.
     if ((entries.BP_TRUSTED_PROXIES || platform.edge).split(" ").map(peer => ipv4Network(peer.includes("/") ? peer : `${peer}/32`))
       .some(peer => peer && peer.start >= dynamic.start && peer.start <= dynamic.end)) throw new CliError("invalid_platform_network", 1);
@@ -241,7 +242,7 @@ export async function prepare(argv: string[], env: Environment, run: Runner = do
       child.BP_WORKERD_EFFECTIVE_IMAGE = identity.imageId;
       child.BP_WORKERD_HOST_IMAGE_ID = identity.imageId;
     }
-    const inspect = () => run(["network", "inspect", "--format", "{{json .IPAM.Config}}", network], child);
+    const inspect = () => run(["network", "inspect", "--format", "{{.Driver}} {{json .IPAM.Config}}", network], child);
     let ipam = await inspect().catch(() => undefined);
     if (ipam === undefined) {
       try { await run(["network", "create", "--driver", "bridge", "--subnet", subnet, "--ip-range", ipRange, "--gateway", gateway, network], child); }
@@ -249,11 +250,12 @@ export async function prepare(argv: string[], env: Environment, run: Runner = do
       catch (error) { ipam = await inspect().catch(() => { throw error; }); }
     }
     if (ipam !== undefined) {
+      const [driver = "", ...config] = ipam.trim().split(" ");
       let pools: unknown;
-      try { pools = JSON.parse(ipam); } catch { pools = undefined; }
-      const found = (Array.isArray(pools) ? pools : []).filter(record).filter(pool => typeof pool.Subnet === "string" && !pool.Subnet.includes(":"))
-        .map(pool => `subnet ${pool.Subnet} ip-range ${pool.IPRange || "none"} gateway ${pool.Gateway || "none"}`).join("; ") || "no IPv4 IPAM configuration";
-      const expected = `subnet ${subnet} ip-range ${ipRange} gateway ${gateway}`;
+      try { pools = JSON.parse(config.join(" ")); } catch { pools = undefined; }
+      const found = `driver ${driver || "none"} ` + ((Array.isArray(pools) ? pools : []).filter(record).filter(pool => typeof pool.Subnet === "string" && !pool.Subnet.includes(":"))
+        .map(pool => `subnet ${pool.Subnet} ip-range ${pool.IPRange || "none"} gateway ${pool.Gateway || "none"}`).join("; ") || "no IPv4 IPAM configuration");
+      const expected = `driver bridge subnet ${subnet} ip-range ${ipRange} gateway ${gateway}`;
       if (found !== expected) throw new CliError("platform_network_mismatch", 1, undefined, `network ${network} has ${found}; expected ${expected}. `
         + `One-time fix: stop every stack on ${network}, run \`docker network rm ${network}\`, then rerun bootstrap.`);
     }
