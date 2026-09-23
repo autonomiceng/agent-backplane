@@ -19,8 +19,9 @@ checkout and the workerd image from its local recipe.
 | Tag `v1.2.3` | `1.2.3`, `latest` |
 | Tag `v1.2.3-rc.1` | `1.2.3-rc.1` |
 
-Commit tags are never reused, so they identify one build. `latest` moves with each
-stable release tag. Every image carries `org.opencontainers.image.source`,
+Commit tags name the source commit. Rerunning `Publish` for the same commit pushes
+them again, possibly with a different digest, so only a digest identifies one build.
+`latest` moves with each stable release tag. Every image carries `org.opencontainers.image.source`,
 `org.opencontainers.image.revision` (the commit) and `org.opencontainers.image.created`.
 The workerd image also keeps its recipe's `org.opencontainers.image.version`, the
 packaged workerd release.
