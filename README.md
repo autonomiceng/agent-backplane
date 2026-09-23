@@ -37,7 +37,7 @@ bp bootstrap --url http://localhost:3000 --email you@example.com \
   --capability-file "$HOME/.bp-enrollment"
 ```
 
-The first command writes `.env`, creates the `platform` network, starts Postgres and the server and waits for them. The second enrolls you as the first user and creates a Workspace and a Principal. Paste the printed `mcpServers.backplane` block into your agent's `.mcp.json`, and open `http://localhost:3000/dashboard`.
+The first command writes `.env`, creates the `platform` network with the shared allocation (`172.30.0.0/24`, see [access setup](docs/operations/ingress.md)), starts Postgres and the server and waits for them. The second enrolls you as the first user and creates a Workspace and a Principal. Paste the printed `mcpServers.backplane` block into your agent's `.mcp.json`, and open `http://localhost:3000/dashboard`.
 
 Optional profiles add S3 blob storage on RustFS, a workerd sandbox for small functions, and a standalone edge. Choose local HTTP and self-signed HTTPS, trusted HTTPS for your own domain, or access behind another gateway in [access setup](docs/operations/ingress.md). See [bootstrap and recovery](infra/bootstrap/README.md).
 

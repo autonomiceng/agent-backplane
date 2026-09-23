@@ -108,7 +108,7 @@ with tempfile.TemporaryDirectory(prefix='bp-console-proof-') as temporary:
             'BP_EDGE_HOST': 'backplane.localhost', 'BP_PUBLIC_URL': 'https://backplane.example.test',
             'BP_RUSTFS_HOST': 'rustfs.localhost', 'BP_RUSTFS_URL': 'https://rustfs.localhost:443',
             'BP_RUSTFS_URL_HOST': 'unused.invalid', 'BP_RUSTFS_AUTHORITY': '',
-            'BP_TRUSTED_PROXIES': '', 'BP_RUSTFS_CONSOLE_ALLOW': '127.0.0.1/8 ::1',
+            'BP_TRUSTED_PROXIES': '172.30.0.2/32', 'BP_RUSTFS_CONSOLE_ALLOW': '127.0.0.1/8 ::1',
         })
         for settings in configurations:
             validation = create('--tmpfs', '/data', '--tmpfs', '/config',

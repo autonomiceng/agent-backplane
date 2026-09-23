@@ -8,11 +8,13 @@ import { resolveAccess } from "../compose/validate-edge.ts";
 import { defaultWorkerdBinary } from "./workerd-image.ts";
 
 const probeContainers = new Map<string, string[]>();
+const contractIpam = JSON.stringify([{ Subnet: "172.30.0.0/24", IPRange: "172.30.0.128/25", Gateway: "172.30.0.1" }]);
 const fakeRunner: Runner = async (args, env) => {
   if (args[0] === "create") { const id = crypto.randomUUID().replaceAll("-", "").repeat(2); probeContainers.set(id, args); return id; }
   if (args[0] === "rm") { probeContainers.delete(args.at(-1) ?? ""); return ""; }
   if (args[0] === "start") args = probeContainers.get(args.at(-1) ?? "") ?? [];
   if (args[0] === "context") return "unix:///var/run/docker.sock";
+  if (args[0] === "network" && args[1] === "inspect") return contractIpam;
   if (args[0] === "info") return "amd64";
   if (args[0] === "image") return `sha256:${"a".repeat(64)} amd64`;
   if (args[0] === "create") {
@@ -166,7 +168,7 @@ test("console validates complete authorities, separate origins and literal opera
     ["BP_RUSTFS_HOST", "backplane.localhost", "rustfs_origin_conflict"],
     ...["https://user:pass@example.com", "https://example.com/path", "https://example.com?", "https://example.com#", "https://example.com:0", "https://example.com:65536", "https://example.com ", "https://exa'mple.com", "https://example.com/{env.SECRET}", "http://example.com"].map(value => ["BP_RUSTFS_URL", value, "rustfs_url_invalid"]),
     ...["private_ranges", "172.16.0.0/12", "100.64.0.0/10", "fd7a:115c:a1e0::/48", "192.0.2.2/33", "edge", "192.0.2.2\n"].map(value => ["BP_TRUSTED_PROXIES", value, "trusted_proxies_invalid"]),
-    ["BP_TRUSTED_PROXIES", "", "trusted_proxies_required"],
+    ["BP_TRUSTED_PROXIES", " ", "trusted_proxies_required"],
     ...["", "private_ranges", "0.0.0.0/0", "::/0", "100.100.1.2/33", "::/129", "{env.SECRET}"].map(value => ["BP_RUSTFS_CONSOLE_ALLOW", value, "operator_allow_invalid"]),
     ["BP_RUSTFS_HOST", "rustfs.example.com:443", "rustfs_host_invalid"],
   ]) {
@@ -306,6 +308,71 @@ async function selectionFixture(check: (fixture: {
   } finally { await rm(directory, { recursive: true, force: true }); }
 }
 const mutations = (calls: string[][]) => calls.filter(args => (args[0] === "volume" || args[0] === "network") && args[1] === "create" || args.includes("up"));
+
+const networkCreate = (subnet: string, range: string, gateway: string, name = "platform") =>
+  ["network", "create", "--driver", "bridge", "--subnet", subnet, "--ip-range", range, "--gateway", gateway, name];
+
+test("an absent Platform Network is created with the configured allocation; invalid allocations refuse first", async () => {
+  await selectionFixture(async ({ path, args, runner, record, calls }) => {
+    const absent: Runner = async (command, env) => {
+      if (command[0] === "network" && command[1] === "inspect") { calls.push(command); throw Error("absent network"); }
+      return runner(command, env);
+    };
+    await prepare([...args, "--mode", "minimal"], {}, absent, record);
+    expect(calls.find(call => call[0] === "network" && call[1] === "inspect")).toEqual(["network", "inspect", "--format", "{{json .IPAM.Config}}", "platform"]);
+    expect(calls.filter(call => call[0] === "network" && call[1] === "create")).toEqual([networkCreate("172.30.0.0/24", "172.30.0.128/25", "172.30.0.1")]);
+    const saved = await readFile(path, "utf8");
+    await writeFile(path, `${saved}BP_PLATFORM_SUBNET=10.20.0.0/16\nBP_PLATFORM_IP_RANGE=10.20.128.0/17\n`);
+    calls.length = 0;
+    await prepare(args, {}, absent, record);
+    expect(calls.filter(call => call[0] === "network" && call[1] === "create")).toEqual([networkCreate("10.20.0.0/16", "10.20.128.0/17", "10.20.0.1")]);
+    for (const [subnet, range, proxies] of [["172.30.0.0/24", "172.30.1.0/25", ""], ["172.30.0.1/24", "172.30.0.128/25", ""], ["172.30.0/24", "172.30.0.128/25", ""],
+      ["172.30.0.0/24", "172.30.0.128/025", ""], ["fd00::/64", "fd00::/80", ""], ["172.30.0.0/24", "172.30.0.0/25", ""], ["172.30.0.0/24", "172.30.0.128/25", "BP_TRUSTED_PROXIES='172.30.0.200'\n"]]) {
+      await writeFile(path, `${saved}BP_PLATFORM_SUBNET=${subnet}\nBP_PLATFORM_IP_RANGE=${range}\n${proxies}`);
+      calls.length = 0;
+      await expect(prepare(args, {}, absent, record)).rejects.toMatchObject({ error: "invalid_platform_network", exit: 1 });
+      expect(mutations(calls)).toEqual([]);
+    }
+  });
+});
+
+test("an existing Platform Network with the contract allocation is reused", async () => {
+  await selectionFixture(async ({ args, runner, record, calls }) => {
+    await prepare([...args, "--mode", "minimal"], {}, runner, record);
+    expect(calls.filter(call => call[0] === "network" && call[1] !== "ls")).toEqual([["network", "inspect", "--format", "{{json .IPAM.Config}}", "platform"]]);
+    expect(calls.some(call => call.includes("up"))).toBe(true);
+  });
+});
+
+test("an existing Platform Network with another allocation refuses with the observed values and the fix", async () => {
+  for (const ipam of ["null", "[]", JSON.stringify([{ Subnet: "172.18.0.0/16", Gateway: "172.18.0.1" }]),
+    JSON.stringify([{ Subnet: "172.30.0.0/24", IPRange: "172.30.0.128/25", Gateway: "172.30.0.2" }]),
+    JSON.stringify([JSON.parse(contractIpam)[0], { Subnet: "172.30.9.0/24", Gateway: "172.30.9.1" }])]) await selectionFixture(async ({ args, runner, record, calls }) => {
+    const error = await prepare([...args, "--mode", "minimal"], {}, async (command, env) =>
+      command[0] === "network" && command[1] === "inspect" ? ipam : runner(command, env), record).catch(error => error);
+    expect(error).toMatchObject({ error: "platform_network_mismatch", exit: 1 });
+    expect(error.details).toContain("expected subnet 172.30.0.0/24 ip-range 172.30.0.128/25 gateway 172.30.0.1");
+    expect(error.details).toContain(ipam === "null" || ipam === "[]" ? "has no IPv4 IPAM configuration" : "has subnet 172.");
+    expect(error.details).toContain("docker network rm platform");
+    expect(mutations(calls)).toEqual([]);
+  });
+});
+
+test("a concurrent Platform Network creation is validated instead of failing", async () => {
+  for (const [ipam, outcome] of [[contractIpam, undefined], [JSON.stringify([{ Subnet: "172.18.0.0/16", Gateway: "172.18.0.1" }]), "platform_network_mismatch"], [undefined, "raced"]])
+    await selectionFixture(async ({ args, runner, record, calls }) => {
+      let inspections = 0;
+      const race: Runner = async (command, env) => {
+        if (command[0] === "network" && command[1] === "inspect") { calls.push(command); if (inspections++ === 0 || ipam === undefined) throw Error("absent network"); return ipam; }
+        if (command[0] === "network" && command[1] === "create") { calls.push(command); throw Error("raced"); }
+        return runner(command, env);
+      };
+      const result = prepare([...args, "--mode", "minimal"], {}, race, record);
+      if (outcome === undefined) await result; else await expect(result).rejects.toThrow(outcome);
+      expect(inspections).toBe(2);
+      expect(calls.some(call => call.includes("up"))).toBe(outcome === undefined);
+    });
+});
 
 test("fresh full and minimal save native Compose selections, including independently selected ingress", async () => {
   for (const mode of [undefined, "full", "minimal"]) for (const ingress of [undefined, "edge", "gateway"]) await selectionFixture(async ({ path, args, runner, record, calls }) => {
