@@ -1,22 +1,38 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended", ":pinDigests", "schedule:weekly"],
-  "enabledManagers": ["docker-compose", "dockerfile", "github-actions", "mise"],
+  "extends": ["config:recommended", "schedule:weekly"],
+  "pinDigests": true,
+  "enabledManagers": ["custom.regex", "docker-compose", "dockerfile", "github-actions", "mise"],
   "docker-compose": {
     "managerFilePatterns": ["/^compose(?:\\.[^.]+)?\\.yaml$/"]
   },
   "dockerfile": {
     "managerFilePatterns": ["/(^|/)[^/]*Dockerfile$/"]
   },
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Published Backplane images, including nested Compose defaults the docker-compose manager skips",
+      "managerFilePatterns": ["/^compose(?:\\.[^.]+)?\\.yaml$/"],
+      "matchStrings": ["(?<depName>ghcr\\.io/autonomiceng/agent-backplane-(?:server|workerd)):(?<currentValue>[\\w.-]+)@(?<currentDigest>sha256:[a-f0-9]{64})"],
+      "datasourceTemplate": "docker"
+    }
+  ],
   "packageRules": [
     {
-      "matchManagers": ["docker-compose", "dockerfile"],
+      "description": "The regex manager owns the published pins; development tags are local builds",
+      "matchManagers": ["docker-compose"],
+      "matchPackageNames": ["ghcr.io/autonomiceng/agent-backplane-server", "agent-backplane-server"],
+      "enabled": false
+    },
+    {
+      "matchManagers": ["custom.regex", "docker-compose", "dockerfile"],
       "matchUpdateTypes": ["major"],
       "groupName": null,
       "labels": ["major", "needs-maintenance-window"]
     },
     {
-      "matchManagers": ["docker-compose", "dockerfile"],
+      "matchManagers": ["custom.regex", "docker-compose", "dockerfile"],
       "matchUpdateTypes": ["minor", "patch", "digest"],
       "groupName": "stack images"
     }

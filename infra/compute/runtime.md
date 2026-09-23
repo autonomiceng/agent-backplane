@@ -1,31 +1,25 @@
 # Compute Runtime Identity and release gate
 
-No workerd artifact has completed full runtime qualification. **Default promotion remains gated on H-PROOF/F-GATE and B-DEFAULT approval.** The [project image](image/README.md) packages a verified official binary under ADR-0009. No registry artifact has been published. ADR-0018 defines Runtime Identity and its separate artifact evidence.
+No workerd artifact has completed full runtime qualification. **Default promotion remains gated on H-PROOF/F-GATE and B-DEFAULT approval.** The [project image](image/README.md) packages a verified official binary under ADR-0009. `.github/workflows/publish.yml` publishes it as `ghcr.io/autonomiceng/agent-backplane-workerd`; publication is not runtime qualification. ADR-0018 defines Runtime Identity and its separate artifact evidence.
 
 ## Configuration
 
-When compute is selected, bootstrap builds `infra/compute/image/Dockerfile` as
-`agent-backplane-workerd:1.20260918.1` if `BP_WORKERD_IMAGE` is unset or empty.
-Whitespace-only quoted references are invalid. Cached rebuilds are allowed. The build requires an amd64 Docker host and compatible BuildKit with
-network access to pinned inputs. Arm64 is refused for this default even with an explicit
-binary pin; its recipe inputs do not establish architecture qualification. Fresh minimal
-selection remains unchanged and leaves `BP_COMPUTE_URL` unset.
+When compute is selected and `BP_WORKERD_IMAGE` is unset or empty, bootstrap pulls the
+published amd64 image that `compose.compute.yaml` pins as `tag@sha256` and verifies it
+below; it builds nothing. Whitespace-only quoted references are invalid. The pull requires
+an amd64 Docker host with registry access. Arm64 is refused for this default even with an
+explicit binary pin. Fresh minimal selection remains unchanged and leaves `BP_COMPUTE_URL` unset.
 
 An explicit `BP_WORKERD_IMAGE` accepts full local tags, registry digest references and
 local `sha256:<image-config-id>` references. It must already exist locally: bootstrap
 never builds over or implicitly pulls an explicit override. Server and other image
 overrides remain independent. The resolved image ID is used for verification and the
 subsequent Compose launch. The overlay defaults both its image and declared reference to
-`agent-backplane-workerd:1.20260918.1`, allowing Compose configuration preflight before the
-build and ordinary `docker compose up` after bootstrap has saved the selected overlays.
-Bare Compose reuses the local default or explicit override with `pull_policy: never`.
-If that image was removed, rerun preparation or explicitly build/load the selected image.
-The overlay has no workerd build stanza: even `docker compose up --build` does not rebuild
-workerd. It can build the server. Use the documented `docker build` command for an explicit
-recipe rebuild. This keeps workerd overrides independent of server build choices.
-After H-PROOF/F-GATE and B-DEFAULT approval, this qualified local recipe is the supported
-delivery method; ADR-0009/0018 now make registry publication optional. Preparatory code
-and a successful build establish neither those gates nor a registry release.
+the same pinned reference, so configuration preflight and ordinary `docker compose up`
+after bootstrap work with the saved selection. Bare Compose pulls that default when it is
+absent. Only `compose.dev.yaml` builds the recipe, as `agent-backplane-workerd:local`;
+set `BP_WORKERD_IMAGE` to that tag to run it. The digest pin names published content; it
+establishes neither H-PROOF/F-GATE nor B-DEFAULT approval.
 
 `BP_WORKERD_BINARY_SHA256` is the expected SHA-256 of `/usr/bin/workerd`. Empty uses the known packaged amd64 binary, `f31da6d248028d698806aa93d1b3aec28bbd4b4b7ddc31e967408ab6406fa5aa`. Another executable requires an explicit verified hash. Other architectures require an explicit pin and their own runtime gate. The supervisor protocol requires images to provide `/bin/sh`, `sha256sum`, `/usr/bin/bun` and `/usr/bin/workerd` and run with the overlay restrictions. Bootstrap also requires the recipe's architecture-specific Bun 1.4.2 executable hash and version. Both executables must run `--version` under the overlay restrictions. The packaged workerd bytes must report `workerd 2026-09-18`; another explicitly pinned workerd binary must report a `workerd YYYY-MM-DD` version and requires its own runtime qualification. Bun must report `1.4.2`; changed Bun bytes require a reviewed pin/compatibility update. Settings and host declarations are documented in `.env.example`.
 

@@ -113,7 +113,7 @@ Hero view: the Run timeline, showing which harnesses touched which tables, queue
 
 Blobs: Workspace-scoped, provenance-stamped storage. Filesystem storage ships in minimal mode; fresh full preparation selects the S3 overlay with digest-pinned RustFS 1.0.0. Backend switches require explicit migration. See ADR-0009.
 
-Compute: single-node workerd, one isolate per submitted function, invoked over HTTP with the Workspace credential bound. Deployment and invocation provenance are recorded separately. Minimal mode omits both overlays. Selected Functions reuse the pinned local workerd build
+Compute: single-node workerd, one isolate per submitted function, invoked over HTTP with the Workspace credential bound. Deployment and invocation provenance are recorded separately. Minimal mode omits both overlays. Selected Functions pull the published, digest-pinned workerd image
 when its image override is absent or blank. Bootstrap success requires core readiness
 and fresh authenticated Files/Functions observations from the existing operations sampler.
 The sampler reads the storage binding/marker and verifies runtime identity with a loader

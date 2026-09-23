@@ -9,8 +9,12 @@ prerelease suffix such as `v1.2.3-rc.1`). Other tags and pull requests never pub
 | `ghcr.io/autonomiceng/agent-backplane-server` | `linux/amd64`, `linux/arm64` | `infra/compose/server.Dockerfile` |
 | `ghcr.io/autonomiceng/agent-backplane-workerd` | `linux/amd64` | `infra/compute/image/Dockerfile` |
 
-Compose does not use these images yet. The server image is still built from the
-checkout and the workerd image from its local recipe.
+Compose pins both by digest: `compose.yaml` and `compose.blobs.yaml` default the server,
+migration, data and blob helpers to the server image, and `compose.compute.yaml` defaults
+workerd. Bootstrap pulls the workerd default and verifies its executables before launch;
+Compose pulls the server image on first `up`. `BP_SERVER_IMAGE` and `BP_WORKERD_IMAGE`
+still override them. `compose.dev.yaml` holds the only `build:` stanzas, for development
+(see the README).
 
 ## Tags
 
@@ -59,3 +63,15 @@ Verify anonymously with an empty Docker client configuration:
 ```sh
 DOCKER_CONFIG="$(mktemp -d)" docker manifest inspect ghcr.io/autonomiceng/agent-backplane-server:main-<sha7>
 ```
+
+## Move the pins
+
+The pinned revision's image contains the server code and migrations, while Compose mounts
+`infra/init/core`, `infra/backup` and the workerd control files from the checkout. Run
+Compose from a checkout whose mounted files match the pinned images. To move to a newer
+build, take the tag and digest from the `Publish` run summary (or `docker buildx
+imagetools inspect`) and replace both references in one change: the server default in
+`compose.yaml` and `compose.blobs.yaml`, and the workerd default in both places in
+`compose.compute.yaml`. Renovate refreshes the digest of a pinned tag; it cannot order
+`main-<sha7>` tags, so moving to a newer commit is a manual change. Then follow the
+[offline upgrade procedure](health.md).

@@ -27,7 +27,7 @@ test("native image defaults survive empty settings and accept complete reference
   const defaults = await config();
   expect(defaults.postgres.image).toMatch(/^postgres:18\.6@sha256:[a-f0-9]{64}$/);
   expect(defaults.edge.image).toMatch(/^caddy:2\.11\.4@sha256:[a-f0-9]{64}$/);
-  expect(defaults.server.image).toBe("agent-backplane-server:local");
+  expect(defaults.server.image).toMatch(/^ghcr\.io\/autonomiceng\/agent-backplane-server:[\w.-]+@sha256:[a-f0-9]{64}$/);
   const empty = await config(["BP_POSTGRES_IMAGE=", "BP_SERVER_IMAGE=", "BP_CADDY_IMAGE="]);
   expect(empty).toEqual(defaults);
   const override = await config(["BP_POSTGRES_IMAGE=registry.example:5000/postgres:experiment", "BP_SERVER_IMAGE=local-server:dev",
@@ -57,5 +57,5 @@ test("blob declarations follow overrides and compute separates image reference f
   expect(services["blob-image-check"].image).toBe("helper-experiment");
   expect(services.workerd.image).toBe("workerd-local");
   expect(services.server.environment.BP_WORKERD_RUNTIME_ID).toBe(`workerd-binary-sha256:${"c".repeat(64)}`);
-  expect(services.workerd.pull_policy).toBe("never");
+  expect(services.workerd.pull_policy).toBeUndefined();
 });

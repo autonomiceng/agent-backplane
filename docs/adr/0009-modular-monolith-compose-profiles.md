@@ -58,3 +58,13 @@ no-mode reruns preserve them, and explicit modes must agree or refuse with an up
 migration diagnostic. Incomplete installations retain the explicit original-selection
 confirmation contract. Storage and secrets never migrate silently. Root must confirm
 actual host consoles/runtime and the existing gates before any qualified release claim.
+
+Amended 2026-09-23 (published image delivery): This supersedes the local-build delivery
+above for defaults. Compose pins the server and workerd images that
+`.github/workflows/publish.yml` pushes to GHCR, as `tag@sha256`. Missing or blank
+`BP_SERVER_IMAGE` and `BP_WORKERD_IMAGE` select those pins; bootstrap pulls and verifies
+the workerd default instead of building its recipe. Only `compose.dev.yaml` builds images.
+This trades a registry dependency and a manual pin bump per published build for hosts that
+need no build toolchain or build network. Bootstrap still never builds over or pulls an
+explicit override. Publication claims neither H-PROOF/F-GATE, B-DEFAULT approval nor arm64
+qualification.

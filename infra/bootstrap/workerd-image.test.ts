@@ -1,20 +1,21 @@
 import { expect, test } from "bun:test";
 import { mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { privateRead } from "../../packages/cli/runtime/credential-file.ts";
-import { defaultWorkerdBinary, defaultWorkerdImage, persistWorkerdEvidence, verifyWorkerdImage } from "./workerd-image.ts";
+import { defaultWorkerdBinary, persistWorkerdEvidence, verifyWorkerdImage } from "./workerd-image.ts";
 import type { Runner } from "./prepare.ts";
 
 const imageId = "sha256:" + "c".repeat(64), entries = { BP_WORKERD_IMAGE: "local/workerd:experiment" };
+const published = `registry.example/workerd:main-abc1234@sha256:${"f".repeat(64)}`;
 const supervisorBinary = "a83d263767d839e4d2649ca8e35d07159c7afc99afdc96d731ced29e056dda0c";
 const hashes = `${defaultWorkerdBinary}  /usr/bin/workerd\n${supervisorBinary}  /usr/bin/bun\n`;
 function dockerFixture() {
   const images = new Map([[entries.BP_WORKERD_IMAGE, imageId]]);
-  const state = { inspectedImageId: imageId, builds: 0, architecture: "amd64", hashes, workerdVersion: "workerd 2026-09-18", bunVersion: "1.4.2", missingBun: false };
+  const state = { inspectedImageId: imageId, pulls: 0, architecture: "amd64", hashes, workerdVersion: "workerd 2026-09-18", bunVersion: "1.4.2", missingBun: false };
   const containers = new Map<string, string[]>();
   const run: Runner = async (args, _env, timeoutMs) => {
-    expect(timeoutMs).toBe(args[0] === "build" ? 900_000 : 10_000);
+    expect(timeoutMs).toBe(args[0] === "pull" ? 900_000 : 10_000);
     if (args[0] === "rm") { expect(containers.delete(args.at(-1) ?? "")).toBe(true); return ""; }
     if (args[0] === "create") {
       const id = "a".repeat(64);
@@ -23,13 +24,9 @@ function dockerFixture() {
     }
     if (args[0] === "start") args = containers.get(args.at(-1) ?? "") ?? [];
     if (args[0] === "info") return state.architecture;
-    if (args[0] === "build") {
-      const context = resolve(import.meta.dir, "../compute/image");
-      expect(args.at(-1)).toBe(context);
-      expect(args[args.indexOf("--file") + 1]).toBe(join(context, "Dockerfile"));
-      expect(args[args.indexOf("--platform") + 1]).toBe("linux/amd64");
-      expect(args[args.indexOf("--tag") + 1]).toBe(defaultWorkerdImage);
-      images.set(defaultWorkerdImage, imageId); state.builds++;
+    if (args[0] === "pull") {
+      expect(args).toEqual(["pull", "--platform", "linux/amd64", published]);
+      images.set(published, imageId); state.pulls++;
       return "";
     }
     if (args[0] === "image") {
@@ -54,53 +51,53 @@ function dockerFixture() {
   return { images, state, run, containers };
 }
 
-test("missing and blank overrides build the pinned default independently of a server override; arm64 refuses", async () => {
+test("missing and blank overrides pull the published default without building, independently of a server override; arm64 refuses", async () => {
   const { images, state, run } = dockerFixture();
   const settings = { BP_SERVER_IMAGE: "server:operator" };
-  expect(images.has(defaultWorkerdImage)).toBe(false);
-  expect((await verifyWorkerdImage(settings, {}, run)).reference).toBe(defaultWorkerdImage);
-  expect((await verifyWorkerdImage({ ...settings, BP_WORKERD_IMAGE: "" }, {}, run)).imageId).toBe(imageId);
-  expect(state.builds).toBe(2);
+  expect(images.has(published)).toBe(false);
+  expect((await verifyWorkerdImage(settings, {}, run, published)).reference).toBe(published);
+  expect((await verifyWorkerdImage({ ...settings, BP_WORKERD_IMAGE: "" }, {}, run, published)).imageId).toBe(imageId);
+  expect(state.pulls).toBe(2);
   expect(settings).toEqual({ BP_SERVER_IMAGE: "server:operator" });
   state.architecture = "arm64";
-  await expect(verifyWorkerdImage({}, {}, run)).rejects.toMatchObject({ error: "workerd_default_architecture_unqualified" });
-  expect(state.builds).toBe(2);
+  await expect(verifyWorkerdImage({}, {}, run, published)).rejects.toMatchObject({ error: "workerd_default_architecture_unqualified" });
+  expect(state.pulls).toBe(2);
 });
 
 test("explicit local overrides are verified without rebuilding or pulling even when unavailable", async () => {
   const { images, state, run } = dockerFixture();
   const settings = { ...entries, BP_SERVER_IMAGE: "server:operator" }, before = { ...settings };
-  expect(await verifyWorkerdImage(settings, {}, run)).toMatchObject({ reference: entries.BP_WORKERD_IMAGE, imageId,
+  expect(await verifyWorkerdImage(settings, {}, run, published)).toMatchObject({ reference: entries.BP_WORKERD_IMAGE, imageId,
     binarySha256: defaultWorkerdBinary, supervisorBinarySha256: supervisorBinary, supervisorVersion: "1.4.2" });
   images.delete(entries.BP_WORKERD_IMAGE);
-  await expect(verifyWorkerdImage(settings, {}, run)).rejects.toThrow("image absent locally");
-  expect(state.builds).toBe(0);
+  await expect(verifyWorkerdImage(settings, {}, run, published)).rejects.toThrow("image absent locally");
+  expect(state.pulls).toBe(0);
   expect(settings).toEqual(before);
 });
 
 test("invalid identity, missing supervisor and incompatible executables refuse launch", async () => {
   const { state, run } = dockerFixture();
   const unused: Runner = async () => { throw Error("must not run"); };
-  await expect(verifyWorkerdImage({ BP_WORKERD_IMAGE: " \t " }, {}, unused)).rejects.toMatchObject({ error: "workerd_identity_invalid" });
-  await expect(verifyWorkerdImage({ ...entries, BP_WORKERD_DIGEST: "d".repeat(64) }, {}, unused)).rejects.toMatchObject({ error: "workerd_legacy_identity_requires_migration" });
-  await expect(verifyWorkerdImage({ ...entries, BP_WORKERD_BINARY_SHA256: "wrong" }, {}, unused)).rejects.toMatchObject({ error: "workerd_identity_invalid" });
-  await expect(verifyWorkerdImage(entries, {}, async () => "local:tag")).rejects.toMatchObject({ error: "workerd_image_identity_invalid" });
+  await expect(verifyWorkerdImage({ BP_WORKERD_IMAGE: " \t " }, {}, unused, published)).rejects.toMatchObject({ error: "workerd_identity_invalid" });
+  await expect(verifyWorkerdImage({ ...entries, BP_WORKERD_DIGEST: "d".repeat(64) }, {}, unused, published)).rejects.toMatchObject({ error: "workerd_legacy_identity_requires_migration" });
+  await expect(verifyWorkerdImage({ ...entries, BP_WORKERD_BINARY_SHA256: "wrong" }, {}, unused, published)).rejects.toMatchObject({ error: "workerd_identity_invalid" });
+  await expect(verifyWorkerdImage(entries, {}, async () => "local:tag", published)).rejects.toMatchObject({ error: "workerd_image_identity_invalid" });
   state.hashes = hashes.replace(defaultWorkerdBinary, "d".repeat(64));
-  await expect(verifyWorkerdImage(entries, {}, run)).rejects.toMatchObject({ error: "workerd_binary_identity_mismatch" });
+  await expect(verifyWorkerdImage(entries, {}, run, published)).rejects.toMatchObject({ error: "workerd_binary_identity_mismatch" });
   state.hashes = hashes.replace(supervisorBinary, "e".repeat(64));
-  await expect(verifyWorkerdImage(entries, {}, run)).rejects.toMatchObject({ error: "workerd_binary_identity_mismatch" });
+  await expect(verifyWorkerdImage(entries, {}, run, published)).rejects.toMatchObject({ error: "workerd_binary_identity_mismatch" });
   state.hashes = hashes; state.missingBun = true;
-  await expect(verifyWorkerdImage(entries, {}, run)).rejects.toThrow("missing executable");
+  await expect(verifyWorkerdImage(entries, {}, run, published)).rejects.toThrow("missing executable");
   state.missingBun = false; state.bunVersion = "1.0.0";
-  await expect(verifyWorkerdImage(entries, {}, run)).rejects.toMatchObject({ error: "workerd_binary_incompatible" });
+  await expect(verifyWorkerdImage(entries, {}, run, published)).rejects.toMatchObject({ error: "workerd_binary_incompatible" });
   state.bunVersion = "1.4.2"; state.workerdVersion = "workerd 2026-09-19";
-  await expect(verifyWorkerdImage(entries, {}, run)).rejects.toMatchObject({ error: "workerd_binary_incompatible" });
+  await expect(verifyWorkerdImage(entries, {}, run, published)).rejects.toMatchObject({ error: "workerd_binary_incompatible" });
   const custom = { ...entries, BP_WORKERD_BINARY_SHA256: "d".repeat(64) };
   state.hashes = hashes.replace(defaultWorkerdBinary, custom.BP_WORKERD_BINARY_SHA256);
-  expect((await verifyWorkerdImage(custom, {}, run)).workerdVersion).toBe("workerd 2026-09-19");
-  expect(state.builds).toBe(0);
+  expect((await verifyWorkerdImage(custom, {}, run, published)).workerdVersion).toBe("workerd 2026-09-19");
+  expect(state.pulls).toBe(0);
   state.workerdVersion = "unexpected executable";
-  await expect(verifyWorkerdImage(custom, {}, run)).rejects.toMatchObject({ error: "workerd_binary_incompatible" });
+  await expect(verifyWorkerdImage(custom, {}, run, published)).rejects.toMatchObject({ error: "workerd_binary_incompatible" });
 });
 
 test("verification and private launch evidence preserve the resolved image across retags", async () => {
@@ -112,7 +109,7 @@ test("verification and private launch evidence preserve the resolved image acros
       const result = await run(args, env, timeoutMs);
       if (args[0] === "image") images.set(entries.BP_WORKERD_IMAGE, secondId);
       return result;
-    });
+    }, published);
     expect(first.imageId).toBe(imageId);
     const path = await persistWorkerdEvidence(directory, first), before = await privateRead(path);
     expect(JSON.parse(before ?? "null")).toEqual({ source: "host-declared", purpose: "launch-decision", selectedReference: entries.BP_WORKERD_IMAGE,
@@ -121,7 +118,7 @@ test("verification and private launch evidence preserve the resolved image acros
     expect(Number.isFinite(Date.parse(first.observedAt))).toBe(true);
     expect((await stat(path)).mode & 0o777).toBe(0o600);
     expect(before).not.toContain("never-record");
-    const second = await verifyWorkerdImage(entries, {}, run);
+    const second = await verifyWorkerdImage(entries, {}, run, published);
     await persistWorkerdEvidence(directory, second);
     expect(second.imageId).toBe(secondId);
     expect(await privateRead(path)).toBe(before);
@@ -139,7 +136,7 @@ test("a verifier deadline removes only its created container and refuses launch"
         throw new Error("injected verifier deadline");
       }
       return run(args, env, timeoutMs);
-    })).rejects.toThrow("injected verifier deadline");
+    }, published)).rejects.toThrow("injected verifier deadline");
     expect(containers.size).toBe(0);
   }
 });

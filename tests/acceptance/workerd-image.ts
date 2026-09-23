@@ -67,7 +67,7 @@ try {
     await copyFile(`${root}/apps/server/compute/workerd/${file}`, join(controlDirectory, file));
     await chmod(join(controlDirectory, file), 0o644);
   }
-  const verified = await verifyWorkerdImage({ BP_WORKERD_IMAGE: identity, BP_WORKERD_BINARY_SHA256: binary }, {}, args => docker(...args));
+  const verified = await verifyWorkerdImage({ BP_WORKERD_IMAGE: identity, BP_WORKERD_BINARY_SHA256: binary }, {}, args => docker(...args), identity);
   const evidence = await persistWorkerdEvidence(directory, { ...verified, reference: image });
   const recorded = JSON.parse(await privateRead(evidence) ?? "null");
   assert.equal(recorded.selectedReference, image);

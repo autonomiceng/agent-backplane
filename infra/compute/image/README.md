@@ -35,24 +35,17 @@ This fixes build inputs; it does not claim bit-identical OCI output from differe
 Docker builders. Record `docker image inspect` content identity after building. A local
 image ID is not a registry manifest digest. Do not place it in the legacy `BP_WORKERD_DIGEST`. The [runtime identity contract](../runtime.md)
 accepts local tags through `BP_WORKERD_IMAGE` and verifies executable bytes against
-`BP_WORKERD_BINARY_SHA256` at startup. Record the actual image ID from each build as candidate artifact evidence. With compute selected, bootstrap builds the
-recipe under this tag when `BP_WORKERD_IMAGE` is unset or empty, then verifies both
-workerd and Bun by resolved image ID. An explicit override must already exist locally;
-bootstrap neither builds over it nor pulls it. It requires the recipe's Bun 1.4.2 bytes. Different workerd versions require an explicit
-binary checksum and their own runtime qualification.
-The default build refuses non-amd64 Docker hosts. Build inputs require network access
-and compatible Docker/BuildKit tooling; no installed compiler is needed.
+`BP_WORKERD_BINARY_SHA256` at startup. Record the actual image ID from each build as candidate artifact evidence. With compute
+selected and `BP_WORKERD_IMAGE` unset or empty, bootstrap pulls the published build of this
+recipe pinned by digest in `compose.compute.yaml`, then verifies both workerd and Bun by
+resolved image ID. An explicit override must already exist locally; bootstrap neither
+builds over it nor pulls it. It requires the recipe's Bun 1.4.2 bytes. Different workerd
+versions require an explicit binary checksum and their own runtime qualification.
+The default refuses non-amd64 Docker hosts.
 
-The Compose overlay uses the same local tag when the override is unset or empty, so
-configuration preflight and later native `docker compose up` work with the saved selection.
-The local image must exist for startup. Workerd has no Compose build stanza;
-`docker compose up --build` leaves its selected image untouched, including explicit
-overrides. Rerun preparation or use the `docker build` command above to rebuild the recipe.
-
-ADR-0009/0018 permit this qualified local recipe as the supported delivery method after
-H-PROOF/F-GATE and B-DEFAULT approval. Registry publication is optional. This preparatory
-change claims neither completed runtime qualification nor a registry release.
-Arm64 input integrity does not establish arm64 runtime qualification.
+`compose.dev.yaml` builds this recipe as `agent-backplane-workerd:local`; set
+`BP_WORKERD_IMAGE` to that tag to run the local build. Publication and a successful build
+claim neither completed runtime qualification nor arm64 qualification.
 
 Run `bun tests/acceptance/workerd-image.ts agent-backplane-workerd:1.20260918.1`
 to check binary and license hashes, source identity, the non-root default, Worker Loader/Check RPC,

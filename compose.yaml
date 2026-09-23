@@ -58,10 +58,8 @@ services:
       retries: 20
 
   migrate:
-    image: ${BP_SERVER_IMAGE:-agent-backplane-server:local}
-    build: &server-build
-      context: .
-      dockerfile: infra/compose/server.Dockerfile
+    # Published by .github/workflows/publish.yml; compose.dev.yaml builds this checkout instead.
+    image: &server-image ${BP_SERVER_IMAGE:-ghcr.io/autonomiceng/agent-backplane-server:main-91de7da@sha256:5285c2593406ec16fc09217252c534c206643d13988e9fc85a3403012b4a5299}
     restart: "no"
     logging: *logging
     command: ["bun", "db/migrate-cli.ts"]
@@ -72,8 +70,7 @@ services:
       BP_ADMIN_DATABASE_URL: postgres://postgres:${BP_POSTGRES_ADMIN_PASSWORD:?generate with infra/bootstrap/prepare.ts}@postgres:5432/backplane
 
   data-init:
-    image: ${BP_SERVER_IMAGE:-agent-backplane-server:local}
-    build: *server-build
+    image: *server-image
     user: "0:0"
     restart: "no"
     logging: *logging
@@ -83,8 +80,7 @@ services:
       - server-data:/data
 
   storage-init:
-    image: ${BP_SERVER_IMAGE:-agent-backplane-server:local}
-    build: *server-build
+    image: *server-image
     restart: "no"
     logging: *logging
     command: ["bun", "apps/server/blobs/storage-admin.ts", "initialize"]
@@ -100,8 +96,7 @@ services:
       - server-data:/data
 
   server:
-    image: ${BP_SERVER_IMAGE:-agent-backplane-server:local}
-    build: *server-build
+    image: *server-image
     depends_on:
       storage-init:
         condition: service_completed_successfully

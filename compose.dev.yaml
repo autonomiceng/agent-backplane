@@ -1,4 +1,35 @@
+# Development overlay: publishes PostgreSQL on loopback and builds both images from this checkout.
+#   docker compose -f compose.yaml -f compose.dev.yaml build
+# List it last, after compose.blobs.yaml or compose.compute.yaml and their profiles.
+x-server-build: &server-build
+  image: ${BP_SERVER_IMAGE:-agent-backplane-server:local}
+  build:
+    context: .
+    dockerfile: infra/compose/server.Dockerfile
+
+# Blob helpers run server-image code; point them at the local build too.
+x-blob-helper: &blob-helper
+  image: ${BP_BLOB_BOOTSTRAP_IMAGE:-${BP_SERVER_IMAGE:-agent-backplane-server:local}}
+  profiles: [blobs]
+  environment:
+    BP_BLOB_BOOTSTRAP_IMAGE: ${BP_BLOB_BOOTSTRAP_IMAGE:-${BP_SERVER_IMAGE:-agent-backplane-server:local}}
+
 services:
   postgres:
     ports:
       - "127.0.0.1:${BP_POSTGRES_PORT:-5432}:5432"
+  migrate: *server-build
+  data-init: *server-build
+  storage-init: *server-build
+  server: *server-build
+  blob-image-check: *blob-helper
+  blob-bootstrap: *blob-helper
+  workerd:
+    image: ${BP_WORKERD_EFFECTIVE_IMAGE:-${BP_WORKERD_IMAGE:-agent-backplane-workerd:local}}
+    profiles: [compute]
+    # The recipe packages the amd64 binary only.
+    platform: linux/amd64
+    build:
+      context: infra/compute/image
+    environment:
+      BP_WORKERD_IMAGE: ${BP_WORKERD_IMAGE:-agent-backplane-workerd:local}
