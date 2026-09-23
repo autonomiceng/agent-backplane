@@ -8,7 +8,8 @@
   "scripts": {
     "mcp": "bun packages/cli/runtime/main.ts mcp",
     "test:mcp": "bun run test packages/mcp/runtime",
-    "check": "bun run typecheck && bun run lint && bun run generated:check && bun run build:web",
+    "check": "bun run typecheck && bun run lint && bun run generated:check && bun run conventions:check && bun run build:web",
+    "conventions:check": "sync=${PLATFORM_EDGE_DIR:-../platform-edge}/scripts/sync-conventions.sh; if [ -e \"$sync\" ] || [ -n \"${PLATFORM_EDGE_DIR:-}\" ]; then \"$sync\" --check .; else echo \"conventions: SKIP (no platform-edge checkout at ${PLATFORM_EDGE_DIR:-../platform-edge}; set PLATFORM_EDGE_DIR)\"; fi",
     "openapi:export": "bun tooling/openapi/export.ts",
     "codegen": "bun tooling/codegen/generate.ts",
     "generated:check": "bun tooling/openapi/export.ts --check && bun tooling/codegen/generate.ts --check",

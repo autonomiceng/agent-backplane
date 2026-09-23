@@ -23,3 +23,10 @@ and its datastore stays off the Platform Network.
 empty default trusting no peer. Its validated address feeds the console allowlist
 and Caddy logs. The Backplane upstream still removes all forwarded headers, so
 the server and Better Auth retain their configured-origin policy.
+
+Amended 2026-09-23: The platform contract fixes Platform Edge at `172.30.0.2`,
+outside the Platform Network's dynamic range. `BP_TRUSTED_PROXIES` now defaults to
+`172.30.0.2/32`, and an empty value uses that default. Docker never assigns that
+address dynamically, so without Edge the default trusts no present peer. Preparation
+refuses a dynamic range that contains a trusted IPv4 proxy. The server's forwarded-header
+stripping is unchanged.

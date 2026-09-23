@@ -30,6 +30,15 @@ Fresh --profile '' requires --mode minimal; use --mode minimal for a core-only i
 Saved selections stay authoritative; a mode must agree or requires an explicit upgrade/migration.
 Existing selections and backends cannot be changed here.
 `;
+// Platform Network allocation shared by every stack (docs/conventions.md). Edge holds this
+// reserved address outside the dynamic range, so siblings trust it without discovery.
+const platform = { subnet: "172.30.0.0/24", ipRange: "172.30.0.128/25", edge: "172.30.0.2/32" };
+function ipv4Network(value: string) {
+  const [address = "", bits = "", extra] = value.split("/");
+  if (isIP(address) !== 4 || extra !== undefined || !/^(0|[1-9][0-9]?)$/.test(bits) || Number(bits) > 32) return undefined;
+  const size = 2 ** (32 - Number(bits)), start = address.split(".").reduce((sum, octet) => sum * 256 + Number(octet), 0);
+  return start % size === 0 ? { start, end: start + size - 1 } : undefined;
+}
 
 // These values enter Caddy tokens and expressions. Accept literals, never Caddy syntax.
 export function resolveRustfsConsole(env: Environment, profiles: string[], access: ReturnType<typeof resolveAccess>) {
@@ -58,7 +67,7 @@ export function resolveRustfsConsole(env: Environment, profiles: string[], acces
   if (url.host === browser.host || host === browser.hostname || host === access.host
     || ["localhost", "127.0.0.1"].includes(host))
     throw new CliError("rustfs_origin_conflict", 1);
-  const allow = env.BP_RUSTFS_CONSOLE_ALLOW ?? "127.0.0.1/8 ::1", peers = env.BP_TRUSTED_PROXIES ?? "";
+  const allow = env.BP_RUSTFS_CONSOLE_ALLOW ?? "127.0.0.1/8 ::1", peers = env.BP_TRUSTED_PROXIES || platform.edge;
   for (const [value, exact] of [[allow, false], [peers, true]] as const) {
     if ((!value.trim() && !exact) || /[^a-fA-F0-9:./ ]/.test(value)) throw new CliError(exact ? "trusted_proxies_invalid" : "operator_allow_invalid", 1);
     for (const literal of value.split(" ").filter(Boolean)) {
@@ -87,7 +96,7 @@ export async function prepare(argv: string[], env: Environment, run: Runner = do
   try {
     let source = await privateRead(path, true);
     const originalSource = source, entries: Record<string, string> = {}, lines = (source ?? "").split("\n");
-    const managed = new Set([...core, ...blobs, "BP_COMPUTE_TOKEN", "BP_PUBLIC_URL", "BP_PUBLIC_DOMAIN", "BP_SCHEME", "BP_TLS_ISSUER", "BP_EDGE_CA", "BP_PUBLIC_HOST", "BP_EDGE_BIND_HOST", "BP_ACCESS_MODE", "BP_AUTH_URL", "BP_PORT", "BP_BIND_HOST", "BP_HTTP_PORT", "BP_HTTPS_PORT", "BP_BACKUP_DIR", "BP_POSTGRES_IMAGE", "BP_SERVER_IMAGE", "BP_CADDY_IMAGE", "BP_RUSTFS_IMAGE", "BP_BLOB_BOOTSTRAP_IMAGE", "BP_WORKERD_REPOSITORY", "BP_WORKERD_DIGEST", "BP_WORKERD_IMAGE", "BP_WORKERD_BINARY_SHA256", "BP_DATA_DIR", "BP_STATUS_DIR", "BP_PLATFORM_NETWORK", "BP_VOLUME_PREFIX", "BP_BACKUP_KEEP", "BP_RUSTFS_CONSOLE", "BP_RUSTFS_HOST", "BP_RUSTFS_URL", "BP_RUSTFS_URL_HOST", "BP_RUSTFS_AUTHORITY", "BP_RUSTFS_CONSOLE_ALLOW", "BP_TRUSTED_PROXIES"]);
+    const managed = new Set([...core, ...blobs, "BP_COMPUTE_TOKEN", "BP_PUBLIC_URL", "BP_PUBLIC_DOMAIN", "BP_SCHEME", "BP_TLS_ISSUER", "BP_EDGE_CA", "BP_PUBLIC_HOST", "BP_EDGE_BIND_HOST", "BP_ACCESS_MODE", "BP_AUTH_URL", "BP_PORT", "BP_BIND_HOST", "BP_HTTP_PORT", "BP_HTTPS_PORT", "BP_BACKUP_DIR", "BP_POSTGRES_IMAGE", "BP_SERVER_IMAGE", "BP_CADDY_IMAGE", "BP_RUSTFS_IMAGE", "BP_BLOB_BOOTSTRAP_IMAGE", "BP_WORKERD_REPOSITORY", "BP_WORKERD_DIGEST", "BP_WORKERD_IMAGE", "BP_WORKERD_BINARY_SHA256", "BP_DATA_DIR", "BP_STATUS_DIR", "BP_PLATFORM_NETWORK", "BP_PLATFORM_SUBNET", "BP_PLATFORM_IP_RANGE", "BP_VOLUME_PREFIX", "BP_BACKUP_KEEP", "BP_RUSTFS_CONSOLE", "BP_RUSTFS_HOST", "BP_RUSTFS_URL", "BP_RUSTFS_URL_HOST", "BP_RUSTFS_AUTHORITY", "BP_RUSTFS_CONSOLE_ALLOW", "BP_TRUSTED_PROXIES"]);
     for (const key of [...selectors, "COMPOSE_PATH_SEPARATOR", "COMPOSE_ENV_FILES", "BP_BLOB_BACKEND"]) managed.add(key);
     const assignments = new Map<string, number>();
     for (const [index, line] of lines.entries()) {
@@ -168,6 +177,15 @@ export async function prepare(argv: string[], env: Environment, run: Runner = do
     if (!endpoint.startsWith("unix://")) throw new CliError("remote_docker_unsupported", 1);
     const network = entries.BP_PLATFORM_NETWORK ?? "platform", prefix = entries.BP_VOLUME_PREFIX ?? "agent-backplane";
     if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(network)) throw new CliError("invalid_platform_network", 1);
+    const subnet = entries.BP_PLATFORM_SUBNET ?? platform.subnet, ipRange = entries.BP_PLATFORM_IP_RANGE ?? platform.ipRange;
+    const pool = ipv4Network(subnet), dynamic = ipv4Network(ipRange);
+    // The derived gateway is the subnet's first host; the range needs an allocatable host besides it.
+    if (!pool || !dynamic || dynamic.start < pool.start || dynamic.end > pool.end
+      || Math.min(dynamic.end, pool.end - 1) < Math.max(dynamic.start, pool.start + 2)) throw new CliError("invalid_platform_network", 1);
+    // Docker could hand a trusted proxy address inside the dynamic range to any attached container.
+    if ((entries.BP_TRUSTED_PROXIES || platform.edge).split(" ").map(peer => ipv4Network(peer.includes("/") ? peer : `${peer}/32`))
+      .some(peer => peer && peer.start >= dynamic.start && peer.start <= dynamic.end)) throw new CliError("invalid_platform_network", 1);
+    const gateway = [24, 16, 8, 0].map(shift => ((pool.start + 1) >>> shift) & 255).join(".");
     if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(prefix)) throw new CliError("invalid_volume_prefix", 1);
     const volumes = await run(["volume", "ls", "--filter", `label=com.docker.compose.project=${project}`, "--format", "{{.Name}}"], child);
     const existingVolumes = await run(["volume", "ls", "--format", "{{.Name}}"], child);
@@ -225,8 +243,23 @@ export async function prepare(argv: string[], env: Environment, run: Runner = do
       child.BP_WORKERD_EFFECTIVE_IMAGE = identity.imageId;
       child.BP_WORKERD_HOST_IMAGE_ID = identity.imageId;
     }
-    try { await run(["network", "inspect", network], child); }
-    catch { await run(["network", "create", network], child); }
+    const inspect = () => run(["network", "inspect", "--format", "{{.Driver}} {{json .IPAM.Config}}", network], child);
+    let ipam = await inspect().catch(() => undefined);
+    if (ipam === undefined) {
+      try { await run(["network", "create", "--driver", "bridge", "--subnet", subnet, "--ip-range", ipRange, "--gateway", gateway, network], child); }
+      // A concurrent bootstrap may have created it first; validate that network instead.
+      catch (error) { ipam = await inspect().catch(() => { throw error; }); }
+    }
+    if (ipam !== undefined) {
+      const [driver = "", ...config] = ipam.trim().split(" ");
+      let pools: unknown;
+      try { pools = JSON.parse(config.join(" ")); } catch { pools = undefined; }
+      const found = `driver ${driver || "none"} ` + ((Array.isArray(pools) ? pools : []).filter(record).filter(pool => typeof pool.Subnet === "string" && !pool.Subnet.includes(":"))
+        .map(pool => `subnet ${pool.Subnet} ip-range ${pool.IPRange || "none"} gateway ${pool.Gateway || "none"}`).join("; ") || "no IPv4 IPAM configuration");
+      const expected = `driver bridge subnet ${subnet} ip-range ${ipRange} gateway ${gateway}`;
+      if (found !== expected) throw new CliError("platform_network_mismatch", 1, undefined, `network ${network} has ${found}; expected ${expected}. `
+        + `One-time fix: stop every stack on ${network}, run \`docker network rm ${network}\`, then rerun bootstrap.`);
+    }
     for (const volume of ["postgres-data", "server-data", "edge-data", "edge-config", ...(profiles.includes("blobs") ? ["rustfs-data"] : [])]) {
       await run(["volume", "create", "--label", `com.docker.compose.project=${project}`, `${prefix}_${volume}`], child);
     }
@@ -323,4 +356,4 @@ export async function statusRecorder(args: string[], searchPath = process.env.PA
   finally { clearTimeout(timeout); }
 }
 if (import.meta.main) try { process.stdout.write(await prepare(process.argv.slice(2), process.env)); }
-catch (e) { process.stderr.write(`${JSON.stringify({ error: e instanceof CliError ? e.error : "prepare_failed" })}\n`); process.exitCode = e instanceof CliError ? e.exit : 1; }
+catch (e) { process.stderr.write(`${JSON.stringify(e instanceof CliError ? { error: e.error, ...(e.details === undefined ? {} : { details: e.details }) } : { error: "prepare_failed" })}\n`); process.exitCode = e instanceof CliError ? e.exit : 1; }

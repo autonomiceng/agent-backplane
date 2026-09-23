@@ -37,7 +37,7 @@ bp bootstrap --url http://localhost:3000 --email you@example.com \
   --capability-file "$HOME/.bp-enrollment"
 ```
 
-The first command writes `.env`, creates the `platform` network, starts Postgres and the server and waits for them. The second enrolls you as the first user and creates a Workspace and a Principal. Paste the printed `mcpServers.backplane` block into your agent's `.mcp.json`, and open `http://localhost:3000/dashboard`.
+The first command writes `.env`, creates the `platform` network with the shared allocation (`BP_PLATFORM_SUBNET=172.30.0.0/24`, `BP_PLATFORM_IP_RANGE=172.30.0.128/25`, see [access setup](docs/operations/ingress.md)), starts Postgres and the server and waits for them. The second enrolls you as the first user and creates a Workspace and a Principal. Paste the printed `mcpServers.backplane` block into your agent's `.mcp.json`, and open `http://localhost:3000/dashboard`.
 
 Optional profiles add S3 blob storage on RustFS, a workerd sandbox for small functions, and a standalone edge. Choose local HTTP and self-signed HTTPS, trusted HTTPS for your own domain, or access behind another gateway in [access setup](docs/operations/ingress.md). See [bootstrap and recovery](infra/bootstrap/README.md).
 
@@ -88,7 +88,7 @@ This is one of four repos that deploy the same way and work together on one host
 - [observability-stack](https://github.com/autonomiceng/observability-stack): Grafana, Loki, Tempo and Mimir. Can collect this stack's journal logs, and its metrics when you set an operations token. Collection is optional; see [logging](docs/operations/logging.md).
 - [platform-edge](https://github.com/autonomiceng/platform-edge): one Caddy for ports 80 and 443 when more than one stack shares a host.
 
-Each runs alone. Shared conventions live in the gateway's [docs/conventions.md](https://github.com/autonomiceng/llm-gateway-stack/blob/main/docs/conventions.md).
+Each runs alone. Shared conventions live in [docs/conventions.md](docs/conventions.md), vendored from platform-edge.
 
 ## Day two
 

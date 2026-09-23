@@ -23,7 +23,9 @@ For public mode, put `BP_ACCESS_MODE=public`, `BP_PUBLIC_DOMAIN=example.com`, an
 
 For Platform Edge, use `BP_ACCESS_MODE=proxy` and the exact external `BP_PUBLIC_URL`. Add `--profile gateway` to preparation. Platform Edge forwards to the internal Caddy at `bp-gateway:80` on `BP_PLATFORM_NETWORK` (default `platform`). Platform Edge owns certificate issuance and any HTTP-to-HTTPS redirects. The internal gateway listens only on HTTP port 80 and retains operator-route exclusions. Keep the standalone edge profile off when another gateway owns ports 80 and 443.
 
-Preparation preserves existing secrets and rejects conflicting mode/origin settings before starting services. Set one mode directly; the previous scheme, issuer and edge override settings are unsupported. No configuration or data migration runs. Existing volume names and backup contents remain unchanged. On a host with several deployments, choose distinct `BP_VOLUME_PREFIX` and `BP_PLATFORM_NETWORK` values so the `bp-server` and `bp-gateway` aliases resolve uniquely.
+The Platform Network has one allocation on every host, defined in the [platform contract](../conventions.md#platform-contract): subnet `172.30.0.0/24` (`BP_PLATFORM_SUBNET`), dynamic range `172.30.0.128/25` (`BP_PLATFORM_IP_RANGE`) and gateway `172.30.0.1`, the subnet's first host. Platform Edge holds the reserved address `172.30.0.2` outside the dynamic range, and `BP_TRUSTED_PROXIES` defaults to `172.30.0.2/32`, so no Edge address discovery is needed. Whichever bootstrap runs first creates the network with these parameters. Preparation validates an existing network and refuses a different subnet, range or gateway, or a network with no IPv4 IPAM configuration, with `platform_network_mismatch` and the observed and expected values. To repair a network created before this contract, stop every stack on it, run `docker network rm` on the network the error names, then rerun preparation. Preparation also refuses a dynamic range that contains a trusted IPv4 proxy address.
+
+Preparation preserves existing secrets and rejects conflicting mode/origin settings before starting services. Set one mode directly; the previous scheme, issuer and edge override settings are unsupported. No configuration or data migration runs. Existing volume names and backup contents remain unchanged. On a host with several deployments, choose distinct `BP_VOLUME_PREFIX` and `BP_PLATFORM_NETWORK` values so the `bp-server` and `bp-gateway` aliases resolve uniquely; each additional network needs its own non-overlapping `BP_PLATFORM_SUBNET` and `BP_PLATFORM_IP_RANGE`.
 
 ## Browser address for authentication
 
@@ -119,11 +121,13 @@ BP_PUBLIC_URL=https://darkforge.tail694fe2.ts.net:8449
 BP_RUSTFS_CONSOLE=true
 BP_RUSTFS_URL=https://darkforge.tail694fe2.ts.net:8450
 BP_RUSTFS_CONSOLE_ALLOW='100.100.1.2/32 fd7a:115c:a1e0::1/128'
-BP_TRUSTED_PROXIES='192.0.2.2/32'
 ```
 
-Replace the example IPs with actual operator addresses and the exact Platform
-Edge peer address observed by Caddy. `BP_RUSTFS_CONSOLE_ALLOW` accepts space-separated
+Replace the example IPs with actual operator addresses. `BP_TRUSTED_PROXIES`
+defaults to Platform Edge's reserved address, `172.30.0.2/32`; an empty value
+uses the same default. Change it only for another gateway or a different Platform
+Network subnet. An existing env file keeps an older nonempty value; replace it
+with the default after the network cutover. `BP_RUSTFS_CONSOLE_ALLOW` accepts space-separated
 IP literals or CIDRs. `BP_TRUSTED_PROXIES` accepts only exact IPs or host routes
 (`/32` or `/128`); Docker and Tailnet ranges are never trusted proxy peers.
 Forwarded client IPs affect the console allowlist only when the direct peer is
