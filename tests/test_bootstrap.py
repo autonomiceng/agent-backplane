@@ -60,6 +60,9 @@ def runner_with(volumes=(), containers=(), network_exists=True, ipam=CONTRACT_IP
         if argv[1] == "info":
             return completed(argv, stdout="amd64\n")
         if argv[1] == "image":
+            # The rendered server image is absent locally; everything else (the pulled workerd default) is present.
+            if argv[-1] == "server:rendered":
+                return completed(argv, 1)
             return completed(argv, stdout=f"{IMAGE_ID} amd64\n")
         if argv[1] == "create":
             container = "b" * 64
@@ -130,7 +133,7 @@ class BootstrapTests(unittest.TestCase):
         self.assertIn(f"--user {os.getuid()}:{os.getgid()}", result["next"])
         self.assertIn(f"{self.capability}:/tmp/capability:ro", result["next"])
         self.assertIn("--url http://localhost:3000 --email USER_EMAIL", result["next"])
-        self.assertEqual([c for c in calls if c[1] == "pull"], [["docker", "pull", "--platform", "linux/amd64", PUBLISHED]])
+        self.assertEqual([c for c in calls if c[1] == "pull"], [["docker", "pull", "--platform", "linux/amd64", PUBLISHED], ["docker", "pull", "server:rendered"]])
         self.assertFalse(any(c[1] == "build" or (c[1] == "compose" and "build" in c) for c in calls))
         with self.env.open("a") as handle:
             handle.write("MY_CUSTOM=${KEEP_THIS}\n# a comment\n")
@@ -262,10 +265,12 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(up[8:16], [part for path in files for part in ("-f", str(path))])
         self.assertEqual(up[16:22], ["--profile", "gateway", "--profile", "blobs", "--profile", "compute"])
         self.assertEqual(up[22:], ["up", "--detach", "--no-build", "--wait", "--wait-timeout", "300"])
-        pull = next(c for c in calls if c[1] == "compose" and "pull" in c)
-        self.assertEqual(pull[2:], up[2:22] + ["pull", "--policy", "missing"], "missing images are pulled under the pull budget before up")
+        pull = next(c for c in calls if c[1] == "pull")
+        self.assertEqual(pull, ["docker", "pull", "server:rendered"], "only an absent rendered image is pulled, before up")
         self.assertLess(calls.index(pull), calls.index(up))
-        self.assertFalse(any(c[1] == "pull" for c in calls), "an explicit workerd override is verified, never pulled")
+        self.assertIn(["docker", "image", "inspect", "--format", "{{.Id}}", "server:rendered"], calls[:calls.index(pull)])
+        self.assertFalse(any(c[1] == "compose" and "pull" in c for c in calls), "compose pull would refresh present :latest tags")
+        self.assertFalse(any(c[1] == "pull" and "--platform" in c for c in calls), "an explicit workerd override is verified, never pulled")
         self.assertEqual([c[-2:] for c in calls if c[1:3] == ["volume", "create"]][:1],
                          [["com.docker.compose.project=original", "agent-backplane_postgres-data"]])
         self.assertIn("COMPOSE_PROFILES='gateway,blobs,compute'", self.env.read_text())
@@ -280,7 +285,7 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(build[build.index("--env-file") + 1], "/dev/null", "a fresh build cannot read an env file that does not exist yet")
         self.assertIn(str(ROOT / "compose.dev.yaml"), build)
         self.assertEqual(next(c for c in calls if "up" in c)[-4], "--build")
-        self.assertFalse(any(c[1] == "compose" and "pull" in c for c in calls), "a build never pulls its own tags")
+        self.assertFalse(any(c[1] == "pull" for c in calls), "a build never pulls its own tags")
         self.env.write_text("BP_SERVER_IMAGE=custom:tag\n")
         with self.assertRaises(bootstrap.Refused) as refused:
             self.bootstrap("--build")

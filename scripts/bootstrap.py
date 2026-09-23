@@ -599,6 +599,18 @@ def export_capability(runner: Runner, env: dict[str, str], compose: list[str], p
         handle.write(capability)
 
 
+def pull_missing_images(runner: Runner, env: dict[str, str], config: dict) -> None:
+    """Downloads get the pull budget so `up` spends its deadline on health checks. Only absent images:
+    Compose's own `pull --policy missing` still refreshes `:latest` tags, and an explicit local image
+    (BP_SERVER_IMAGE, BP_WORKERD_IMAGE) exists in no registry."""
+    services = config["services"].values() if isinstance(config.get("services"), dict) else []
+    references = sorted({service["image"] for service in services if isinstance(service, dict) and isinstance(service.get("image"), str)})
+    for reference in references:
+        if runner(["docker", "image", "inspect", "--format", "{{.Id}}", reference], env=env, timeout=10).returncode == 0:
+            continue
+        docker(runner, ["pull", reference], env, "image_pull_failed")
+
+
 def cli_state_dir() -> Path:
     """Where the containerized CLI keeps its checkpoint and credentials: the operator's own state root."""
     return Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state") / "backplane"
@@ -833,9 +845,7 @@ def prepare(args, env_file: Path, template: Path, explicit: list[str] | None, ru
     ensure_network(runner, child, resolved["network"], resolved["subnet"], resolved["ip_range"], resolved["gateway"])
     ensure_volumes(runner, child, volume_names(resolved["prefix"], profiles), project)
     if not args.build:
-        # Downloads get the pull budget; `up` then spends its deadline on health checks. Missing only:
-        # an explicit local image (BP_SERVER_IMAGE, BP_WORKERD_IMAGE) exists in no registry.
-        docker(runner, [*compose[1:], "pull", "--policy", "missing"], child, "compose_pull_failed")
+        pull_missing_images(runner, child, config)
     up = runner([*compose, "up", "--detach", "--build" if args.build else "--no-build", "--wait", "--wait-timeout", "300"], env=child)
     if up.returncode:
         raise Refused("compose_up_failed", output(up))
