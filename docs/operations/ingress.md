@@ -100,8 +100,9 @@ published console link or forwarding route, and standalone Caddy requests no
 console certificate. Reserved HTTP console hosts return 404.
 
 On an existing RustFS installation, set `BP_RUSTFS_CONSOLE=true` in its private
-environment file and run bootstrap with `--profile blobs` plus either `--profile edge`
-or `--profile gateway`. Enabling the console never selects a storage backend.
+environment file and rerun bootstrap without `--profile`, so the complete recorded
+selection (which must already include `blobs` and `edge` or `gateway`) is reused; a partial
+`--profile` set is refused. Enabling the console never selects a storage backend.
 Keep the original profiles, credentials, bucket, source bytes and volumes;
 a filesystem deployment requires an explicit storage migration first. An explicit
 `BP_BLOB_BACKEND=filesystem` conflicts with enabling this console.

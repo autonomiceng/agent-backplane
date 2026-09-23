@@ -832,6 +832,10 @@ def prepare(args, env_file: Path, template: Path, explicit: list[str] | None, ru
         child.update(BP_WORKERD_IMAGE=identity["reference"], BP_WORKERD_EFFECTIVE_IMAGE=identity["imageId"], BP_WORKERD_HOST_IMAGE_ID=identity["imageId"])
     ensure_network(runner, child, resolved["network"], resolved["subnet"], resolved["ip_range"], resolved["gateway"])
     ensure_volumes(runner, child, volume_names(resolved["prefix"], profiles), project)
+    if not args.build:
+        # Downloads get the pull budget; `up` then spends its deadline on health checks. Missing only:
+        # an explicit local image (BP_SERVER_IMAGE, BP_WORKERD_IMAGE) exists in no registry.
+        docker(runner, [*compose[1:], "pull", "--policy", "missing"], child, "compose_pull_failed")
     up = runner([*compose, "up", "--detach", "--build" if args.build else "--no-build", "--wait", "--wait-timeout", "300"], env=child)
     if up.returncode:
         raise Refused("compose_up_failed", output(up))
