@@ -12,7 +12,7 @@ const supervisorBinaries = new Map([
   ["amd64", "a83d263767d839e4d2649ca8e35d07159c7afc99afdc96d731ced29e056dda0c"],
   ["arm64", "616f267a34278ff5ac282df37ffdfba1d7141f4f6926bca99af2cd6ef3ad32b1"],
 ]);
-// `published` is the default reference rendered from compose.compute.yaml, the single pin Renovate updates.
+// `published` is the default reference rendered from compose.compute.yaml, so Compose stays the only pin.
 export async function verifyWorkerdImage(entries: Environment, env: Environment, run: Runner, published: string) {
   if (entries.BP_WORKERD_REPOSITORY || entries.BP_WORKERD_DIGEST) throw new CliError("workerd_legacy_identity_requires_migration", 1);
   const pullDefault = !entries.BP_WORKERD_IMAGE;
