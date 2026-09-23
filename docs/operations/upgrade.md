@@ -11,7 +11,7 @@ prerelease suffix such as `v1.2.3-rc.1`). Other tags and pull requests never pub
 
 Compose pins both by digest: `compose.yaml` and `compose.blobs.yaml` default the server,
 migration, data and blob helpers to the server image, and `compose.compute.yaml` defaults
-workerd. Bootstrap pulls the workerd default and verifies its executables before launch;
+workerd. `scripts/bootstrap.py` pulls the workerd default and verifies its executables before launch;
 Compose pulls the server image on first `up`. `BP_SERVER_IMAGE` and `BP_WORKERD_IMAGE`
 still override them. `compose.dev.yaml` holds the only `build:` stanzas, for development
 (see the README).

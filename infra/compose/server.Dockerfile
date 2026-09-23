@@ -27,6 +27,9 @@ COPY db/migrations.ts db/sql-migration-runner.ts db/migrate-cli.ts ./db/
 # The server imports its SQL modules from db/internal at runtime.
 COPY db/internal ./db/internal
 COPY infra/init/blobs ./infra/init/blobs
+# The bp CLI (compose.enroll.yaml) reads the OpenAPI contract and the generated command table.
+COPY contracts/openapi ./contracts/openapi
+COPY tooling/codegen/commands.ts ./tooling/codegen/commands.ts
 RUN mkdir /data && chown bun:bun /data
 USER bun
 ENV NODE_ENV=production

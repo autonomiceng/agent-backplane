@@ -3,7 +3,6 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { readConfig } from "../../apps/server/platform/config.ts";
-import { resolveAccess } from "./validate-edge.ts";
 
 const root = resolve(import.meta.dir, "../..");
 
@@ -82,7 +81,6 @@ test("compose publishes only the expected loopback ports", async () => {
 
 test("proxy uses the gateway origin on core HTTP without a standalone edge", async () => {
   const settings = { BP_ACCESS_MODE: "proxy", BP_PUBLIC_URL: "https://backplane.example.com" };
-  expect(resolveAccess(settings)).toMatchObject({ mode: "proxy", origin: settings.BP_PUBLIC_URL });
   const proxy = await config([], undefined, Object.entries(settings).map(([key, value]) => `${key}=${value}`));
   expect(proxy.services.edge).toBeUndefined();
   expect(proxy.services.server.environment.BP_ACCESS_MODE).toBe("proxy");

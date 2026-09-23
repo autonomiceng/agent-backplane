@@ -32,14 +32,15 @@ Model choice, risk paths, and the brief templates every delegation carries: `doc
 
 ## Where code lives
 
-Bun workspaces monorepo. One server process serves the API, SSE, and the built dashboard.
+Bun workspaces monorepo. One server process serves the API, SSE, and the built dashboard. Bun is a development and image-build dependency; an installation host needs Docker and Python only.
 
 - `apps/server/` - Elysia server. One directory per primitive: `platform` (pool, request context, quotas, health, leases), `auth` (Better Auth, tenancy, Principals), `runs` (Runs, provenance, audit writing), `sql`, `schema` (Workspace Migrations), `queue` (PGMQ adapter, Deliveries, Receipts, Effects), `tx`, `approvals`, `events` (audit cursor, SSE), `blobs`, `compute`. `main.ts` starts resources, `app.ts` composes the app and exports its type for Eden. Imports start nothing.
 - `apps/web/` - Vite+ React dashboard: `screens/`, `components/`, `client/` (Eden, SSE adapter). Built and served by the server.
 - `packages/cli/` and `packages/mcp/` - `backplane`/`bp` and the stdio MCP server. `runtime/` is hand-written; `generated/` comes from the OpenAPI contract and is never edited by hand.
 - `contracts/openapi/` - the canonical `openapi.json`. `tooling/openapi/` exports it, `tooling/codegen/` generates the CLI and MCP from it.
 - `db/internal/` - Drizzle table catalog for the backplane's own tables only. `db/migrations/` - ordered, forward-only SQL for the protected `control`, `queue`, `audit` schemas. Workspace schemas never enter Drizzle; their Migrations live in the database ledger with a git projection under `$BP_DATA_DIR`.
-- `infra/` - `compose/` (profiles core, blobs, compute, observability), `postgres/` (pins), `init/` (fresh-install SQL such as PGMQ), `observability/`, `backup/`.
+- `infra/` - `compose/` (the server image and Caddyfile), `postgres/` (pins), `init/` (fresh-install SQL such as PGMQ), `observability/`, `backup/`, `bootstrap/README.md` (installation and recovery).
+- `scripts/bootstrap.py` - the host bootstrap: Python 3.11 standard library, no Bun. Root `compose*.yaml` hold every service and profile; `compose.enroll.yaml` runs the first-User enrollment inside the server image. Tests in `tests/test_bootstrap*.py` use a fake runner and never call Docker.
 - `skills/backplane/` - the versioned SKILL.md that teaches agents the CLI, with executable examples.
 - `tests/acceptance/` and `tests/adversarial/` - cross-primitive scenarios against a real Postgres. Unit tests sit beside their module as `<name>.test.ts`.
 

@@ -5,7 +5,6 @@ import { mkdtemp, mkdir, chmod, copyFile, appendFile, rm } from "node:fs/promise
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { privateRead } from "../../packages/cli/runtime/credential-file.ts";
-import { persistWorkerdEvidence, verifyWorkerdImage } from "../../infra/bootstrap/workerd-image.ts";
 import { readControlSurfaceHash, type RuntimeEvidence } from "../../apps/server/compute/runtime-identity.ts";
 import { createComputeLauncher } from "../../apps/server/compute/compute-launcher.ts";
 import { compatibilityDate, configHash, sha256, type Manifest } from "../../apps/server/compute/deployment-config.ts";
@@ -67,9 +66,15 @@ try {
     await copyFile(`${root}/apps/server/compute/workerd/${file}`, join(controlDirectory, file));
     await chmod(join(controlDirectory, file), 0o644);
   }
-  const verified = await verifyWorkerdImage({ BP_WORKERD_IMAGE: identity, BP_WORKERD_BINARY_SHA256: binary }, {}, args => docker(...args), identity);
-  const evidence = await persistWorkerdEvidence(directory, { ...verified, reference: image });
-  const recorded = JSON.parse(await privateRead(evidence) ?? "null");
+  // The host bootstrap (scripts/bootstrap.py) owns verification and evidence; run its functions unchanged.
+  const verifier = Bun.spawn(["python3", "-c", [
+    "import json, sys; sys.path.insert(0, sys.argv[1]); import bootstrap",
+    "identity = bootstrap.verify_workerd_image({'BP_WORKERD_IMAGE': sys.argv[2], 'BP_WORKERD_BINARY_SHA256': sys.argv[3]}, dict(bootstrap.os.environ), bootstrap.run, sys.argv[2], False)",
+    "print(bootstrap.persist_workerd_evidence(bootstrap.Path(sys.argv[4]), {**identity, 'reference': sys.argv[5]}))",
+  ].join("\n"), join(root, "scripts"), identity, binary, directory, image], { stdout: "pipe", stderr: "pipe" });
+  const [verifierCode, evidence, verifierError] = await Promise.all([verifier.exited, new Response(verifier.stdout).text(), new Response(verifier.stderr).text()]);
+  assert.equal(verifierCode, 0, `bootstrap.py refused the artifact: ${diagnostic(verifierError)}`);
+  const recorded = JSON.parse(await privateRead(evidence.trim()) ?? "null");
   assert.equal(recorded.selectedReference, image);
   assert.equal(recorded.hostObservedImageId, identity);
   assert.equal(recorded.binarySha256, binary);

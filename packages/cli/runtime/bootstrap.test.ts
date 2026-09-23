@@ -1,6 +1,6 @@
 // Three release scenarios cover filesystem custody, uncertain issuance and usable CLI/MCP credentials.
 import { expect, test } from "bun:test";
-import { chmod, link, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createApp } from "../../../apps/server/app.ts";
@@ -9,7 +9,6 @@ import { createAuth } from "../../../apps/server/auth/auth.ts";
 import { createEnrollment } from "../../../apps/server/auth/enrollment.ts";
 import { capabilityPath } from "../../../apps/server/auth/enrollment-file.ts";
 import { latestMigrationVersion, migratedDatabase } from "../../../apps/server/testing/postgres.ts";
-import { prepare, type Runner } from "../../../infra/bootstrap/prepare.ts";
 import { execute, type Execution } from "./execute.ts";
 import { credentialEnvironment, privateRead, privateWrite } from "./credential-file.ts";
 import { catalog } from "../../mcp/runtime/tools.ts";
@@ -52,54 +51,6 @@ async function fixture(socket = false) {
 test("rerun overwrites secrets or repeats provisioning after an interrupted creation", async () => {
   const f = await fixture();
   try {
-    const envPath = join(f.directory, ".env"), capability = join(f.directory, "capability"), secret = "a".repeat(64);
-    let existingVolume = false;
-    const verifierContainers = new Map<string, string[]>();
-    const runner: Runner = async (args, env) => {
-      if (args[0] === "create") { verifierContainers.set("a".repeat(64), args); return "a".repeat(64); }
-      if (args[0] === "rm") { verifierContainers.delete(args.at(-1) ?? ""); return ""; }
-      if (args[0] === "start") args = verifierContainers.get(args.at(-1) ?? "") ?? [];
-      return args.some(arg => arg.includes("/health/operations")) ? JSON.stringify({ capabilities: {
-      files: { state: "healthy", backend: env.COMPOSE_PROFILES?.split(",").includes("blobs") ? "s3" : "filesystem", observedAt: new Date().toISOString() },
-      functions: { state: "healthy", backend: "workerd", observedAt: new Date().toISOString() },
-    } }) : args.includes("config") ? JSON.stringify({ services: {
-      server: { environment: { BP_BLOB_BACKEND: env.COMPOSE_PROFILES?.split(",").includes("blobs") ? "s3" : "filesystem", BP_COMPUTE_URL: env.COMPOSE_PROFILES?.split(",").includes("compute") ? "http://workerd:8080" : undefined } },
-      "storage-init": { environment: { BP_BLOB_BACKEND: env.COMPOSE_PROFILES?.split(",").includes("blobs") ? "s3" : "filesystem" } },
-    } }) : args[0] === "image" ? `sha256:${"e".repeat(64)} amd64` : args[0] === "create" ? args.at(-1) === "--version" ? args.includes("/usr/bin/bun") ? "1.4.2" : "workerd 2026-09-18" : `${"d".repeat(64)}  /usr/bin/workerd\na83d263767d839e4d2649ca8e35d07159c7afc99afdc96d731ced29e056dda0c  /usr/bin/bun` : args[0] === "context" ? "unix:///var/run/docker.sock" : args[0] === "network" && args[1] === "inspect" ? 'bridge [{"Subnet":"172.30.0.0/24","IPRange":"172.30.0.128/25","Gateway":"172.30.0.1"}]' : args[0] === "volume" ? existingVolume ? "existing-data" : "" : args.at(-1) === "/data/enrollment/capability" ? secret : args.some(arg => arg.includes("curl")) ? JSON.stringify({ enrollment: { state: "pending" } }) : "";
-    };
-    const baseArgs = ["--env-file", envPath, "--backup-dir", f.directory, "--public-url", "http://localhost:3000", "--capability-file", capability];
-    const args = [...baseArgs, "--mode", "minimal"];
-    const unrelated = 'UNRELATED=${KEEP_THIS}\nUNRELATED=again\nOTHER=`untouched`\nBP_CUSTOM=${UNMANAGED}\n';
-    await privateWrite(envPath, unrelated);
-    const next = await prepare(args, {}, runner); expect(next).not.toContain("--compose-project");
-    const first = await readFile(envPath, "utf8"); existingVolume = true;
-    expect(first.startsWith(unrelated)).toBe(true);
-    const unsafeParent = await mkdtemp(join(f.directory, "unsafe-parent-")); await chmod(unsafeParent, 0o770);
-    await expect(privateWrite(join(unsafeParent, "credential.json"), "secret")).rejects.toMatchObject({ error: "unsafe_private_directory" });
-    await expect(prepare([...args, "--env-file", join(unsafeParent, ".env")], {}, runner)).rejects.toMatchObject({ error: "unsafe_private_directory" });
-    await chmod(unsafeParent, 0o700);
-    await prepare(args, {}, runner); expect(await readFile(envPath, "utf8")).toBe(first);
-    expect((await stat(envPath)).mode & 0o777).toBe(0o600); expect((await stat(capability)).mode & 0o777).toBe(0o600);
-    await chmod(envPath, 0o644); await prepare(args, {}, runner); expect((await stat(envPath)).mode & 0o777).toBe(0o600);
-    expect(first).not.toContain("BP_COMPUTE_TOKEN"); expect(first).not.toContain("BP_RUSTFS_ROOT_PASSWORD");
-    await writeFile(envPath, first.replace(/^BP_AUTH_SECRET=.*\n/m, ""));
-    await expect(prepare(args, {}, runner)).rejects.toMatchObject({ error: "existing_volume_missing_secrets" });
-    await writeFile(envPath, first);
-    const hardlink = join(f.directory, "linked"); await link(envPath, hardlink);
-    await expect(prepare(args, {}, runner)).rejects.toMatchObject({ error: "unsafe_private_file" }); await rm(hardlink);
-    const symbolic = join(f.directory, "symbolic"); await symlink(envPath, symbolic);
-    await expect(prepare(["--env-file", symbolic, "--capability-file", capability], {}, runner)).rejects.toMatchObject({ error: "unsafe_private_file" });
-    const profilesPath = join(f.directory, "profiles.env"); existingVolume = false;
-    await privateWrite(profilesPath, `BP_RUSTFS_IMAGE=rustfs@sha256:${"b".repeat(64)}\nBP_BLOB_BOOTSTRAP_IMAGE=server@sha256:${"c".repeat(64)}\nBP_WORKERD_IMAGE=workerd:local\nBP_WORKERD_BINARY_SHA256=${"d".repeat(64)}\n`);
-    await prepare([...baseArgs, "--env-file", profilesPath, "--profile", "blobs", "--profile", "compute"], {}, runner);
-    const profiles = await readFile(profilesPath, "utf8");
-    expect(profiles).toMatch(/^BP_COMPUTE_TOKEN='[a-f0-9]{64}'$/m);
-    expect(profiles).toMatch(/^BP_RUSTFS_ROOT_USER='[a-f0-9]{20}'$/m);
-    expect(profiles).toMatch(/^BP_BLOB_S3_ACCESS_KEY='[a-f0-9]{20}'$/m);
-    expect(profiles).toMatch(/^BP_RUSTFS_ROOT_PASSWORD='[a-f0-9]{64}'$/m);
-    expect(profiles).toMatch(/^BP_BLOB_S3_SECRET_KEY='[a-f0-9]{40}'$/m);
-    await prepare([...baseArgs, "--env-file", profilesPath, "--profile", "blobs", "--profile", "compute"], {}, runner);
-    expect(await readFile(profilesPath, "utf8")).toBe(profiles);
     expect((await f.call([...f.argv, "--principal-id", "invalid"])).code).toBe(1);
     expect(await f.pool<{ count: number }[]>`SELECT count(*)::int AS count FROM control."user"`).toEqual([{ count: 0 }]);
     let lost = false;
