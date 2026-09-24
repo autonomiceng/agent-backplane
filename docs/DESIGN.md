@@ -2,7 +2,24 @@
 
 A self-hosted backplane your agents attach to: schema-defined shared state, queues, approvals, and a provenance trail for every row they write.
 
-Status: implemented. Decisions with reasons live in `adr/`. Vocabulary lives in `../CONTEXT.md`. This document is the map.
+Status: implemented. Decisions with reasons live in [adr/](adr/). Vocabulary lives in
+[CONTEXT.md](../CONTEXT.md). This document is the map; the runbooks hold the procedures.
+
+- [Why it exists](#why-it-exists)
+- [Guarantees, stated exactly](#guarantees-stated-exactly)
+- [Shape](#shape)
+- [Tenancy and identity](#tenancy-and-identity)
+- [Provenance](#provenance)
+- [Schema management](#schema-management)
+- [Queues and handoffs](#queues-and-handoffs)
+- [Approvals](#approvals)
+- [Realtime](#realtime)
+- [Agent surfaces](#agent-surfaces)
+- [Dashboard](#dashboard)
+- [Files and Functions](#files-and-functions-selectable-overlays-experimental)
+- [Operations](#operations)
+- [Stack](#stack)
+- [Explicitly not built in v1](#explicitly-not-built-in-v1)
 
 ## Why it exists
 
@@ -116,7 +133,7 @@ REST with OpenAPI is canonical. The CLI and a local stdio MCP server are generat
 
 ## Dashboard
 
-Hero view: the Run timeline, showing which harnesses touched which tables, queue depth, held messages, schema diffs. Second view: approvals inbox. Third: table browser. It reads through the server's SQL endpoint as the signed-in User, never through a direct database connection, so no browser bypasses authorization or provenance. Outerbase Studio embedded if its license allows; otherwise a small in-house grid. Also: Principals with key last-use and revoke, ambiguous Effects, and backplane health.
+The dashboard (`apps/web/screens/`) has a sign-in screen, a home screen with backplane health, the Run timeline (which harnesses touched which tables, queue depth, held Messages), the approvals inbox, and a Principals screen with key last-use and revoke. It reads through the server's API as the signed-in User, never through a direct database connection, so no browser bypasses authorization or provenance. A table browser is not built.
 
 ## Files and Functions (selectable overlays, experimental)
 

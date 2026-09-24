@@ -40,7 +40,7 @@ Bun workspaces monorepo. One server process serves the API, SSE, and the built d
 - `contracts/openapi/` - the canonical `openapi.json`. `tooling/openapi/` exports it, `tooling/codegen/` generates the CLI and MCP from it.
 - `db/internal/` - Drizzle table catalog for the backplane's own tables only. `db/migrations/` - ordered, forward-only SQL for the protected `control`, `queue`, `audit` schemas. Workspace schemas never enter Drizzle; their Migrations live in the database ledger with a git projection under `$BP_DATA_DIR`.
 - `infra/` - `compose/` (the server image and Caddyfile), `postgres/` (pins), `init/` (fresh-install SQL such as PGMQ), `compute/` (the workerd image recipe and Runtime Identity), `backup/`, `bootstrap/README.md` (installation and recovery).
-- `scripts/bootstrap.py` - the host bootstrap: Python 3.11 standard library, no Bun. Root `compose*.yaml` hold every service and profile; `compose.enroll.yaml` runs the first-User enrollment inside the server image. Tests in `tests/test_bootstrap*.py` use a fake runner and never call Docker. `scripts/retire-status-timer.sh` removes the version 1 status timer from existing installs once.
+- `scripts/bootstrap.py` - the host bootstrap: Python 3.11 standard library, no Bun. Root `compose*.yaml` hold every service and profile; `compose.enroll.yaml` runs the first-User enrollment inside the server image. Tests in `tests/test_bootstrap.py` use a fake runner and never call Docker; `tests/test-selection.test.ts` covers the recorded selection. `scripts/retire-status-timer.sh` removes the version 1 status timer from existing installs once.
 - `skills/backplane/` - the versioned SKILL.md that teaches agents the CLI, with executable examples.
 - `tests/acceptance/` - cross-primitive scenarios and container gates that own their fixtures, against a real Postgres. Unit tests sit beside their module as `<name>.test.ts`.
 - `examples/` - worked agent examples, run by `bun run test:examples`; `bun run test` leaves them out.
@@ -51,6 +51,10 @@ Orchestrator-only files: root manifests and lockfile, tsconfig, `apps/server/{ma
 
 Adding a primitive: create `apps/server/<primitive>/` with pure modules plus adapters, add `<verb>-route.ts` and `<verb>-input.ts` with a stable operation id, propose the `db/internal` catalog entry and `db/migrations` file, get registered in `app.ts`, then run `bun tooling/openapi/export.ts` and `bun tooling/codegen/generate.ts`.
 
+## Where docs live
+
+`docs/DESIGN.md` the map, `docs/adr/` decisions, `CONTEXT.md` the glossary, `docs/operations/` runbooks (access setup, health and public status, published images, logging, capacity, S3 checkpoints, storage identity), `infra/bootstrap/README.md` installation and enrollment, `infra/backup/README.md` backup and restore, `infra/compute/runtime.md` the Functions runtime, `docs/agents/` guidance, `docs/conventions.md` the shared stack conventions (vendored from platform-edge; never edit it here).
+
 ## Taste
 
 - Complexity belongs at the adapter boundary. Core logic is pure, the API layer is thin, the dashboard is dumb.
@@ -58,3 +62,7 @@ Adding a primitive: create `apps/server/<primitive>/` with pure modules plus ada
 - Comments describe how a thing is used and move when the code moves. Do not narrate behavior line by line.
 - Users drive agents all day and notice a dropped frame, a lying spinner, and a stale label. No continuously repainting animations.
 - If a rule here fights the task in front of you, say so and get a human sign-off before breaking it.
+
+## Finish
+
+Run `bun run check` and `bun run test` (both green before every commit), `python3 -m unittest discover -s tests -p 'test_bootstrap*.py'` for bootstrap changes, and the acceptance scripts the brief names (`tests/acceptance/`, `scripts/backup-drill.py --offline` and `--s3`) for Compose, image, storage or recovery changes. Report exact commands and counts, limitations and operator actions. A failed or skipped gate is reported as such, never as a pass.

@@ -1,5 +1,15 @@
 # Compute Runtime Identity
 
+- [Configuration](#configuration)
+- [Network](#network)
+- [Measurements and compatibility](#measurements-and-compatibility)
+- [Artifact evidence](#artifact-evidence)
+- [Historical deployments](#historical-deployments)
+- [Tests](#tests)
+- [Operation lifecycle](#operation-lifecycle)
+- [Invocation recovery](#invocation-recovery)
+- [Preparation](#preparation)
+
 Workerd is an experimental trusted-code boundary, not a hardened sandbox (ADR-0018). The [project image](image/README.md) packages a verified official binary under ADR-0009. `.github/workflows/publish.yml` publishes it as `ghcr.io/autonomiceng/agent-backplane-workerd`; publication is not runtime qualification. ADR-0018 defines Runtime Identity and its separate artifact evidence.
 
 ## Configuration

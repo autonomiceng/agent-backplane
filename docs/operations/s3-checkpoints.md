@@ -1,5 +1,12 @@
 # Local RustFS checkpoints
 
+How `scripts/checkpoint.py` captures and restores the S3 profile's RustFS volume together
+with PostgreSQL and server data, and the drills that prove it.
+
+- [Fence and capture](#fence-and-capture)
+- [Restore](#restore)
+- [Release drills](#release-drills)
+
 `scripts/checkpoint.py` coordinates PostgreSQL, server data and the shipped
 RustFS 1.0.0 single-node `/data` volume. The accepted RustFS digest is
 `sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff`.
@@ -8,7 +15,7 @@ RustFS versions are unsupported. This implementation still requires the real
 Docker drills below before release qualification. No filesystem-to-S3 migration
 is performed.
 
-Keep the original environment secrets separately in protected recovery custody.
+Keep the original environment secrets separately in protected recovery storage.
 Retain the recorded upstream immutable images in a registry or tested off-host
 image archive. The checkpoint saves the server image. A bootstrap or image-check
 helper with identical content is covered by that archive; independent helper
@@ -18,7 +25,7 @@ content requires its own verified immutable recovery reference.
 
 Hold exclusive operator control throughout the command. Exclude external API
 clients, other servers, direct database/object-store writers and mutating helpers.
-`--fenced` attests that exclusion; a Compose stop or a short inspection lease
+`--fenced` is your statement that this exclusion holds; a Compose stop or a short inspection lease
 cannot enforce it against another operator. The command checks for active
 `bp_server` sessions and running mutating helpers before and after physical
 capture. It stops only application services that were running on entry.
@@ -47,7 +54,7 @@ restore. Unsupported members cause refusal before manifest publication.
 
 The manifest is mode 0600 inside a mode 0700 checkpoint directory. It records
 binding identity, inventory digest/count, private bucket selection, mount evidence,
-image custody and clean RustFS exit. A checkpoint-specific credential commitment
+the image references kept for recovery and the clean RustFS exit. A checkpoint-specific credential commitment
 also detects changed root credentials even if RustFS would accept them at process
 startup. It contains no plaintext credentials. Keep its enclosing repository
 private. The atomically published `backups/health.json` is a mode `0644` summary
@@ -66,7 +73,7 @@ requires an explicitly supported format. Arbitrary recorded costs are refused to
 bound work on untrusted manifests. Pre-fix S3 checkpoints with `credentialsSha256`
 or a commitment without the checkpoint name require recapture; their restore refusal
 uses the same captured-credentials diagnostic.
-Use generated credentials and retain their originals in protected recovery custody.
+Use generated credentials and retain their originals in protected recovery storage.
 The drill generates 32-character hexadecimal values accepted by the shipped RustFS
 runtime. Choose generated values within that runtime's accepted credential lengths;
 checkpoint capture adds no credential-length restriction.

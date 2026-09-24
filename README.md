@@ -7,6 +7,17 @@ A shared backend your AI agents plug into: typed state, queues, files, approvals
 [![Bun 1.4](https://img.shields.io/badge/Bun-1.4-black)](https://github.com/oven-sh/bun)
 [![PostgreSQL 18](https://img.shields.io/badge/PostgreSQL-18-4169E1)](https://github.com/postgres/postgres)
 
+- [What it is](#what-it-is)
+- [Quick start](#quick-start)
+- [Access modes](#access-modes)
+- [What's inside](#whats-inside)
+- [Upgrade](#upgrade)
+- [Day two](#day-two)
+- [The other stacks](#the-other-stacks)
+- [Development](#development)
+- [Security](#security)
+- [License](#license)
+
 ## What it is
 
 You run several agents in Claude Code, Codex or your own harness. Each keeps its state in files on whatever disk it has, so the others cannot see it and nobody can say who changed what. The backplane gives a group of agents one Workspace with a Postgres schema, queues, blobs and an approvals inbox, and gives each agent its own key.
@@ -28,9 +39,21 @@ BP_SERVER_IMAGE=<the server image> docker compose -f compose.yaml -f compose.enr
   -e BP_DATA_DIR="$HOME/.local/state/backplane" enroll --url http://localhost:3000 --email you@example.com
 ```
 
-Backups land in `./backups` beside `.env` until you pass `--backup-dir` with an encrypted, off-host mount. The first command writes `.env`, creates the `platform` network with the shared allocation (`BP_PLATFORM_SUBNET=172.30.0.0/24`, `BP_PLATFORM_IP_RANGE=172.30.0.128/25`, see [access setup](docs/operations/ingress.md)), starts Postgres and the server, waits for them and prints the enrollment command. The second enrolls you as the first user and creates a Workspace and a Principal. Paste the printed `mcpServers.backplane` block into your agent's `.mcp.json`, and open `http://localhost:3000/dashboard`. Agent machines run the `bp` CLI from a Bun install of this checkout (`bun install`, then link `packages/cli/runtime/main.ts` as `bp`) or the compiled artifact; see [agent client setup](skills/backplane/references/client-setup.md).
+Backups land in `./backups` beside `.env` until you pass `--backup-dir` with an encrypted, off-host mount. The first command writes `.env`, creates the `platform` network with the shared allocation (`BP_PLATFORM_SUBNET=172.30.0.0/24`, `BP_PLATFORM_IP_RANGE=172.30.0.128/25`), starts Postgres and the server, waits for them and prints the enrollment command. The second enrolls you as the first user and creates a Workspace and a Principal. Paste the printed `mcpServers.backplane` block into your agent's `.mcp.json`, and open `http://localhost:3000/dashboard`. Agent machines run the `bp` CLI from a Bun install of this checkout (`bun install`, then link `packages/cli/runtime/main.ts` as `bp`) or the compiled artifact; see [agent client setup](skills/backplane/references/client-setup.md).
 
-A fresh install is minimal. `--profile blobs` adds S3 blob storage on RustFS, `--profile compute` a workerd sandbox for small functions, and `--profile edge` a standalone edge. Choose local HTTP and self-signed HTTPS, trusted HTTPS for your own domain, or access behind another gateway in [access setup](docs/operations/ingress.md). See [bootstrap and recovery](infra/bootstrap/README.md).
+A fresh install is minimal. `--profile blobs` adds S3 blob storage on RustFS, `--profile compute` a workerd sandbox for small functions, and `--profile edge` a standalone Caddy. See [bootstrap and enrollment](infra/bootstrap/README.md).
+
+## Access modes
+
+`BP_ACCESS_MODE` (or `--access-mode`) selects how the server is reached. Details and every setting are in [access setup](docs/operations/ingress.md).
+
+| You want | Settings | Read |
+| --- | --- | --- |
+| Localhost only (default) | `local`; core serves HTTP on `127.0.0.1:3000`, `--profile edge` adds HTTP on 80 and self-signed HTTPS on 443 | [Local Mode](docs/operations/ingress.md#local-mode-default) |
+| Private access from your devices over Tailscale | Behind Platform Edge: its `bootstrap.py --tailscale --with backplane` writes `BP_PUBLIC_URL=https://backplane.<tailnet>.ts.net`; no standalone recipe, see why | [Tailscale](docs/operations/ingress.md#tailscale) |
+| Public hostname with Let's Encrypt | `public`, `BP_PUBLIC_DOMAIN`, `BP_BIND_HOST=0.0.0.0`, `--profile edge` | [Public Mode](docs/operations/ingress.md#public-mode) |
+| Corporate CA or certificate files | Not offered by the standalone edge; put the server behind Platform Edge, which has `PE_TLS_ISSUER` | [Behind Platform Edge](docs/operations/ingress.md#behind-platform-edge) |
+| Behind Platform Edge on a shared host | `proxy` with `BP_PUBLIC_URL`; Edge's bundle installer passes both | [Behind Platform Edge](docs/operations/ingress.md#behind-platform-edge) |
 
 ## What's inside
 
@@ -49,54 +72,49 @@ A fresh install is minimal. `--profile blobs` adds S3 blob storage on RustFS, `-
 | --- | --- |
 | PostgreSQL 18 with PGMQ | volume, WAL archived to your backup mount |
 | Server (API, dashboard, audit stream) | volume for enrollment and migration projections |
-| RustFS, workerd, Caddy | optional profiles |
+| RustFS, workerd, Caddy | optional profiles `blobs`, `compute`, `edge` |
 
-Each push to `main` and each `vX.Y.Z` release tag publishes `ghcr.io/autonomiceng/agent-backplane-server` (amd64, arm64) and `ghcr.io/autonomiceng/agent-backplane-workerd` (amd64). Compose uses them by default. See [published images](docs/operations/upgrade.md).
+Each push to `main` and each `vX.Y.Z` release tag publishes `ghcr.io/autonomiceng/agent-backplane-server` (amd64, arm64) and `ghcr.io/autonomiceng/agent-backplane-workerd` (amd64). Compose uses them by default, pinned as `tag@sha256`, and the server reports the configured references publicly at `/status.json` ([health](docs/operations/health.md#public-status)). Complete image references in `.env` select unvalidated experiments; see [bootstrap](infra/bootstrap/README.md). Terms are in [CONTEXT.md](CONTEXT.md); guarantees in the [design](docs/DESIGN.md).
 
-Every shipped image default, including the server and workerd, is pinned as `tag@sha256`, and the server reports the configured references publicly at `/status.json` ([health](docs/operations/health.md#public-status)). Complete image references in `.env` select unvalidated experiments; see [bootstrap](infra/bootstrap/README.md). Terms are in [CONTEXT.md](CONTEXT.md); guarantees in the [design](docs/DESIGN.md).
+## Upgrade
 
-## Built on
+```sh
+scripts/backup.sh --fenced --env-file .env   # the rollback boundary
+git pull
+docker compose pull
+python3 scripts/bootstrap.py
+```
 
-| Project | Stars | What we use it for |
-| --- | --- | --- |
-| [Bun](https://github.com/oven-sh/bun) | ![stars](https://img.shields.io/github/stars/oven-sh/bun?style=flat) | Runtime, package manager, test runner |
-| [Elysia](https://github.com/elysiajs/elysia) | ![stars](https://img.shields.io/github/stars/elysiajs/elysia?style=flat) | HTTP routes, OpenAPI, typed client |
-| [PostgreSQL](https://github.com/postgres/postgres) | ![stars](https://img.shields.io/github/stars/postgres/postgres?style=flat) | State, transactions, audit |
-| [PGMQ](https://github.com/pgmq/pgmq) | ![stars](https://img.shields.io/github/stars/pgmq/pgmq?style=flat) | Queue storage under the delivery ledger |
-| [Better Auth](https://github.com/better-auth/better-auth) | ![stars](https://img.shields.io/github/stars/better-auth/better-auth?style=flat) | Human login and organizations |
-| [Drizzle ORM](https://github.com/drizzle-team/drizzle-orm) | ![stars](https://img.shields.io/github/stars/drizzle-team/drizzle-orm?style=flat) | Catalog for internal tables |
-| [libpg_query](https://github.com/pganalyze/libpg_query) | ![stars](https://img.shields.io/github/stars/pganalyze/libpg_query?style=flat) | SQL validation with the real parser |
-| [embedded-postgres](https://github.com/leinelissen/embedded-postgres) | ![stars](https://img.shields.io/github/stars/leinelissen/embedded-postgres?style=flat) | Real Postgres in tests |
-| [React](https://github.com/facebook/react) and [Vite](https://github.com/vitejs/vite) | ![stars](https://img.shields.io/github/stars/vitejs/vite?style=flat) | The dashboard |
-| [RustFS](https://github.com/rustfs/rustfs) | ![stars](https://img.shields.io/github/stars/rustfs/rustfs?style=flat) | Optional S3 blob storage |
-| [workerd](https://github.com/cloudflare/workerd) | ![stars](https://img.shields.io/github/stars/cloudflare/workerd?style=flat) | Optional function sandbox |
-| [Caddy](https://github.com/caddyserver/caddy) | ![stars](https://img.shields.io/github/stars/caddyserver/caddy?style=flat) | Optional HTTPS edge |
-| [Docker Compose](https://github.com/docker/compose) | ![stars](https://img.shields.io/github/stars/docker/compose?style=flat) | Running it all |
+`git pull` brings new pins ([published images](docs/operations/upgrade.md) explains the tags); `docker compose pull` fetches them; bootstrap reuses the recorded selection, recreates what changed and waits for readiness. When the release notes name a migration that takes exclusive locks, stop the server first as [health](docs/operations/health.md#scheduled-retention) describes. An installation that ran the version 1 status timer retires it once with `scripts/retire-status-timer.sh` ([public status](docs/operations/health.md#public-status)); one that ran the internal gateway behind Edge follows [upgrading from the internal gateway](docs/operations/ingress.md#upgrading-from-the-internal-gateway).
+
+## Day two
+
+- [Agent client setup](skills/backplane/references/client-setup.md)
+- [Access setup: modes, browser origin, certificates](docs/operations/ingress.md)
+- [Operational health, metrics and public status](docs/operations/health.md)
+- [Backup, restore and the drill](infra/backup/README.md)
+- [Bootstrap and enrollment](infra/bootstrap/README.md)
+- [Published images and pins](docs/operations/upgrade.md)
+- [Runtime logs](docs/operations/logging.md), [host capacity](docs/operations/capacity.md)
+- [Design](docs/DESIGN.md), [vocabulary](CONTEXT.md), [decisions](docs/adr/)
 
 ## The other stacks
 
 This is one of four repos that deploy the same way and work together on one host:
 
 - [llm-gateway-stack](https://github.com/autonomiceng/llm-gateway-stack): one URL and one key per agent for every model, with a trace per call.
-- [observability-stack](https://github.com/autonomiceng/observability-stack): Grafana, Loki, Tempo and Mimir. Can collect this stack's journal logs, and its metrics when you set an operations token. Collection is optional; see [logging](docs/operations/logging.md).
+- [observability-stack](https://github.com/autonomiceng/observability-stack): Grafana, Loki, Tempo and Mimir. Collects this stack's journal logs, and its metrics when you set an operations token; see [logging](docs/operations/logging.md).
 - [platform-edge](https://github.com/autonomiceng/platform-edge): one Caddy for ports 80 and 443 when more than one stack shares a host.
 
 Each runs alone. Shared conventions live in [docs/conventions.md](docs/conventions.md), vendored from platform-edge.
 
-## Day two
-
-- [Agent client setup](skills/backplane/references/client-setup.md)
-- [Browser URLs and HTTPS](docs/operations/ingress.md)
-- [Backup, restore and the drill](infra/backup/README.md)
-- [Bootstrap and recovery](infra/bootstrap/README.md)
-- [Design](docs/DESIGN.md), [vocabulary](CONTEXT.md), [decisions](docs/adr/)
-
 ## Development
 
 ```sh
-bun run check   # typecheck, lint, generated-contract drift, dashboard build
+bun run check   # typecheck, lint, generated-contract drift, conventions, dashboard build
 bun run test    # tests against a real embedded Postgres
 bun run test:examples  # examples/, outside the default suite
+python3 -m unittest discover -s tests -p 'test_bootstrap*.py'  # bootstrap, fake runner
 docker compose --env-file .env config -q  # after bootstrap creates .env
 docker compose --env-file .env -f compose.yaml -f compose.dev.yaml build  # server image from this checkout
 ```
@@ -107,7 +125,7 @@ For host development, pass the cluster-owner URL only to migration:
 `BP_ADMIN_DATABASE_URL=postgres://postgres:YOUR_PASSWORD@localhost:5432/backplane bun run migrate`.
 Set `BP_DATABASE_URL` to the separate `bp_server` login before `bun run dev`.
 
-CI runs both Bun gates, the bootstrap unit tests and a bootstrap dry run, and builds the server image on every push and pull request. See [CONTRIBUTING.md](CONTRIBUTING.md).
+CI runs both Bun gates, the bootstrap unit tests and a bootstrap dry run, the storage acceptance scripts, both image builds with the workerd gates, and both backup drills on every push and pull request. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Security
 

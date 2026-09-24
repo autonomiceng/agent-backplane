@@ -1,5 +1,13 @@
 # Blob storage identity
 
+How the server binds to its blob store, and the fenced commands that initialize, inspect
+and reconcile it.
+
+- [New installation](#new-installation)
+- [Existing installation and crash recovery](#existing-installation-and-crash-recovery)
+- [Interrupted operations](#interrupted-operations)
+- [Identity, restore, and server ownership](#identity-restore-and-server-ownership)
+
 Startup verifies the selected store before enrollment, requests, sampling or purge.
 It writes no binding, marker or blob bytes. A separate operator command initializes,
 inspects or reconciles storage. The shared-image initialization service precedes server startup.
@@ -82,7 +90,7 @@ can reject its successful completion because it expects running or healthy
 containers. Wait for its container and require exit code zero, then repair data
 ownership, before inspection. Keep the server and ingress stopped if either step fails.
 
-`--fenced` and, for reconciliation, `--checkpoint` are explicit operator attestations. Inspection requires fencing but no checkpoint reference. The checkpoint ID
+`--fenced` and, for reconciliation, `--checkpoint` are explicit operator statements. Inspection requires fencing but no checkpoint reference. The checkpoint ID
 is a non-secret recovery reference recorded durably, not an automatically validated
 archive. Keep the completed capture and its integrity evidence. The command also
 refuses any observed `bp_server` database sessions, acquires the same advisory
@@ -145,7 +153,7 @@ identity bytes and are never considered blob objects or cleanup targets.
 S3 uses `PUT .backplane-store` with `If-None-Match: *`; a conflict must match the
 persisted intent exactly. This follows the [S3 conditional-write contract](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes.html).
 Timeouts and conflicting publication fail closed and leave the intent retryable.
-The conditional-publication guarantee is qualified for the shipped pinned RustFS
+The conditional-publication guarantee is verified for the shipped pinned RustFS
 image. A different S3 endpoint or image must pass the competing-database publication
 gate and prove that conditional overwrites return 412 before initialization. A losing
 fresh database remains verifying; recreate that disposable database or restore its
