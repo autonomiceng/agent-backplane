@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { readConfig } from "../../apps/server/platform/config.ts";
@@ -79,10 +79,24 @@ test("compose publishes only the expected loopback ports", async () => {
   ]);
 });
 
-test("proxy uses the gateway origin on core HTTP without a standalone edge", async () => {
+test("proxy mode is core behind Platform Edge: no Caddy overlay and no gateway file set", async () => {
   const settings = { BP_ACCESS_MODE: "proxy", BP_PUBLIC_URL: "https://backplane.example.com" };
+  const files = (await readdir(root)).filter(name => /^compose.*\.ya?ml$/.test(name)).sort();
+  expect(files).toEqual(["compose.blobs.yaml", "compose.compute.yaml", "compose.dev.yaml", "compose.edge.yaml", "compose.enroll.yaml", "compose.yaml"]);
   const proxy = await config([], undefined, Object.entries(settings).map(([key, value]) => `${key}=${value}`));
   expect(proxy.services.edge).toBeUndefined();
+  expect(Object.keys(proxy.services).sort()).toEqual(["migrate", "postgres", "server", "storage-init"]);
+  const everything = await config(["compose.blobs.yaml", "compose.compute.yaml", "compose.edge.yaml"], "*", [
+    ...Object.entries(settings).map(([key, value]) => `${key}=${value}`),
+    "BP_RUSTFS_ROOT_USER=fixture", "BP_RUSTFS_ROOT_PASSWORD=fixture", "BP_BLOB_S3_ACCESS_KEY=fixture", "BP_BLOB_S3_SECRET_KEY=fixture", "BP_COMPUTE_TOKEN=fixture",
+  ]);
+  // The standalone edge is the only Caddy: loopback ports, project network only, no proxy or console settings.
+  expect(Object.keys(everything.services.edge.networks)).toEqual(["default"]);
+  expect(Object.keys(everything.services.edge.environment).sort()).toEqual(["BP_ACCESS_MODE", "BP_EDGE_HOST", "BP_PUBLIC_URL"]);
+  expect(everything.services.edge.ports.map((port: { host_ip: string }) => port.host_ip)).toEqual(["127.0.0.1", "127.0.0.1"]);
+  expect(everything.services.rustfs.environment.RUSTFS_CONSOLE_ENABLE).toBe("true");
+  expect(Object.keys(everything.services.rustfs.networks)).toEqual(["blob-internal"]);
+  expect(JSON.stringify(everything)).not.toMatch(/bp-gateway|TRUSTED_PROXIES|RUSTFS_CONSOLE_ALLOW|BP_RUSTFS_URL|BP_RUSTFS_HOST|BP_RUSTFS_AUTHORITY/);
   expect(proxy.services.server.environment.BP_ACCESS_MODE).toBe("proxy");
   expect(proxy.services.server.environment.BP_PUBLIC_URL).toBe(settings.BP_PUBLIC_URL);
   expect(proxy.services.server.environment.BP_PORT).toBe("3000");
@@ -107,17 +121,7 @@ test("every merged service uses journald without a Docker file cache or Alloy de
   expect(rendered.services.rustfs.environment.RUSTFS_OBS_LOG_DIRECTORY).toBe("");
 });
 
- test("internal gateway retains routing without publishing host ports", async () => {
-  const rendered = await config(["compose.gateway.yaml"], "gateway", ["BP_ACCESS_MODE=proxy", "BP_PUBLIC_URL=https://backplane.example.com"]);
-  expect(rendered.services.edge.ports ?? []).toEqual([]);
-  expect(rendered.services.edge.environment.BP_ACCESS_MODE).toBe("proxy");
-  expect(rendered.services.edge.networks.platform.aliases).toEqual(["bp-gateway"]);
-  expect(rendered.services.edge.logging).toEqual({ driver: "journald", options: { "cache-disabled": "true" } });
-  expect(rendered.services.postgres.networks.platform).toBeUndefined();
-});
-
-
-test("bare Compose defaults to published digest-pinned images; only the development overlay builds", async () => {
+ test("bare Compose defaults to published digest-pinned images; only the development overlay builds", async () => {
   const blobs = ["BP_RUSTFS_ROOT_USER=fixture", "BP_RUSTFS_ROOT_PASSWORD=fixture", "BP_BLOB_S3_ACCESS_KEY=fixture", "BP_BLOB_S3_SECRET_KEY=fixture", "BP_COMPUTE_TOKEN=fixture"];
   const published = await config(["compose.blobs.yaml", "compose.compute.yaml"], "*", blobs);
   const server = /^ghcr\.io\/autonomiceng\/agent-backplane-server:[\w.-]+@sha256:[a-f0-9]{64}$/;
@@ -180,7 +184,7 @@ test("bare Compose preserves explicit workerd image selection", async () => {
 });
 
 test("workerd shares only the compute network, and only with the server", async () => {
-  const rendered = await config(["compose.blobs.yaml", "compose.compute.yaml", "compose.gateway.yaml", "compose.dev.yaml"], "*", [
+  const rendered = await config(["compose.blobs.yaml", "compose.compute.yaml", "compose.dev.yaml"], "*", [
     "BP_ACCESS_MODE=proxy", "BP_PUBLIC_URL=https://backplane.example.com",
     "BP_RUSTFS_ROOT_USER=fixture", "BP_RUSTFS_ROOT_PASSWORD=fixture",
     "BP_BLOB_S3_ACCESS_KEY=fixture", "BP_BLOB_S3_SECRET_KEY=fixture", "BP_COMPUTE_TOKEN=fixture",
@@ -204,8 +208,8 @@ test("enrollment runs the CLI from the server image on the host network without 
 });
 
 test("the server receives every configured image reference and Caddy proxies /status.json to it", async () => {
-  const rendered = await config(["compose.blobs.yaml", "compose.compute.yaml", "compose.gateway.yaml"], "*", [
-    "BP_ACCESS_MODE=proxy", "BP_PUBLIC_URL=https://backplane.example.com",
+  const rendered = await config(["compose.blobs.yaml", "compose.compute.yaml", "compose.edge.yaml"], "*", [
+    ...publicSettings,
     "BP_RUSTFS_ROOT_USER=fixture", "BP_RUSTFS_ROOT_PASSWORD=fixture", "BP_BLOB_S3_ACCESS_KEY=fixture", "BP_BLOB_S3_SECRET_KEY=fixture", "BP_COMPUTE_TOKEN=fixture",
   ]);
   const environment = rendered.services.server.environment;
@@ -227,12 +231,14 @@ test("the server receives every configured image reference and Caddy proxies /st
   expect(dev.services.server.environment.BP_SERVER_IMAGE).toBe(dev.services.server.image);
   expect(dev.services.server.environment.BP_WORKERD_IMAGE).toBe(dev.services.workerd.image);
 
-  const adapt = Bun.spawn(["docker", "run", "--rm", "-e", "BP_ACCESS_MODE=proxy", "-e", "BP_TRUSTED_PROXIES=172.30.0.2/32",
+  const adapt = Bun.spawn(["docker", "run", "--rm", "-e", "BP_ACCESS_MODE=local", "-e", "BP_EDGE_HOST=backplane.example.com", "-e", "BP_PUBLIC_URL=http://localhost",
     "-v", `${join(root, "infra/compose/Caddyfile")}:/etc/caddy/Caddyfile:ro`, standalone.services.edge.image, "caddy", "adapt", "--config", "/etc/caddy/Caddyfile"],
     { stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, code] = await Promise.all([new Response(adapt.stdout).text(), new Response(adapt.stderr).text(), adapt.exited]);
   expect(code, stderr).toBe(0);
-  const routes = JSON.parse(stdout).apps.http.servers.srv0.routes;
+  const servers = JSON.parse(stdout).apps.http.servers;
+  expect(JSON.stringify(servers)).not.toContain("trusted_proxies");
+  const routes = Object.values(servers as Record<string, { listen: string[]; routes: never[] }>).find(server => server.listen.includes(":80"))!.routes;
   type Route = { match?: { path?: string[] }[]; handle?: { routes?: Route[] }[] };
   const find = (list: Route[], path: string): Route | undefined => {
     for (const route of list) {

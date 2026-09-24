@@ -30,3 +30,12 @@ outside the Platform Network's dynamic range. `BP_TRUSTED_PROXIES` now defaults 
 address dynamically, so without Edge the default trusts no present peer. Preparation
 refuses a dynamic range that contains a trusted IPv4 proxy. The server's forwarded-header
 stripping is unchanged.
+
+Amended 2026-09-24: The internal gateway behind Platform Edge is removed. In proxy mode
+ingress reaches the server directly at `bp-server:3000`; the server keeps stripping every
+forwarded header and authenticates on its configured origin, so the trust boundary is
+unchanged and `BP_TRUSTED_PROXIES` no longer exists. The native RustFS console is no longer
+published through Caddy; it listens on the internal blob network only and an operator reaches
+it for a session over the host (docs/operations/ingress.md). The standalone `edge` profile
+keeps its listeners and trusts no proxy. Bootstrap still refuses a dynamic range containing
+Edge's reserved address, now as a Platform Network contract rather than a proxy trust rule.

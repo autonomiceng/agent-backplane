@@ -21,7 +21,6 @@ jobs:
       - run: bun run check
       - run: python3 -m unittest discover -s tests -p 'test_bootstrap*.py'
       - run: python3 scripts/bootstrap.py --dry-run --capability-file /tmp/cap
-      - run: python3 tests/acceptance/rustfs-console.py
       # Tests start embedded PostgreSQL; no service container is needed.
       # Host rollout acceptance stays separate; the isolated storage/runtime gates run below.
       - run: bun run test
