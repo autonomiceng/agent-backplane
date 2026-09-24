@@ -123,7 +123,7 @@ import checkpoint as cp
 root = tempfile.TemporaryDirectory()
 p = Path(root.name)
 refs = {'postgres':'pg:experiment', 'server':'server:local', 'edge':'caddy:experiment',
-        'backup-init':'pg:experiment', 'migrate':'server:local', 'data-init':'server:local', 'storage-init':'server:local'}
+        'migrate':'server:local', 'storage-init':'server:local'}
 ids = {'pg:experiment':'sha256:pg', 'server:local':'sha256:server', 'caddy:experiment':'sha256:edge'}
 digests = {'pg:experiment':'pg@sha256:'+'a'*64, 'caddy:experiment':'caddy@sha256:'+'b'*64}
 ids.update({digest:ids[ref] for ref,digest in digests.items()})
@@ -169,16 +169,16 @@ drift = 'postgres'
 refused('container differs')
 drift = None
 running = False
-services['data-init']['image'] = 'helper:other'; ids['helper:other'] = 'sha256:other'
+services['migrate']['image'] = 'helper:other'; ids['helper:other'] = 'sha256:other'
 refused('helper must use the same content')
-services['data-init']['image'] = refs['data-init']
+services['migrate']['image'] = refs['migrate']
 saved = digests.pop('pg:experiment')
 refused('no verified RepoDigest')
 digests['pg:experiment'] = saved
 stack = cp.Stack(p/'.env')
 assert stack.images['postgres']['reference'] == 'pg:experiment'
 assert stack.images['postgres']['recoveryReference'] == saved
-assert stack.images['data-init']['id'] == stack.images['server']['id']
+assert stack.images['migrate']['id'] == stack.images['server']['id']
 running = True
 drift = 'postgres'
 try: cp.backup(stack)
@@ -230,8 +230,7 @@ for service in ('postgres','edge'):
  services[service]['image'] = ref
  recorded[service] = {'reference':ref, 'id':recorded[service]['id']}
  digests[ref] = ref
-services['backup-init']['image'] = services['postgres']['image']
-for helper in ('backup-init','migrate','data-init'): del recorded[helper]
+del recorded['migrate']
 (p/'manifest.json').write_text(json.dumps({'images':recorded,'artifacts':{}}))
 cp.Stack(p/'.env', p)
 root.cleanup()
@@ -442,9 +441,9 @@ else: raise AssertionError('credential refusal ignored')
 });
 
 const s3Fixture = imageFixture + `
-refs.update({'rustfs':'rustfs/rustfs:1.0.0@'+cp.RUSTFS_DIGEST, 'blob-bootstrap':'server:local', 'blob-image-check':'server:local'})
+refs.update({'rustfs':'rustfs/rustfs:1.0.0@'+cp.RUSTFS_DIGEST, 'blob-bootstrap':'server:local'})
 ids[refs['rustfs']]='sha256:rustfs'; digests[refs['rustfs']]=refs['rustfs']
-services.update({name:{'image':refs[name]} for name in ('rustfs','blob-bootstrap','blob-image-check')})
+services.update({name:{'image':refs[name]} for name in ('rustfs','blob-bootstrap')})
 selection={'BP_BLOB_BACKEND':'s3','BP_BLOB_S3_ENDPOINT':'http://rustfs:9000','BP_BLOB_S3_REGION':'us-east-1',
  'BP_BLOB_S3_BUCKET':'private-bucket','BP_BLOB_S3_ACCESS_KEY':'scoped','BP_BLOB_S3_SECRET_KEY':'private-scoped-secret'}
 services['server']['environment']={**selection,'BP_DATABASE_URL':'postgres://bp_server:secret@postgres:5432/backplane'}
@@ -476,8 +475,7 @@ test("independent bootstrap images require immutable custody and recover without
   await python(s3Fixture + `
 stack=cp.Stack(p/'.env')
 assert 'recoveryReference' not in stack.images['blob-bootstrap']
-for name in ('blob-bootstrap','blob-image-check'):
- refs[name]='bootstrap:custom'; services[name]['image']=refs[name]
+refs['blob-bootstrap']='bootstrap:custom'; services['blob-bootstrap']['image']=refs['blob-bootstrap']
 ids['bootstrap:custom']='sha256:independent'
 try: cp.Stack(p/'.env')
 except ValueError as error: assert 'no verified RepoDigest' in str(error)

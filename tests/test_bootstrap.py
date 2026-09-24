@@ -225,6 +225,19 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(plan["warnings"], [])
         self.assertEqual(plan["backupDir"], str(self.backup), "the default backup directory is created on the real run")
 
+    def test_malformed_blob_image_reference_is_refused_before_docker(self):
+        for line in ("BP_RUSTFS_IMAGE='rustfs/rustfs latest'\n", "BP_BLOB_BOOTSTRAP_IMAGE='-helper:1'\n", "BP_SERVER_IMAGE='server:1;x'\n"):
+            self.env.write_text(line)
+            runner = runner_with()
+            with self.assertRaises(bootstrap.Refused, msg=line) as refused:
+                self.bootstrap(runner=runner, profiles=("blobs",))
+            self.assertEqual(refused.exception.code, "image_reference_invalid")
+            self.assertIn(line.split("=")[0], refused.exception.detail)
+            self.assertEqual(runner.calls, [], "the refusal precedes every Docker call")
+        self.env.write_text(f"BP_RUSTFS_IMAGE=registry.example:5000/rustfs@sha256:{'a' * 64}\nBP_BLOB_BOOTSTRAP_IMAGE=helper:local\n")
+        code, _, _ = self.bootstrap(profiles=("blobs",))
+        self.assertEqual(code, 0)
+
     def test_missing_secret_over_existing_installation_state_is_refused(self):
         code, _, _ = self.bootstrap()
         self.assertEqual(code, 0)

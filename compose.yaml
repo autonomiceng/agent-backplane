@@ -8,22 +8,11 @@ x-logging: &logging
     cache-disabled: "true"
 
 services:
-  backup-init:
-    image: &postgres-image ${BP_POSTGRES_IMAGE:-postgres:18.6@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280}
-    user: "0:0"
-    restart: "no"
-    logging: *logging
-    entrypoint: ["/bin/sh", "-ec"]
-    command:
-      - mkdir -p /backup/archive /backup/backups && chown postgres:postgres /backup/archive /backup/backups
-    volumes:
-      - ${BP_BACKUP_DIR:?set BP_BACKUP_DIR to an encrypted off-host repository mount}:/backup
-
   postgres:
-    depends_on:
-      backup-init:
-        condition: service_completed_successfully
-    image: *postgres-image
+    image: &postgres-image ${BP_POSTGRES_IMAGE:-postgres:18.6@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280}
+    # The image entrypoint starts as root and drops to postgres itself; first it gives archive.sh
+    # its archive directory. An existing backups directory keeps the owner Checkpoint capture set.
+    entrypoint: ["sh", "-ec", "mkdir -p /backup/archive && chown postgres:postgres /backup/archive && if [ ! -d /backup/backups ]; then mkdir /backup/backups && chown postgres:postgres /backup/backups; fi && exec docker-entrypoint.sh \"$$@\"", "postgres"]
     restart: unless-stopped
     logging: *logging
     mem_limit: 4g
@@ -59,7 +48,7 @@ services:
 
   migrate:
     # Published by .github/workflows/publish.yml; compose.dev.yaml builds this checkout instead.
-    image: &server-image ${BP_SERVER_IMAGE:-ghcr.io/autonomiceng/agent-backplane-server:main-f59d65f@sha256:93eb37b3810c7affc59d6ca38a0598da119f4ba8e51aaf1856f01354f99d4f1d}
+    image: &server-image ${BP_SERVER_IMAGE:-ghcr.io/autonomiceng/agent-backplane-server:main-c628063@sha256:2b94e6494f1f16d1a957323a79415fe0f5e3ad67d38ecfef8275f8e2efb962a4}
     restart: "no"
     logging: *logging
     command: ["bun", "db/migrate-cli.ts"]
@@ -69,25 +58,17 @@ services:
     environment:
       BP_ADMIN_DATABASE_URL: postgres://postgres:${BP_POSTGRES_ADMIN_PASSWORD:?generate with scripts/bootstrap.py}@postgres:5432/backplane
 
-  data-init:
-    image: *server-image
-    user: "0:0"
-    restart: "no"
-    logging: *logging
-    network_mode: none
-    command: ["sh", "-ec", "chown -R bun:bun /data"]
-    volumes:
-      - server-data:/data
-
   storage-init:
     image: *server-image
     restart: "no"
     logging: *logging
+    # Root only to give bun the server data (fresh, restored or written by a root helper), then
+    # setpriv from the Debian base drops to bun. The server starts after this completes.
+    user: "0:0"
+    entrypoint: ["sh", "-ec", "chown -R bun:bun /data; exec setpriv --reuid=bun --regid=bun --init-groups -- \"$$@\"", "storage-init"]
     command: ["bun", "apps/server/blobs/storage-admin.ts", "initialize"]
     depends_on:
       migrate:
-        condition: service_completed_successfully
-      data-init:
         condition: service_completed_successfully
     environment:
       BP_ADMIN_DATABASE_URL: postgres://postgres:${BP_POSTGRES_ADMIN_PASSWORD:?generate with scripts/bootstrap.py}@postgres:5432/backplane
@@ -103,8 +84,6 @@ services:
       postgres:
         condition: service_healthy
       migrate:
-        condition: service_completed_successfully
-      data-init:
         condition: service_completed_successfully
     restart: unless-stopped
     logging: *logging

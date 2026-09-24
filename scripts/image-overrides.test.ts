@@ -39,8 +39,8 @@ test("native image defaults survive empty settings and accept complete reference
 
 test("helpers inherit server and PostgreSQL references including the internal gateway", async () => {
   const services = await config(["BP_POSTGRES_IMAGE=pg-local", "BP_SERVER_IMAGE=server-local", "BP_CADDY_IMAGE=caddy-local"], ["gateway", "blobs"]);
-  expect(services["backup-init"].image).toBe(services.postgres.image);
-  for (const name of ["migrate", "data-init", "storage-init", "blob-bootstrap", "blob-image-check"]) expect(services[name].image).toBe(services.server.image);
+  expect(services.postgres.image).toBe("pg-local");
+  for (const name of ["migrate", "storage-init", "blob-bootstrap"]) expect(services[name].image).toBe(services.server.image);
   expect(services.edge.image).toBe("caddy-local");
   expect(services["blob-bootstrap"].environment.BP_BLOB_BOOTSTRAP_IMAGE).toBe("server-local");
 });
@@ -54,7 +54,6 @@ test("blob declarations follow overrides and compute separates image reference f
   expect(services.rustfs.image).toBe("rustfs-local");
   expect(services["blob-bootstrap"].environment.BP_RUSTFS_IMAGE).toBe("rustfs-local");
   expect(services["blob-bootstrap"].image).toBe("helper-experiment");
-  expect(services["blob-image-check"].image).toBe("helper-experiment");
   expect(services.workerd.image).toBe("workerd-local");
   expect(services.server.environment.BP_WORKERD_RUNTIME_ID).toBe(`workerd-binary-sha256:${"c".repeat(64)}`);
   expect(services.workerd.pull_policy).toBeUndefined();

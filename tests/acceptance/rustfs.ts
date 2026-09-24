@@ -302,7 +302,6 @@ async function orchestrate() {
   const postgresImage: string = JSON.parse(core.out).services.postgres.image;
   const override = join(scratch, "acceptance.yaml");
   await Bun.write(override, JSON.stringify({ services: {
-    "backup-init": { volumes: ["acceptance-backup:/backup"] },
     postgres: { volumes: ["acceptance-backup:/backup", "restored-data:/recovery"] },
     server: { volumes: ["acceptance-backup:/backups:ro"] },
     "restored-postgres": { image: postgresImage, profiles: ["recovery"],

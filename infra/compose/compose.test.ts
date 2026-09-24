@@ -122,19 +122,36 @@ test("bare Compose defaults to published digest-pinned images; only the developm
   const published = await config(["compose.blobs.yaml", "compose.compute.yaml"], "*", blobs);
   const server = /^ghcr\.io\/autonomiceng\/agent-backplane-server:[\w.-]+@sha256:[a-f0-9]{64}$/;
   expect(published.services.server.image).toMatch(server);
-  for (const name of ["migrate", "data-init", "storage-init", "blob-image-check", "blob-bootstrap"]) expect(published.services[name].image).toBe(published.services.server.image);
+  for (const name of ["migrate", "storage-init", "blob-bootstrap"]) expect(published.services[name].image).toBe(published.services.server.image);
   expect(published.services["blob-bootstrap"].environment.BP_BLOB_BOOTSTRAP_IMAGE).toBe(published.services.server.image);
   expect(published.services.workerd.image).toMatch(/^ghcr\.io\/autonomiceng\/agent-backplane-workerd:[\w.-]+@sha256:[a-f0-9]{64}$/);
   expect(JSON.stringify(published.services)).not.toMatch(/"(build|pull_policy)":/);
   const dev = await config(["compose.blobs.yaml", "compose.compute.yaml", "compose.dev.yaml"], "*", blobs);
-  for (const name of ["migrate", "data-init", "storage-init", "server"]) expect(dev.services[name]).toMatchObject({ image: "agent-backplane-server:local",
+  for (const name of ["migrate", "storage-init", "server"]) expect(dev.services[name]).toMatchObject({ image: "agent-backplane-server:local",
     build: { context: root, dockerfile: "infra/compose/server.Dockerfile" } });
-  for (const name of ["blob-image-check", "blob-bootstrap"]) expect(dev.services[name].image).toBe("agent-backplane-server:local");
+  expect(dev.services["blob-bootstrap"].image).toBe("agent-backplane-server:local");
   expect(dev.services["blob-bootstrap"].environment.BP_BLOB_BOOTSTRAP_IMAGE).toBe("agent-backplane-server:local");
   expect(dev.services.workerd).toMatchObject({ image: "agent-backplane-workerd:local", platform: "linux/amd64",
     build: { context: join(root, "infra/compute/image") }, environment: { BP_WORKERD_IMAGE: "agent-backplane-workerd:local" } });
   const operator = await config(["compose.dev.yaml"], undefined, ["BP_SERVER_IMAGE=server:operator"]);
   expect(operator.services.server.image).toBe("server:operator");
+});
+
+test("only migrate, storage-init and blob-bootstrap run once before the server; postgres and storage-init prepare their own mounts", async () => {
+  const core = await config();
+  expect(Object.keys(core.services).sort()).toEqual(["migrate", "postgres", "server", "storage-init"]);
+  const blobs = await config(["compose.blobs.yaml"], "blobs", ["BP_RUSTFS_ROOT_USER=fixture", "BP_RUSTFS_ROOT_PASSWORD=fixture", "BP_BLOB_S3_ACCESS_KEY=fixture", "BP_BLOB_S3_SECRET_KEY=fixture"]);
+  expect(Object.keys(blobs.services).sort()).toEqual(["blob-bootstrap", "migrate", "postgres", "rustfs", "server", "storage-init"]);
+  expect(Object.keys(blobs.services.server.depends_on).sort()).toEqual(["blob-bootstrap", "migrate", "postgres", "storage-init"]);
+  expect(blobs.services.postgres.depends_on).toBeUndefined();
+  expect(blobs.services.postgres.entrypoint.slice(0, 2)).toEqual(["sh", "-ec"]);
+  expect(blobs.services.postgres.entrypoint[2]).toBe("mkdir -p /backup/archive && chown postgres:postgres /backup/archive && "
+    + "if [ ! -d /backup/backups ]; then mkdir /backup/backups && chown postgres:postgres /backup/backups; fi && exec docker-entrypoint.sh \"$$@\"");
+  expect(blobs.services.rustfs.depends_on).toBeUndefined();
+  expect(blobs.services["storage-init"]).toMatchObject({ user: "0:0", command: ["bun", "apps/server/blobs/storage-admin.ts", "initialize"] });
+  expect(blobs.services["storage-init"].entrypoint.slice(0, 2)).toEqual(["sh", "-ec"]);
+  expect(blobs.services["storage-init"].entrypoint[2]).toMatch(/^chown -R bun:bun \/data; exec setpriv --reuid=bun --regid=bun --init-groups -- /);
+  for (const name of ["postgres", "migrate", "server", "rustfs", "blob-bootstrap"]) expect(blobs.services[name].user).toBeUndefined();
 });
 
 test("bare Compose preserves explicit workerd image selection", async () => {

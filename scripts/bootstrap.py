@@ -62,6 +62,7 @@ NAME_LINE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)")
 ASSIGNMENT = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
 DNS_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$", re.IGNORECASE)
 SAFE_NAME = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]*$")
+IMAGE_REFERENCE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/:@-]*")
 # Verified upstream amd64 workerd executable and the pinned Bun supervisor, by architecture.
 WORKERD_BINARY = "f31da6d248028d698806aa93d1b3aec28bbd4b4b7ddc31e967408ab6406fa5aa"
 WORKERD_VERSION = "workerd 2026-09-18"
@@ -445,7 +446,7 @@ def verify_workerd_image(entries: dict[str, str], env: dict[str, str], runner: R
         raise Refused("workerd_legacy_identity_requires_migration", "replace BP_WORKERD_REPOSITORY/BP_WORKERD_DIGEST with BP_WORKERD_IMAGE")
     reference = entries.get("BP_WORKERD_IMAGE") or published
     binary = entries.get("BP_WORKERD_BINARY_SHA256") or WORKERD_BINARY
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/:@-]*", reference) or not re.fullmatch(r"[0-9a-f]{64}", binary):
+    if not IMAGE_REFERENCE.fullmatch(reference) or not re.fullmatch(r"[0-9a-f]{64}", binary):
         raise Refused("workerd_identity_invalid", "BP_WORKERD_IMAGE must be an image reference and BP_WORKERD_BINARY_SHA256 a SHA-256 hex digest")
     if pull_default:
         if binary != WORKERD_BINARY:
@@ -727,6 +728,10 @@ def settings(env: EnvFile, args, selection: dict) -> dict:
     for key, value in (("BP_RUSTFS_URL_HOST", console["urlHost"]), ("BP_RUSTFS_AUTHORITY", console["authority"])):
         if entries.get(key) != value:
             env.save(key, value)
+    # The blob helper runs BP_BLOB_BOOTSTRAP_IMAGE, or BP_SERVER_IMAGE when that is empty.
+    for key in ("BP_RUSTFS_IMAGE", "BP_BLOB_BOOTSTRAP_IMAGE", "BP_SERVER_IMAGE"):
+        if key in entries and not IMAGE_REFERENCE.fullmatch(entries[key]):
+            raise Refused("image_reference_invalid", f"{key} must be a complete image reference")
     network, prefix = entries.get("BP_PLATFORM_NETWORK") or NETWORK, entries.get("BP_VOLUME_PREFIX") or PROJECT
     if not SAFE_NAME.match(network):
         raise Refused("invalid_platform_network", "BP_PLATFORM_NETWORK must be a Docker network name")
@@ -771,7 +776,7 @@ def prepare(args, env_file: Path, template: Path, explicit: list[str] | None, ru
     entries, profiles, files, project = env.entries, selection["profiles"], selection["files"], selection["project"]
     backup = Path(entries["BP_BACKUP_DIR"])
     if backup == env_file.parent / "backups":
-        # Postgres and the server traverse it as their own users; backup-init owns the leaves.
+        # Postgres and the server traverse it as their own users; the postgres entrypoint owns the leaves.
         backup.mkdir(mode=0o755, exist_ok=True)
     if not backup.is_dir():
         raise Refused("backup_directory_required", f"{backup} does not exist; mount it or pass --backup-dir, the server reads Checkpoints from it")

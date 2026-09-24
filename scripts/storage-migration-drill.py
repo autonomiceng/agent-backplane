@@ -86,7 +86,7 @@ def drill():
         request(base + '/sql', dict(statement="INSERT INTO migration_proof VALUES (1, 'preserved')", params=[]))
         source.dc('stop', 'server')
         retained = '/data/blobs/' + enrolled['workspaceId'] + '/' + str(uuid.uuid4()) + '.stage'
-        source.dc('run', '--rm', '--no-deps', '--entrypoint', 'bun', 'storage-init', '-e',
+        source.dc('run', '--rm', '--no-deps', '--user', 'bun', '--entrypoint', 'bun', 'storage-init', '-e',
                   "await Bun.write(process.argv[1],'retained staging'); await import('node:fs/promises').then(fs=>fs.chmod(process.argv[1],0o600))", retained)
         from checkpoint import storage_admin
         storage_admin(source, 'reconcile', '--fenced', '--checkpoint', 'drill-retention', '--retain-unreferenced')
