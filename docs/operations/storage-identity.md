@@ -1,5 +1,13 @@
 # Blob storage identity
 
+How the server binds to its blob store, and the fenced commands that initialize, inspect
+and reconcile it.
+
+- [New installation](#new-installation)
+- [Existing installation and crash recovery](#existing-installation-and-crash-recovery)
+- [Interrupted operations](#interrupted-operations)
+- [Identity, restore, and server ownership](#identity-restore-and-server-ownership)
+
 Startup verifies the selected store before enrollment, requests, sampling or purge.
 It writes no binding, marker or blob bytes. A separate operator command initializes,
 inspects or reconciles storage. The shared-image initialization service precedes server startup.
@@ -82,7 +90,7 @@ can reject its successful completion because it expects running or healthy
 containers. Wait for its container and require exit code zero, then repair data
 ownership, before inspection. Keep the server and ingress stopped if either step fails.
 
-`--fenced` and, for reconciliation, `--checkpoint` are explicit operator attestations. Inspection requires fencing but no checkpoint reference. The checkpoint ID
+`--fenced` and, for reconciliation, `--checkpoint` are explicit operator statements. Inspection requires fencing but no checkpoint reference. The checkpoint ID
 is a non-secret recovery reference recorded durably, not an automatically validated
 archive. Keep the completed capture and its integrity evidence. The command also
 refuses any observed `bp_server` database sessions, acquires the same advisory

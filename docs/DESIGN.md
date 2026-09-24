@@ -2,7 +2,24 @@
 
 A self-hosted backplane your agents attach to: schema-defined shared state, queues, approvals, and a provenance trail for every row they write.
 
-Status: implemented. Decisions with reasons live in `adr/`. Vocabulary lives in `../CONTEXT.md`. This document is the map.
+Status: implemented. Decisions with reasons live in [adr/](adr/). Vocabulary lives in
+[CONTEXT.md](../CONTEXT.md). This document is the map; the runbooks hold the procedures.
+
+- [Why it exists](#why-it-exists)
+- [Guarantees, stated exactly](#guarantees-stated-exactly)
+- [Shape](#shape)
+- [Tenancy and identity](#tenancy-and-identity)
+- [Provenance](#provenance)
+- [Schema management](#schema-management)
+- [Queues and handoffs](#queues-and-handoffs)
+- [Approvals](#approvals)
+- [Realtime](#realtime)
+- [Agent surfaces](#agent-surfaces)
+- [Dashboard](#dashboard)
+- [Files and Functions](#files-and-functions-selectable-overlays-experimental)
+- [Operations](#operations)
+- [Stack](#stack)
+- [Explicitly not built in v1](#explicitly-not-built-in-v1)
 
 ## Why it exists
 

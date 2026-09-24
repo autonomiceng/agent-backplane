@@ -1,5 +1,13 @@
 # Backup and recovery
 
+Fenced Checkpoints of PostgreSQL, WAL, server data and the optional stores; restore into
+empty volumes; the drill, retention and upgrade notes.
+
+- [Restore into empty volumes](#restore-into-empty-volumes)
+- [Drill and retention](#drill-and-retention)
+- [RustFS S3 overlay](#rustfs-s3-overlay)
+- [Upgrades](#upgrades)
+
 Use the Compose-aware scripts at the repository root. They require Docker Compose,
 Python 3 and the checked-out repository; PostgreSQL binaries run inside the verified
 PostgreSQL container. `infra/backup/archive.sh` remains the continuous WAL archive
@@ -60,7 +68,7 @@ Export `COMPOSE_FILE=compose.yaml:compose.edge.yaml` and `COMPOSE_PROFILES=edge`
 when the edge overlay is enabled; use the same overlay/profile settings for
 backup and restore. `COMPOSE_PROJECT_NAME` selects the project. Every active
 durable service must be running. Optional compute holds no durable local state.
-The shipped local single-volume RustFS layout is also supported with `COMPOSE_FILE=compose.yaml:compose.blobs.yaml` and `COMPOSE_PROFILES=blobs`; use the same selection during capture and restore. Other S3 layouts refuse. `--fenced` attests that external writers and mutating helpers remain excluded for the entire command.
+The shipped local single-volume RustFS layout is also supported with `COMPOSE_FILE=compose.yaml:compose.blobs.yaml` and `COMPOSE_PROFILES=blobs`; use the same selection during capture and restore. Other S3 layouts refuse. `--fenced` is your statement that external writers and mutating helpers stay excluded for the entire command.
 
 The checkpoint fences writes by stopping edge (when present) and server, including
 its retention and blob cleanup workers. It takes a PostgreSQL base backup and
@@ -74,14 +82,14 @@ have no manifest and cannot be restored. Archive and filesystem errors fail clos
 Capture compares configured image references with container content IDs, including migration and initialization helpers. PostgreSQL and Caddy need locally verified immutable references; an override without one is refused before fencing. Publish and pull that exact image, or select a reproducible image and reconcile the running deployment before retrying. PostgreSQL recovery requires version 18 and its existing data layout. The manifest keeps configured references, observed IDs and immutable recovery references separately; resolved environments remain private. The server archive is saved by content ID. Restore verifies recovered IDs before writing target volumes and starts with builds and pulls disabled. A mutable tag alone never establishes recovery identity. A manifest from an earlier format, without recorded helper images, storage binding or upstream recovery references, is refused with `unsupported_checkpoint_version` before any image or volume is touched; restore it with the checkout that captured it.
 
 Docker can attach RepoDigests to unpublished local builds and aliases. This proves local
-immutable identity, not publication or continued registry availability. Upstream image
-custody is separate from this data Checkpoint: retain the recorded references in a registry
+immutable identity, not publication or continued registry availability. Keeping the upstream
+images available is separate from this data Checkpoint: retain the recorded references in a registry
 or a protected archive tested on the recovery host's Docker store type and platform.
 An archive loaded as tags without the recorded immutable references is unsupported;
 verify those references and content IDs before relying on the archive. Cross-store-type
 or cross-architecture recovery is not established by a same-host roundtrip. The server
 image is included in the Checkpoint; upstream PostgreSQL/Caddy images are not. Capture
-reports the external-custody obligation for mutable upstream configurations.
+reports that obligation for mutable upstream configurations.
 
 ## Restore into empty volumes
 
@@ -262,7 +270,7 @@ and retained staging/orphan bytes. Store archives dereference hard links into
 regular entries for safe restore. Follow the [storage recovery procedure](../../docs/operations/storage-identity.md)
 before resuming the server. Offline S3 capture additionally requires RustFS running on entry, and always restores its running state after the physical capture.
 
-Compose Checkpoints require `--fenced` to attest that external writers and mutating helpers remain stopped for the entire command. Local S3 capture and fresh-store restore use the [qualified RustFS procedure](../../docs/operations/s3-checkpoints.md); unsupported S3 layouts refuse before capture.
+Compose Checkpoints require `--fenced`, your statement that external writers and mutating helpers stay stopped for the entire command. Local S3 capture and fresh-store restore use the [qualified RustFS procedure](../../docs/operations/s3-checkpoints.md); unsupported S3 layouts refuse before capture.
 
 If recovery completes but cannot publish its health receipt, the tool reports that
 separately and leaves restored Workspaces gated. Repair repository permissions or

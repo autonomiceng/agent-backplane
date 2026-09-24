@@ -54,7 +54,7 @@ Paste both blocks verbatim into every implementation delegation:
 ## Implementation brief template
 
 ```text
-SLICE <id> — <title>. Workspace: <absolute worktree path>. Branch: <name>.
+SLICE <id> - <title>. Workspace: <absolute worktree path>. Branch: <name>.
 Read first: CONTEXT.md, docs/DESIGN.md, docs/adr/<binding ADRs>, AGENTS.md "Where code lives".
 
 VALUE: <one sentence, what becomes observable>.
@@ -73,7 +73,7 @@ REPORT: deviations, commands run with counts, anything you could not verify.
 ## Review brief template
 
 ```text
-BLIND REVIEW — slice <id>, <worktree path>, diff <base>..HEAD. Read-only.
+BLIND REVIEW - slice <id>, <worktree path>, diff <base>..HEAD. Read-only.
 Mandate: refutation. Assume the green claims are wrong and try to show it.
 Re-run: <acceptance commands>, unshimmed.
 Focus: <risk path questions for this slice>.

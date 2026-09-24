@@ -1,5 +1,14 @@
 # Operational health
 
+The readiness and operations endpoints, what each signal means, the retention purge, the
+offline migration procedure and the public status document.
+
+- [Readiness and operations](#readiness-and-operations)
+- [Scheduled retention](#scheduled-retention)
+- [Public status](#public-status)
+
+## Readiness and operations
+
 `GET /health/ready` is the container readiness probe. `ready` (200) means the
 runtime role, PostgreSQL/PGMQ versions, schema and enrollment state allow the
 process to serve. `not_ready` (503) returns problem codes in `problems`. Public responses contain
