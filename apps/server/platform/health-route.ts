@@ -59,5 +59,7 @@ export function healthRoute(pool: Pool, expectedSchemaVersion: number, enrollmen
       return { enrollment: { state: result.enrollment.state }, status: result.status, problems: [...new Set(problems)] };
     },
     { response: { 200: responseSchema, 503: responseSchema }, detail: { "x-backplane-auth": "none", "x-backplane-run": "none", operationId: "healthReady", tags: ["health"] } },
-  );
+  )
+  // The server component's Status v2 health path: the same cached readiness, status only.
+  .get("/health/server", async () => new Response(null, { status: (await readiness()).status === "ready" ? 200 : 503, headers: { "cache-control": "no-store" } }), { detail: { hide: true } });
 }

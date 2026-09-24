@@ -54,7 +54,7 @@ MANAGED = set(SECRETS) | set(SELECTORS) | set(RETIRED) | {
     "BP_ALLOW_INSECURE_ORIGIN", "BP_PUBLIC_DOMAIN", "BP_PORT", "BP_BIND_HOST", "BP_HTTP_PORT", "BP_HTTPS_PORT", "BP_BACKUP_DIR",
     "BP_POSTGRES_IMAGE", "BP_SERVER_IMAGE", "BP_CADDY_IMAGE", "BP_RUSTFS_IMAGE", "BP_BLOB_BOOTSTRAP_IMAGE",
     "BP_WORKERD_REPOSITORY", "BP_WORKERD_DIGEST", "BP_WORKERD_IMAGE", "BP_WORKERD_BINARY_SHA256",
-    "BP_DATA_DIR", "BP_STATUS_DIR", "BP_PLATFORM_NETWORK", "BP_PLATFORM_SUBNET", "BP_PLATFORM_IP_RANGE", "BP_VOLUME_PREFIX",
+    "BP_DATA_DIR", "BP_PLATFORM_NETWORK", "BP_PLATFORM_SUBNET", "BP_PLATFORM_IP_RANGE", "BP_VOLUME_PREFIX",
     "BP_BACKUP_KEEP", "BP_RUSTFS_CONSOLE", "BP_RUSTFS_HOST", "BP_RUSTFS_URL", "BP_RUSTFS_URL_HOST", "BP_RUSTFS_AUTHORITY",
     "BP_RUSTFS_CONSOLE_ALLOW", "BP_TRUSTED_PROXIES",
 }
@@ -71,7 +71,6 @@ SUPERVISOR_BINARIES = {
 }
 SUPERVISOR_VERSION = "1.4.2"
 CAPABILITY_PATH = "/data/enrollment/capability"
-STATUS_DIAGNOSTICS = ("status_path_unsafe", "status_path_unavailable", "status_record_invalid", "status_selection_mismatch")
 NOT_READY = ("not_ready", "compose_up_failed", "selected_capabilities_not_ready")
 # Parsed subprocess output (compose config JSON) and the diagnostic tail kept from stderr.
 OUTPUT_LIMIT = 4 * 1024 * 1024
@@ -440,13 +439,6 @@ def installation_state(runner: Runner, env: dict[str, str], project: str, prefix
     return found, volumes
 
 
-def record_status(runner: Runner, args: list[str]) -> None:
-    result = runner([sys.executable, "-E", str(ROOT / "scripts" / "record_status.py"), *args], env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")}, timeout=10)
-    if result.returncode:
-        text = result.stderr.strip()[:128]
-        raise Refused(text if text in STATUS_DIAGNOSTICS else "status_record_failed", "scripts/record_status.py refused the status directory")
-
-
 def verify_workerd_image(entries: dict[str, str], env: dict[str, str], runner: Runner, published: str, pull_default: bool) -> dict[str, str]:
     """Docker stays on the trusted host; every launch verifies the executables it will run."""
     if entries.get("BP_WORKERD_REPOSITORY") or entries.get("BP_WORKERD_DIGEST"):
@@ -713,10 +705,6 @@ def select(env: EnvFile, args, explicit: list[str] | None) -> dict:
 def settings(env: EnvFile, args, selection: dict) -> dict:
     """Access, console and network settings, applied to the env file in memory."""
     entries = env.entries
-    status_dir = (env.path.parent / (entries.get("BP_STATUS_DIR") or "data")).resolve()
-    if str(status_dir) == "/" or re.search(r"[\n\r$`'\"\\]", str(status_dir)):
-        raise Refused("unsafe_status_directory", f"BP_STATUS_DIR resolves to {status_dir}")
-    env.save("BP_STATUS_DIR", str(status_dir))
     for key, value in (("BP_ACCESS_MODE", args.access_mode), ("BP_PUBLIC_URL", args.public_url), ("BP_BACKUP_DIR", args.backup_dir)):
         if value is None:
             continue
@@ -746,7 +734,7 @@ def settings(env: EnvFile, args, selection: dict) -> dict:
         raise Refused("invalid_volume_prefix", "BP_VOLUME_PREFIX must be a Docker volume name prefix")
     subnet, ip_range, gateway = platform_allocation(entries)
     return {"access": access, "console": console, "network": network, "prefix": prefix, "subnet": subnet, "ip_range": ip_range,
-            "gateway": gateway, "status_dir": status_dir, "data_dir": (env.path.parent / (entries.get("BP_DATA_DIR") or "data")).resolve(),
+            "gateway": gateway, "data_dir": (env.path.parent / (entries.get("BP_DATA_DIR") or "data")).resolve(),
             "secrets": {**CORE_SECRETS, **(BLOB_SECRETS if "blobs" in profiles else {}), **(COMPUTE_SECRETS if "compute" in profiles else {})}}
 
 
@@ -832,13 +820,7 @@ def prepare(args, env_file: Path, template: Path, explicit: list[str] | None, ru
         workerd = config["services"].get("workerd", {}).get("environment", {}) if isinstance(config["services"].get("workerd"), dict) else {}
         published = workerd.get("BP_WORKERD_IMAGE") if isinstance(workerd.get("BP_WORKERD_IMAGE"), str) else ""
         identity = verify_workerd_image(entries, child, runner, published, not entries.get("BP_WORKERD_IMAGE") and not args.build)
-    record_status(runner, ["--state-dir", str(resolved["status_dir"]), "--prepare"])
     env.write()
-    started = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    status = ["--state-dir", str(resolved["status_dir"]), "--checkout", str(ROOT), "--env-file", str(env_file), "--started", started,
-              "--project-name", project, *(part for name in files for part in ("--compose-file", name)),
-              *(part for name in profiles for part in ("--profile", name))]
-    record_status(runner, [*status, "--state", "unavailable"])
     if identity:
         persist_workerd_evidence(resolved["data_dir"], identity)
         child.update(BP_WORKERD_IMAGE=identity["reference"], BP_WORKERD_EFFECTIVE_IMAGE=identity["imageId"], BP_WORKERD_HOST_IMAGE_ID=identity["imageId"])
@@ -860,7 +842,6 @@ def prepare(args, env_file: Path, template: Path, explicit: list[str] | None, ru
         state = cli_state_dir()
         state.mkdir(parents=True, exist_ok=True)
         state.chmod(0o700)
-    record_status(runner, [*status, "--state", "healthy"])
     origin = resolved["access"]["origin"]
     print(json.dumps({
         "project": project, "envFile": str(env_file), "profiles": profiles, "composeFiles": files, "url": origin,

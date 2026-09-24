@@ -59,7 +59,7 @@ services:
 
   migrate:
     # Published by .github/workflows/publish.yml; compose.dev.yaml builds this checkout instead.
-    image: &server-image ${BP_SERVER_IMAGE:-ghcr.io/autonomiceng/agent-backplane-server:main-91de7da@sha256:5285c2593406ec16fc09217252c534c206643d13988e9fc85a3403012b4a5299}
+    image: &server-image ${BP_SERVER_IMAGE:-ghcr.io/autonomiceng/agent-backplane-server:main-f59d65f@sha256:93eb37b3810c7affc59d6ca38a0598da119f4ba8e51aaf1856f01354f99d4f1d}
     restart: "no"
     logging: *logging
     command: ["bun", "db/migrate-cli.ts"]
@@ -125,6 +125,13 @@ services:
       BP_PUBLIC_URL: ${BP_PUBLIC_URL:-}
       BP_AUTH_URL: ${BP_AUTH_URL:-}
       BP_SIGNUP: ${BP_SIGNUP:-closed}
+      # Configured image references for the public Status Document (GET /status.json); the
+      # optional pins repeat their overlay defaults so a core install can report them disabled.
+      BP_SERVER_IMAGE: *server-image
+      BP_POSTGRES_IMAGE: *postgres-image
+      BP_RUSTFS_IMAGE: ${BP_RUSTFS_IMAGE:-rustfs/rustfs:1.0.0@sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff}
+      BP_WORKERD_IMAGE: ${BP_WORKERD_IMAGE:-ghcr.io/autonomiceng/agent-backplane-workerd:main-91de7da@sha256:9949989b11d68f62229c90bbcc8afb9fd4384d8eb90f09c67acc692d6a45e686}
+      BP_CADDY_IMAGE: ${BP_CADDY_IMAGE:-caddy:2.11.4@sha256:13ba145cba2f3e28fa801994876e4c086d1b95d5aa2a520a734765ffb6b12017}
     volumes:
       - server-data:/data
       - ${BP_BACKUP_DIR:?set BP_BACKUP_DIR to an encrypted off-host repository mount}/backups:/backups:ro
