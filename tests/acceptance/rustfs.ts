@@ -302,7 +302,6 @@ async function orchestrate() {
   const postgresImage: string = JSON.parse(core.out).services.postgres.image;
   const override = join(scratch, "acceptance.yaml");
   await Bun.write(override, JSON.stringify({ services: {
-    "backup-init": { volumes: ["acceptance-backup:/backup"] },
     postgres: { volumes: ["acceptance-backup:/backup", "restored-data:/recovery"] },
     server: { volumes: ["acceptance-backup:/backups:ro"] },
     "restored-postgres": { image: postgresImage, profiles: ["recovery"],
@@ -334,6 +333,9 @@ async function orchestrate() {
       assert(!/RUSTFS_ROOT|MINIO_ROOT/.test(key), "root configuration reached the server");
       assert(value !== env.BP_RUSTFS_ROOT_USER && value !== env.BP_RUSTFS_ROOT_PASSWORD, "root credential reached the server");
     }
+    // scripts/bootstrap.py prepares a host backup directory; this named volume needs the same leaves.
+    await compose("run", "--rm", "--no-deps", "--user", "0:0", "--entrypoint", "sh", "postgres", "-ec",
+      "mkdir -p /backup/archive /backup/backups && chown postgres:postgres /backup/archive /backup/backups");
     await compose("up", "--detach", "--build");
     for (let attempt = 0; ; attempt++) {
       const probe = await command([...base, "exec", "-T", "server", "curl", "-fsS", "http://localhost:3000/health/ready"], env);

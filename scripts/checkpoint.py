@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 
 ROOT = Path(__file__).resolve().parent.parent
 RUSTFS_DIGEST = 'sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff'
-MUTATING_HELPERS = {'storage-init', 'blob-bootstrap', 'migrate', 'data-init', 'backup-init'}
+MUTATING_HELPERS = {'storage-init', 'blob-bootstrap', 'migrate'}
 
 
 def qualify_storage(services):
@@ -35,7 +35,7 @@ def qualify_storage(services):
         raise ValueError('server and storage-init storage selections differ')
     if backend == 'filesystem':
         return backend
-    if backend != 's3' or not {'rustfs', 'blob-bootstrap', 'blob-image-check', 'storage-init'} <= services.keys():
+    if backend != 's3' or not {'rustfs', 'blob-bootstrap', 'storage-init'} <= services.keys():
         raise ValueError('only filesystem and shipped local single-volume RustFS checkpoints are supported')
     rustfs = services['rustfs']
     if rustfs['image'].split('@')[-1] != RUSTFS_DIGEST or rustfs.get('command') != ['/data']:
@@ -179,10 +179,10 @@ class Stack:
             if 'server-image.tar' in doc['artifacts']:
                 command(['docker', 'load', '--input', str(source / 'server-image.tar')])
         self.images = {}
-        helpers = {'backup-init': 'postgres', 'migrate': 'server', 'data-init': 'server'}
+        helpers = {'migrate': 'server'}
         if 'storage-init' in self.services:
             helpers['storage-init'] = 'server'
-        blob_services = ['rustfs', 'blob-bootstrap', 'blob-image-check'] if self.backend == 's3' else []
+        blob_services = ['rustfs', 'blob-bootstrap'] if self.backend == 's3' else []
         for service in ('postgres', 'server', *(['edge'] if 'edge' in self.services else []), *helpers, *blob_services):
             ref = self.services[service]['image']
             expected = recorded.get(service, recorded.get(helpers.get(service))) if recorded is not None else None
@@ -191,7 +191,7 @@ class Stack:
                     if expected is None or expected['reference'] != ref:
                         raise ValueError(f'{service}: restore requires the recorded image reference; check the env file and exported BP_* settings')
                     recovery = expected.get('recoveryReference', ref)
-                    covered = service in ('blob-bootstrap', 'blob-image-check') and expected['id'] == recorded['server']['id']
+                    covered = service == 'blob-bootstrap' and expected['id'] == recorded['server']['id']
                     if service not in helpers and service != 'server' and not covered:
                         if not re.fullmatch(r'[^\s@]+@sha256:[a-f0-9]{64}', recovery):
                             raise ValueError(f'{service}: checkpoint has no immutable recovery image; recover the original image and capture a new Checkpoint')
@@ -215,7 +215,7 @@ class Stack:
             if service in helpers:
                 if image_id != self.images[helpers[service]]['id']:
                     raise ValueError(f'{service}: helper must use the same content as {helpers[service]}')
-            elif service != 'server' and not (service in ('blob-bootstrap', 'blob-image-check') and image_id == self.images['server']['id']):
+            elif service != 'server' and not (service == 'blob-bootstrap' and image_id == self.images['server']['id']):
                 digests = info.get('RepoDigests') or []
                 recovery = expected.get('recoveryReference', ref) if expected is not None else next((d for d in digests
                     if re.fullmatch(r'[^\s@]+@sha256:[a-f0-9]{64}', d)

@@ -24,7 +24,6 @@ async function main() {
   step = "image_reference";
   for (const name of ["BP_RUSTFS_IMAGE", "BP_BLOB_BOOTSTRAP_IMAGE"])
     assert(/^[^\s$]+$/.test(env(name)));
-  if (process.argv.includes("--images")) return;
 
   step = "credentials";
   const root = env("BP_RUSTFS_ROOT_USER");

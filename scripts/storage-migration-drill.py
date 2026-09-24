@@ -12,6 +12,7 @@ from types import SimpleNamespace
 import urllib.request
 import uuid
 from checkpoint import ROOT, Stack, command, backup, verify
+from bootstrap import prepare_backup_directory, run as bootstrap_run
 
 
 def drill():
@@ -50,6 +51,7 @@ def drill():
             command(['docker', 'volume', 'create', '--label', 'backplane.test-owner=' + project, volume])
         # Compose pins the published server; the drill exercises this checkout's build.
         command(['docker', 'build', '-f', str(ROOT / 'infra/compose/server.Dockerfile'), '-t', values['BP_SERVER_IMAGE'], str(ROOT)])
+        prepare_backup_directory(bootstrap_run, dict(os.environ), str(source_repo), json.loads(command(compose + ['config', '--format', 'json']))['services']['postgres']['image'])
         command(compose + ['up', '-d', '--wait', '--wait-timeout', '180'])
         source = operator['stack_from_env'](env); stacks.append(source)
         capability = root / 'capability'; capability.write_text(source.dc('exec', '-T', 'server', 'cat', '/data/enrollment/capability')); capability.chmod(0o600)
@@ -86,7 +88,7 @@ def drill():
         request(base + '/sql', dict(statement="INSERT INTO migration_proof VALUES (1, 'preserved')", params=[]))
         source.dc('stop', 'server')
         retained = '/data/blobs/' + enrolled['workspaceId'] + '/' + str(uuid.uuid4()) + '.stage'
-        source.dc('run', '--rm', '--no-deps', '--entrypoint', 'bun', 'storage-init', '-e',
+        source.dc('run', '--rm', '--no-deps', '--user', 'bun', '--entrypoint', 'bun', 'storage-init', '-e',
                   "await Bun.write(process.argv[1],'retained staging'); await import('node:fs/promises').then(fs=>fs.chmod(process.argv[1],0o600))", retained)
         from checkpoint import storage_admin
         storage_admin(source, 'reconcile', '--fenced', '--checkpoint', 'drill-retention', '--retain-unreferenced')

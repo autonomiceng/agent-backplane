@@ -15,6 +15,7 @@ import sys
 import urllib.request
 import uuid
 from checkpoint import ROOT, Stack, backup, command, restore, inspect_storage, verify, prove_root_credentials, storage_admin
+from bootstrap import prepare_backup_directory, run as bootstrap_run
 
 
 def failure_diagnostics(project):
@@ -49,8 +50,7 @@ def failure_diagnostics(project):
             states = read(['docker', 'inspect', '--format', fields, *ids])
             for line in states.splitlines():
                 owner, service, state, health, exit_code = json.loads(line)
-                if owner != project or service not in {'postgres', 'server', 'rustfs', 'backup-init',
-                        'migrate', 'data-init', 'storage-init', 'blob-image-check', 'blob-bootstrap'}:
+                if owner != project or service not in {'postgres', 'server', 'rustfs', 'migrate', 'storage-init', 'blob-bootstrap'}:
                     continue
                 report['services'].append(dict(service=service,
                     state=state if state in {'created', 'running', 'paused', 'restarting', 'removing', 'exited', 'dead'} else 'unknown',
@@ -115,6 +115,7 @@ def drill(offline=False, s3=False):
                 owned_volumes.append(volume)
             # Compose pins the published server; the drill exercises this checkout's build.
             command(['docker', 'build', '-f', str(ROOT / 'infra/compose/server.Dockerfile'), '-t', values['BP_SERVER_IMAGE'], str(ROOT)])
+            prepare_backup_directory(bootstrap_run, dict(os.environ), str(source), postgres_image)
             command(compose + ['up', '-d', '--wait', '--wait-timeout', '180'])
             stack = Stack(env_file)
             built_image = stack.images['server']['id']
@@ -155,7 +156,7 @@ def drill(offline=False, s3=False):
             if not json.loads(original_audit):
                 raise ValueError('fixture audit evidence missing')
             def s3_object(mode, object_id):
-                result = stack.dc('run', '--rm', '--no-deps', '-T', '--entrypoint', 'bun',
+                result = stack.dc('run', '--rm', '--no-deps', '-T', '--user', 'bun', '--entrypoint', 'bun',
                                   '-v', str(ROOT / 'scripts/s3-checkpoint-fixture.js') + ':/checkpoint-fixture.js:ro',
                                   'storage-init', '/checkpoint-fixture.js', mode, enrolled['workspaceId'], object_id)
                 return json.loads(result)

@@ -49,7 +49,8 @@ def runner_with(volumes=(), containers=(), network_exists=True, ipam=CONTRACT_IP
             profiles = env.get("COMPOSE_PROFILES", "").split(",")
             if "config" in argv:
                 backend = "s3" if "blobs" in profiles else "filesystem"
-                services = {"server": {"image": "server:rendered", "environment": {"BP_BLOB_BACKEND": backend}}, "storage-init": {"environment": {"BP_BLOB_BACKEND": backend}}}
+                services = {"server": {"image": "server:rendered", "environment": {"BP_BLOB_BACKEND": backend}}, "storage-init": {"environment": {"BP_BLOB_BACKEND": backend}},
+                            "postgres": {"image": "postgres:rendered", "volumes": [{"type": "bind", "source": env.get("BP_BACKUP_DIR"), "target": "/backup"}]}}
                 if "compute" in profiles:
                     services["server"]["environment"]["BP_COMPUTE_URL"] = "http://workerd:8080"
                     services["workerd"] = {"environment": {"BP_WORKERD_IMAGE": env.get("BP_WORKERD_IMAGE") or PUBLISHED}}
@@ -124,6 +125,10 @@ class BootstrapTests(unittest.TestCase):
         self.assertIn("COMPOSE_PROFILES='blobs,compute'", text)
         self.assertIn(f"BP_BACKUP_DIR='{self.backup}'", text, "the default backup directory sits beside the env file")
         self.assertTrue(self.backup.is_dir())
+        backup_init = ["docker", "run", "--rm", "--network", "none", "--user", "0:0", "-v", f"{self.backup}:/backup", "--entrypoint", "sh",
+                       "postgres:rendered", "-ec", "mkdir -p /backup/archive /backup/backups && chown postgres:postgres /backup/archive /backup/backups"]
+        self.assertEqual([c for c in calls if c[1] == "run"], [backup_init], "the unowned backup leaves are handed to postgres before up")
+        self.assertLess(calls.index(backup_init), next(i for i, c in enumerate(calls) if c[1] == "compose" and "up" in c))
         self.assertIn("BP_BLOB_BACKEND='s3'", text)
         self.assertEqual(result["enrollment"], "pending")
         self.assertEqual(self.capability.read_text(), "c" * 64 + "\n")
@@ -224,6 +229,19 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(plan["compose"][-3:], ["up", "-d", "--wait"])
         self.assertEqual(plan["warnings"], [])
         self.assertEqual(plan["backupDir"], str(self.backup), "the default backup directory is created on the real run")
+
+    def test_malformed_blob_image_reference_is_refused_before_docker(self):
+        for line in ("BP_RUSTFS_IMAGE='rustfs/rustfs latest'\n", "BP_BLOB_BOOTSTRAP_IMAGE='-helper:1'\n", "BP_SERVER_IMAGE='server:1;x'\n"):
+            self.env.write_text(line)
+            runner = runner_with()
+            with self.assertRaises(bootstrap.Refused, msg=line) as refused:
+                self.bootstrap(runner=runner, profiles=("blobs",))
+            self.assertEqual(refused.exception.code, "image_reference_invalid")
+            self.assertIn(line.split("=")[0], refused.exception.detail)
+            self.assertEqual(runner.calls, [], "the refusal precedes every Docker call")
+        self.env.write_text(f"BP_RUSTFS_IMAGE=registry.example:5000/rustfs@sha256:{'a' * 64}\nBP_BLOB_BOOTSTRAP_IMAGE=helper:local\n")
+        code, _, _ = self.bootstrap(profiles=("blobs",))
+        self.assertEqual(code, 0)
 
     def test_missing_secret_over_existing_installation_state_is_refused(self):
         code, _, _ = self.bootstrap()

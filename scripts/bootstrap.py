@@ -62,6 +62,9 @@ NAME_LINE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)")
 ASSIGNMENT = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
 DNS_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$", re.IGNORECASE)
 SAFE_NAME = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]*$")
+IMAGE_REFERENCE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/:@-]*")
+# The postgres user of the pinned Debian PostgreSQL image; it archives WAL into the backup repository.
+POSTGRES_UID = 999
 # Verified upstream amd64 workerd executable and the pinned Bun supervisor, by architecture.
 WORKERD_BINARY = "f31da6d248028d698806aa93d1b3aec28bbd4b4b7ddc31e967408ab6406fa5aa"
 WORKERD_VERSION = "workerd 2026-09-18"
@@ -427,6 +430,20 @@ def ensure_volumes(runner: Runner, env: dict[str, str], names: list[str], projec
         docker(runner, ["volume", "create", "--label", f"com.docker.compose.project={project}", name], env, "volume_create_failed")
 
 
+def prepare_backup_directory(runner: Runner, env: dict[str, str], backup: str, image: str) -> None:
+    """PostgreSQL archives WAL into archive/ as its own user; Checkpoints land in backups/.
+    Restore and Checkpoint capture re-own these themselves."""
+    try:
+        ready = all(os.stat(os.path.join(backup, leaf)).st_uid == POSTGRES_UID for leaf in ("archive", "backups"))
+    except OSError:
+        ready = False
+    if not ready:
+        # An override image with another postgres uid reruns this idempotent chown on every bootstrap.
+        docker(runner, ["run", "--rm", "--network", "none", "--user", "0:0", "-v", f"{backup}:/backup", "--entrypoint", "sh", image,
+                        "-ec", "mkdir -p /backup/archive /backup/backups && chown postgres:postgres /backup/archive /backup/backups"],
+               env, "backup_directory_init_failed", timeout=900)
+
+
 def installation_state(runner: Runner, env: dict[str, str], project: str, prefix: str) -> tuple[list[str], set[str]]:
     """Every Docker resource an earlier installation of this project could have left, and all volume names."""
     found: list[str] = []
@@ -445,7 +462,7 @@ def verify_workerd_image(entries: dict[str, str], env: dict[str, str], runner: R
         raise Refused("workerd_legacy_identity_requires_migration", "replace BP_WORKERD_REPOSITORY/BP_WORKERD_DIGEST with BP_WORKERD_IMAGE")
     reference = entries.get("BP_WORKERD_IMAGE") or published
     binary = entries.get("BP_WORKERD_BINARY_SHA256") or WORKERD_BINARY
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/:@-]*", reference) or not re.fullmatch(r"[0-9a-f]{64}", binary):
+    if not IMAGE_REFERENCE.fullmatch(reference) or not re.fullmatch(r"[0-9a-f]{64}", binary):
         raise Refused("workerd_identity_invalid", "BP_WORKERD_IMAGE must be an image reference and BP_WORKERD_BINARY_SHA256 a SHA-256 hex digest")
     if pull_default:
         if binary != WORKERD_BINARY:
@@ -727,6 +744,10 @@ def settings(env: EnvFile, args, selection: dict) -> dict:
     for key, value in (("BP_RUSTFS_URL_HOST", console["urlHost"]), ("BP_RUSTFS_AUTHORITY", console["authority"])):
         if entries.get(key) != value:
             env.save(key, value)
+    # The blob helper runs BP_BLOB_BOOTSTRAP_IMAGE, or BP_SERVER_IMAGE when that is empty.
+    for key in ("BP_RUSTFS_IMAGE", "BP_BLOB_BOOTSTRAP_IMAGE", "BP_SERVER_IMAGE"):
+        if key in entries and not IMAGE_REFERENCE.fullmatch(entries[key]):
+            raise Refused("image_reference_invalid", f"{key} must be a complete image reference")
     network, prefix = entries.get("BP_PLATFORM_NETWORK") or NETWORK, entries.get("BP_VOLUME_PREFIX") or PROJECT
     if not SAFE_NAME.match(network):
         raise Refused("invalid_platform_network", "BP_PLATFORM_NETWORK must be a Docker network name")
@@ -771,7 +792,7 @@ def prepare(args, env_file: Path, template: Path, explicit: list[str] | None, ru
     entries, profiles, files, project = env.entries, selection["profiles"], selection["files"], selection["project"]
     backup = Path(entries["BP_BACKUP_DIR"])
     if backup == env_file.parent / "backups":
-        # Postgres and the server traverse it as their own users; backup-init owns the leaves.
+        # Postgres and the server traverse it as their own users; prepare_backup_directory owns the leaves.
         backup.mkdir(mode=0o755, exist_ok=True)
     if not backup.is_dir():
         raise Refused("backup_directory_required", f"{backup} does not exist; mount it or pass --backup-dir, the server reads Checkpoints from it")
@@ -803,9 +824,10 @@ def prepare(args, env_file: Path, template: Path, explicit: list[str] | None, ru
     try:
         config = json.loads(docker(runner, [*preflight[1:], "config", "--format", "json"], child, "invalid_compose_config"))
         server, storage_init = config["services"]["server"]["environment"], config["services"]["storage-init"]["environment"]
-        server_image = config["services"]["server"]["image"]
+        server_image, postgres = config["services"]["server"]["image"], config["services"]["postgres"]
+        backup_mount = {mount["target"]: mount["source"] for mount in postgres["volumes"]}["/backup"]
     except (ValueError, KeyError, TypeError):
-        raise Refused("invalid_compose_config", "the selected Compose files do not render the server and storage-init services") from None
+        raise Refused("invalid_compose_config", "the selected Compose files do not render the server, storage-init and postgres services") from None
     backend = server.get("BP_BLOB_BACKEND") or "filesystem"
     if backend not in ("filesystem", "s3") or (storage_init.get("BP_BLOB_BACKEND") or "filesystem") != backend \
             or entries.get("BP_BLOB_BACKEND", backend) != backend or (legacy_rustfs and backend != "s3"):
@@ -828,6 +850,7 @@ def prepare(args, env_file: Path, template: Path, explicit: list[str] | None, ru
     ensure_volumes(runner, child, volume_names(resolved["prefix"], profiles), project)
     if not args.build:
         pull_missing_images(runner, child, config)
+    prepare_backup_directory(runner, child, backup_mount, postgres["image"])
     up = runner([*compose, "up", "--detach", "--build" if args.build else "--no-build", "--wait", "--wait-timeout", "300"], env=child)
     if up.returncode:
         raise Refused("compose_up_failed", output(up))

@@ -15,6 +15,10 @@ target LSN, checksums and completion time. S3 manifests also contain private buc
 selection, inventory evidence and a salted credential commitment; they contain no
 plaintext credentials.
 Restore needs the original database passwords and `BP_AUTH_SECRET`.
+`scripts/bootstrap.py` creates the repository's `archive` and `backups` directories
+and assigns them to the PostgreSQL container user before Compose starts; restore does
+the same for its new repository. A bare `docker compose up` does not, so rerun
+bootstrap after mounting a new repository or WAL archiving fails.
 
 Checkpoint directories stay mode `0700` and their manifests mode `0600`. Capture
 and retention have one operator UID. Capture assigns the `backups` directory to

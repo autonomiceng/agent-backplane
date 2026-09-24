@@ -19,14 +19,12 @@ services:
     ports:
       - "127.0.0.1:${BP_POSTGRES_PORT:-5432}:5432"
   migrate: *server-build
-  data-init: *server-build
   storage-init: *server-build
   server:
     <<: *server-build
     environment:
       BP_SERVER_IMAGE: ${BP_SERVER_IMAGE:-agent-backplane-server:local}
       BP_WORKERD_IMAGE: ${BP_WORKERD_IMAGE:-agent-backplane-workerd:local}
-  blob-image-check: *blob-helper
   blob-bootstrap: *blob-helper
   workerd:
     image: ${BP_WORKERD_EFFECTIVE_IMAGE:-${BP_WORKERD_IMAGE:-agent-backplane-workerd:local}}

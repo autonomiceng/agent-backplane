@@ -116,12 +116,13 @@ def engine(stack, state_dir, action, migration, identity, checkpoint, empty_targ
     helper_compose = ['docker', 'compose', '--project-directory', str(ROOT), '--env-file', str(stack.env_file),
                       '-p', stack.project, '-f', str(overlay)]
     try:
-        result = subprocess.run(helper_compose + ['run', '--rm', '--no-deps', '-T', '--user', '0:0',
+        # Root reads the operator's private request files; bypass storage-init's drop to bun.
+        result = subprocess.run(helper_compose + ['run', '--rm', '--no-deps', '-T', '--user', '0:0', '--entrypoint', 'bun',
                          '-v', str(request_path) + ':/migration-request:ro',
                          '-v', str(checkpoint) + ':/migration-checkpoint:ro', '-v', str(pin) + ':/migration-pin:ro',
                          '-v', str(ROOT / 'scripts/s3-checkpoint-proof.js') + ':/app/scripts/s3-checkpoint-proof.js:ro',
                          '-v', str(ROOT / 'apps/server/blobs/s3-admin-request.ts') + ':/app/apps/server/blobs/s3-admin-request.ts:ro',
-                         'storage-init', 'bun', 'apps/server/blobs/storage-migration-admin.ts', '/migration-request'],
+                         'storage-init', 'apps/server/blobs/storage-migration-admin.ts', '/migration-request'],
                          capture_output=True, text=True, cwd=ROOT)
         if result.returncode:
             token = 'blob_binding_migration_helper_failed'

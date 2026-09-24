@@ -72,21 +72,21 @@ without starting the server, then inspect the store:
 
 ```sh
 adoption_tasks_ok() {
-  deployment_compose up -d --no-deps --no-build migrate data-init || return 1
-  for service in migrate data-init; do
-    container=$(deployment_compose ps -aq "$service") || return 1
-    # Exactly one container ID is required for each one-shot service.
-    case "$container" in ''|*[!a-f0-9]*) return 1 ;; esac
-    test "$(docker wait "$container")" = 0 || return 1
-  done
+  deployment_compose up -d --no-deps --no-build migrate || return 1
+  container=$(deployment_compose ps -aq migrate) || return 1
+  # Exactly one container ID is required for the one-shot service.
+  case "$container" in ''|*[!a-f0-9]*) return 1 ;; esac
+  test "$(docker wait "$container")" = 0 || return 1
+  # storage-init's entrypoint assigns /data to bun; `true` replaces initialization.
+  deployment_compose run --rm --no-deps -T storage-init true
 }
 adoption_tasks_ok && storage_operator inspect --fenced
 ```
 
-PostgreSQL must already be healthy. These two tasks finish and exit; `up --wait`
-can reject their successful completion because it expects running or healthy
-containers. Wait for each selected container and require exit code zero before
-inspection. Keep the server and ingress stopped if either task fails.
+PostgreSQL must already be healthy. The migration finishes and exits; `up --wait`
+can reject its successful completion because it expects running or healthy
+containers. Wait for its container and require exit code zero, then repair data
+ownership, before inspection. Keep the server and ingress stopped if either step fails.
 
 `--fenced` and, for mutating adoption/reconciliation, `--checkpoint` are explicit operator attestations. Inspection requires fencing but no checkpoint reference. The checkpoint ID
 is a non-secret recovery reference recorded durably, not an automatically validated
