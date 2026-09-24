@@ -14,8 +14,8 @@ fi
 state=$(sed -n 's/^BP_STATUS_DIR=//p' "$env_file" | tail -n 1)
 state=${state#[\"\']}
 state=${state%[\"\']}
-state=${state:-./data}
-case $state in /*) ;; *) state=$root/$state ;; esac
+state=${state:-data}
+case $state in /*) ;; *) state=$(CDPATH='' cd -- "$(dirname -- "$env_file")" && pwd)/$state ;; esac
 # Name only units whose files exist; systemctl fails on a missing one.
 set --
 for unit in "$name.timer" "$name.service"; do

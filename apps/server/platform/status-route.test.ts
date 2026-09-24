@@ -5,6 +5,18 @@ import { createPool, type Pool } from "./pool.ts";
 import { publicStatus, readStatusConfig, releaseVersion, statusComponents } from "./status-route.ts";
 
 const digest = "@sha256:" + "a".repeat(64);
+// platform-edge docs/operations/status-fixtures/v2-backplane.json, the frozen contract 2 example for this stack.
+const fixture = {
+  contract: 2, stack: "backplane", configuredAt: "2026-09-23T16:10:00Z",
+  components: [
+    { id: "server", name: "Backplane", kind: "app", enabled: true, image: "ghcr.io/autonomiceng/agent-backplane-server:0.9.0", version: "0.9.0", health: "/health/server", url: "https://backplane.example.com" },
+    { id: "postgres", name: "PostgreSQL", kind: "datastore", enabled: true, image: "postgres:18.6", version: "18.6", health: "/health/postgres" },
+    { id: "rustfs", name: "RustFS", kind: "datastore", enabled: false, image: "rustfs/rustfs:1.0.0", version: "1.0.0", health: "/health/rustfs" },
+    { id: "workerd", name: "Functions runtime", kind: "runtime", enabled: false, image: "ghcr.io/autonomiceng/agent-backplane-workerd:1.20260918.1", version: null, health: "/health/workerd" },
+    { id: "caddy", name: "Caddy", kind: "gateway", enabled: false, image: "caddy:2.11.4", version: "2.11.4", health: "/health/caddy" },
+  ],
+  features: { backups: { configured: true, lastCheckpointAt: "2026-09-23T02:00:00Z" } },
+};
 const images = {
   BP_SERVER_IMAGE: "ghcr.io/autonomiceng/agent-backplane-server:0.9.0" + digest, BP_POSTGRES_IMAGE: "postgres:18.6" + digest,
   BP_RUSTFS_IMAGE: "rustfs/rustfs:1.0.0" + digest, BP_WORKERD_IMAGE: "ghcr.io/autonomiceng/agent-backplane-workerd:main-91de7da" + digest,
@@ -36,9 +48,16 @@ describe("publicStatus", () => {
       version: "0.9.0", health: "/health/server", url: "https://backplane.example.com" });
     expect(document.components.map((c: { version: string | null }) => c.version)).toEqual(["0.9.0", "18.6", "1.0.0", null, "2.11.4"]);
     expect(JSON.stringify(document)).not.toMatch(/sha256|capability|workspace|systemId|restorePoint|\/data/);
-    expect(releaseVersion("registry.example:5000/postgres:v18.6")).toBe("v18.6");
-    expect(releaseVersion("registry.example:5000/postgres")).toBeNull();
-    expect(releaseVersion("postgres:18.6-bookworm")).toBeNull();
+    expect(releaseVersion("server", "registry.example:5000/server:v1.2.3")).toBe("v1.2.3");
+    expect(releaseVersion("postgres", "registry.example:5000/postgres")).toBeNull();
+    expect(releaseVersion("postgres", "postgres:18.6-bookworm")).toBeNull();
+    expect(releaseVersion("workerd", "ghcr.io/autonomiceng/agent-backplane-workerd:1.2.3")).toBe("1.2.3");
+  });
+
+  test("the frozen contract fixture is reproduced from its configuration", () => {
+    const env = Object.fromEntries(fixture.components.map(c => [`BP_${c.id.toUpperCase()}_IMAGE`, c.image + digest]));
+    const config = { ...readStatusConfig({ ...env, BP_BACKUP_DIR: "/backups" }, "https://backplane.example.com"), configuredAt: fixture.configuredAt };
+    expect(JSON.parse(JSON.stringify(publicStatus({ backup: { completedAt: "2026-09-23T02:00:00Z" } }, config)))).toEqual(fixture);
   });
 
   test("optional components report disabled without their overlays and absent without a reference", () => {

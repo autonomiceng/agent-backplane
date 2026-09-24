@@ -20,10 +20,12 @@ export function readStatusConfig(env: Record<string, string | undefined>, public
   };
 }
 
-// The tag of a reference without registry, repository or digest; a dotted numeric release or null.
-export function releaseVersion(image: string) {
+// The release version parsed from a reference's tag, or null when the tag is not a release of that component.
+// A workerd tag carrying the compatibility date (1.20260918.1) identifies a build, not a release.
+const releases: Record<ComponentId, RegExp> = { server: /^v?\d+\.\d+\.\d+$/, postgres: /^\d+(?:\.\d+){1,2}$/, rustfs: /^v?\d+\.\d+\.\d+$/, workerd: /^v?\d{1,4}(?:\.\d{1,4}){2}$/, caddy: /^\d+\.\d+\.\d+$/ };
+export function releaseVersion(id: ComponentId, image: string) {
   const tag = image.slice(image.lastIndexOf("/") + 1).split(":")[1];
-  return tag !== undefined && /^v?\d+(?:\.\d+){1,3}$/.test(tag) ? tag : null;
+  return tag !== undefined && releases[id].test(tag) ? tag : null;
 }
 
 export type StatusSample = { backup: { completedAt: string } | null };
@@ -33,7 +35,7 @@ export function publicStatus(sample: StatusSample, config: StatusConfig) {
     // A component without a configured reference is not reported rather than invented.
     if (!reference) return [];
     const image = reference.replace(/@sha256:[0-9a-f]{64}$/, "");
-    return [{ id, name: names[id], kind: kinds[id], enabled: config.enabled[id], image, version: releaseVersion(image), health: `/health/${id}` as const,
+    return [{ id, name: names[id], kind: kinds[id], enabled: config.enabled[id], image, version: releaseVersion(id, image), health: `/health/${id}` as const,
       ...(id === "server" ? { url: config.url } : {}) }];
   });
   return { contract: 2 as const, stack: "backplane" as const, configuredAt: config.configuredAt, components,

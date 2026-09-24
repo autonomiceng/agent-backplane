@@ -28,8 +28,9 @@ test("the retire script passes shellcheck and removes the version 1 timer and re
     await writeFile(join(state, "status/bootstrap.json"), "{}");
     await writeFile(join(state, "status/observer.lock"), "");
     await writeFile(join(state, "console/status.json"), "{}");
+    // Bootstrap resolved a relative BP_STATUS_DIR beside the env file, so retirement does the same.
     const envFile = join(home, ".env");
-    await writeFile(envFile, `BP_AUTH_SECRET='x'\nBP_STATUS_DIR='${state}'\n`);
+    await writeFile(envFile, "BP_AUTH_SECRET='x'\nBP_STATUS_DIR='state'\n");
 
     const first = await run(home, bin, envFile);
     expect(first.code, first.stderr).toBe(0);

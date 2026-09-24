@@ -194,6 +194,9 @@ test("the server receives every configured image reference and Caddy proxies /st
   expect(core.services.server.environment.BP_CADDY_IMAGE).toBe(rendered.services.edge.image);
   const standalone = await config(["compose.edge.yaml"], "edge");
   expect(standalone.services.server.environment.BP_CADDY_ENABLED).toBe("true");
+  const dev = await config(["compose.compute.yaml", "compose.dev.yaml"], "compute", [...publicSettings, "BP_COMPUTE_TOKEN=fixture"]);
+  expect(dev.services.server.environment.BP_SERVER_IMAGE).toBe(dev.services.server.image);
+  expect(dev.services.server.environment.BP_WORKERD_IMAGE).toBe(dev.services.workerd.image);
 
   const adapt = Bun.spawn(["docker", "run", "--rm", "-e", "BP_ACCESS_MODE=proxy", "-e", "BP_TRUSTED_PROXIES=172.30.0.2/32",
     "-v", `${join(root, "infra/compose/Caddyfile")}:/etc/caddy/Caddyfile:ro`, standalone.services.edge.image, "caddy", "adapt", "--config", "/etc/caddy/Caddyfile"],

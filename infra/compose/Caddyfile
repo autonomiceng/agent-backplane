@@ -45,6 +45,10 @@
 (public-status) {
 	handle /status.json {
 		route {
+			header Cache-Control "no-store"
+			header -ETag
+			header -Accept-Ranges
+			header -Last-Modified
 			@status_method not method GET HEAD
 			header @status_method Allow "GET, HEAD"
 			respond @status_method "" 405
@@ -57,10 +61,6 @@
 			request_header -If-Modified-Since
 			request_header -Range
 			request_header -If-Range
-			header Cache-Control "no-store"
-			header -ETag
-			header -Accept-Ranges
-			header -Last-Modified
 			import upstream
 		}
 	}

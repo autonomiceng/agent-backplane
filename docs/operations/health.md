@@ -164,8 +164,8 @@ The migration one-shot finishes before the server resumes traffic.
 public in every access mode, `Cache-Control: no-store`, GET and HEAD only, served by the
 server and proxied unchanged by the edge or gateway Caddy. It lists the components `server`,
 `postgres`, `rustfs`, `workerd` and `caddy` with the image reference Compose passed to the
-server (`BP_*_IMAGE`, digest stripped), the version parsed from a dotted numeric tag (null for
-`main-<sha7>` builds), whether the selected overlays enable them (`BP_BLOB_BACKEND=s3`,
+server (`BP_*_IMAGE`, digest stripped), the version parsed from a release tag (null for
+`main-<sha7>` builds and for workerd compatibility-date tags), whether the selected overlays enable them (`BP_BLOB_BACKEND=s3`,
 `BP_COMPUTE_URL`, `BP_CADDY_ENABLED`), the server's public origin, and
 `features.backups` with the newest Checkpoint the bounded operations sample knew of.
 `configuredAt` is the server's start time. It is configuration, never observed runtime
