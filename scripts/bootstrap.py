@@ -664,10 +664,10 @@ def select(env: EnvFile, args, explicit: list[str] | None) -> dict:
 def settings(env: EnvFile, args, selection: dict) -> dict:
     """Access and network settings, applied to the env file in memory."""
     entries = env.entries
-    unsupported = [key for key in UNSUPPORTED if key in env.assignments]
+    unsupported = [key for key in UNSUPPORTED if key in env.assignments or key in os.environ]
     if unsupported:
         raise Refused("unsupported_setting", "; ".join(f"{key} is unsupported, use {UNSUPPORTED[key]}" for key in unsupported)
-                      + f"; remove {', '.join(unsupported)} from {env.path}")
+                      + f"; remove {', '.join(unsupported)} from {env.path} and the shell environment")
     for key, value in (("BP_ACCESS_MODE", args.access_mode), ("BP_PUBLIC_URL", args.public_url), ("BP_BACKUP_DIR", args.backup_dir)):
         if value is None:
             continue
@@ -747,7 +747,7 @@ def prepare(args, env_file: Path, template: Path, explicit: list[str] | None, ru
                       "restore the original env file before starting; found " + "; ".join(found) + "; missing " + ", ".join(missing))
     legacy_rustfs = "COMPOSE_PROFILES" not in entries and f"{resolved['prefix']}_rustfs-data" in volumes
     if legacy_rustfs and "blobs" not in profiles:
-        raise Refused("backend_change_requires_migration", "an existing rustfs-data volume needs --profile blobs; storage never switches silently")
+        raise Refused("backend_change_unsupported", "an existing rustfs-data volume needs --profile blobs; the Files backend never changes")
     for key in missing:
         env.save(key, secrets.token_hex(resolved["secrets"][key]))
     env.save("COMPOSE_PROJECT_NAME", project)
@@ -769,9 +769,9 @@ def prepare(args, env_file: Path, template: Path, explicit: list[str] | None, ru
     backend = server.get("BP_BLOB_BACKEND") or "filesystem"
     if backend not in ("filesystem", "s3") or (storage_init.get("BP_BLOB_BACKEND") or "filesystem") != backend \
             or entries.get("BP_BLOB_BACKEND", backend) != backend or (legacy_rustfs and backend != "s3"):
-        raise Refused("backend_change_requires_migration",
+        raise Refused("backend_change_unsupported",
                       f"the selected files render Files backend {backend} but {env.path} records {entries.get('BP_BLOB_BACKEND', 'none')}; "
-                      "perform an explicit storage migration and record its result first")
+                      "keep the recorded backend's selection, or create a new installation for another backend")
     env.save("BP_BLOB_BACKEND", backend)
     if args.build:
         docker(runner, [*preflight[1:], "build"], child, "compose_build_failed")

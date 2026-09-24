@@ -144,7 +144,7 @@ test("restore resolves recorded immutable content and rejects unavailable or dif
 stack = cp.Stack(p/'.env'); recorded = stack.images
 running = False
 def write(images, **fields):
- (p/'manifest.json').write_text(json.dumps({'version':1,'images':images,'artifacts':{},'after':{'schema':35},**fields}))
+ (p/'manifest.json').write_text(json.dumps({'version':1,'images':images,'artifacts':{},'after':{'schema':35},'storage':{'backend':'filesystem'},**fields}))
 def refused(fragment):
  try: cp.Stack(p/'.env', p)
  except ValueError as error:
@@ -184,11 +184,12 @@ def refused(doc):
  except ValueError as error: assert str(error).startswith('unsupported_checkpoint_version: '), str(error)
  else: raise AssertionError('earlier manifest accepted: '+json.dumps(doc)[:200])
  assert not [args for args in inspected if args[:3] == ['docker','image','inspect'] or args[:2] == ['docker','pull']]
-current = {'version':1,'images':recorded,'after':{'schema':35}}
+current = {'version':1,'images':recorded,'after':{'schema':35},'storage':{'backend':'filesystem'}}
 without_recovery = {name:{key:value for key,value in image.items() if key != 'recoveryReference'} for name,image in recorded.items()}
 without_helpers = {name:image for name,image in recorded.items() if name not in ('migrate','storage-init')}
 for doc in ({**current,'images':without_recovery}, {**current,'images':without_helpers}, {**current,'after':{'schema':31}},
-            {**current,'after':{}}, {**current,'version':2}, {**current,'migration':{'id':'x','phase':'committed_pending_checkpoint'}}):
+            {**current,'after':{}}, {**current,'version':2}, {**current,'migration':{'id':'x','phase':'committed_pending_checkpoint'}},
+            {key:value for key,value in current.items() if key != 'storage'}):
  refused(doc)
 cp.command = command
 (p/'manifest.json').write_text(json.dumps({'artifacts':{},**current}))
@@ -445,7 +446,7 @@ ids[digests['bootstrap:custom']]='sha256:independent'
 recorded=cp.Stack(p/'.env').images
 assert recorded['blob-bootstrap']['id']!=recorded['server']['id']
 running=False
-(p/'manifest.json').write_text(json.dumps({'version':1,'images':recorded,'artifacts':{},'after':{'schema':35}}))
+(p/'manifest.json').write_text(json.dumps({'version':1,'images':recorded,'artifacts':{},'after':{'schema':35},'storage':{'backend':'s3'}}))
 local_missing.add(digests['bootstrap:custom'])
 restored=cp.Stack(p/'.env',p)
 assert restored.images==recorded and pulled==[digests['bootstrap:custom']]

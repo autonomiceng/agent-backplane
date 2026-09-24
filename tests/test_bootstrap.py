@@ -263,6 +263,11 @@ class BootstrapTests(unittest.TestCase):
                 self.assertIn(f"{key} is unsupported, use {replacement}", refused.exception.detail)
                 self.assertEqual(runner.calls, [], "the refusal precedes every Docker call")
                 self.assertEqual(self.env.read_text(), line)
+        self.env.unlink()
+        with patch.dict(os.environ, {"BP_AUTH_URL": ""}), self.assertRaises(bootstrap.Refused) as refused:
+            self.bootstrap("--dry-run")
+        self.assertEqual(refused.exception.code, "unsupported_setting")
+        self.assertIn("BP_AUTH_URL is unsupported, use BP_PUBLIC_URL", refused.exception.detail)
         self.assertEqual(set(bootstrap.UNSUPPORTED), {"BP_SCHEME", "BP_TLS_ISSUER", "BP_EDGE_CA", "BP_PUBLIC_HOST", "BP_EDGE_BIND_HOST",
                                                       "BP_AUTH_URL", "BP_WORKERD_REPOSITORY", "BP_WORKERD_DIGEST"})
 

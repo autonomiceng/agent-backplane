@@ -144,7 +144,7 @@ def require_checkpoint_version(doc, services):
     images, schema = doc.get('images'), doc.get('after', {}).get('schema')
     current = (doc.get('version') == 1 and isinstance(images, dict) and 'server' in images and 'migrate' in images
                and ('storage-init' in images or 'storage-init' not in services) and isinstance(schema, int) and schema >= 32
-               and 'migration' not in doc
+               and isinstance(doc.get('storage'), dict) and 'migration' not in doc
                and all('recoveryReference' in image for name, image in images.items()
                        if name not in ('server', 'migrate', 'storage-init') and not (name == 'blob-bootstrap' and image.get('id') == images['server'].get('id'))))
     if not current:
