@@ -137,13 +137,14 @@ test("bare Compose defaults to published digest-pinned images; only the developm
   expect(operator.services.server.image).toBe("server:operator");
 });
 
-test("only migrate, storage-init and blob-bootstrap run once before the server; storage-init alone starts as root", async () => {
+test("only migrate, storage-init and blob-bootstrap run once before the server; postgres and storage-init prepare their own mounts", async () => {
   const core = await config();
   expect(Object.keys(core.services).sort()).toEqual(["migrate", "postgres", "server", "storage-init"]);
   const blobs = await config(["compose.blobs.yaml"], "blobs", ["BP_RUSTFS_ROOT_USER=fixture", "BP_RUSTFS_ROOT_PASSWORD=fixture", "BP_BLOB_S3_ACCESS_KEY=fixture", "BP_BLOB_S3_SECRET_KEY=fixture"]);
   expect(Object.keys(blobs.services).sort()).toEqual(["blob-bootstrap", "migrate", "postgres", "rustfs", "server", "storage-init"]);
   expect(Object.keys(blobs.services.server.depends_on).sort()).toEqual(["blob-bootstrap", "migrate", "postgres", "storage-init"]);
   expect(blobs.services.postgres.depends_on).toBeUndefined();
+  expect(blobs.services.postgres.entrypoint[2]).toMatch(/^mkdir -p \/backup\/archive \/backup\/backups && chown postgres:postgres \/backup\/archive \/backup\/backups; exec docker-entrypoint\.sh /);
   expect(blobs.services.rustfs.depends_on).toBeUndefined();
   expect(blobs.services["storage-init"]).toMatchObject({ user: "0:0", command: ["bun", "apps/server/blobs/storage-admin.ts", "initialize"] });
   expect(blobs.services["storage-init"].entrypoint.slice(0, 2)).toEqual(["sh", "-ec"]);

@@ -63,8 +63,6 @@ ASSIGNMENT = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
 DNS_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$", re.IGNORECASE)
 SAFE_NAME = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]*$")
 IMAGE_REFERENCE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/:@-]*")
-# The postgres user of the pinned Debian PostgreSQL image; it archives WAL into the backup repository.
-POSTGRES_UID = 999
 # Verified upstream amd64 workerd executable and the pinned Bun supervisor, by architecture.
 WORKERD_BINARY = "f31da6d248028d698806aa93d1b3aec28bbd4b4b7ddc31e967408ab6406fa5aa"
 WORKERD_VERSION = "workerd 2026-09-18"
@@ -430,20 +428,6 @@ def ensure_volumes(runner: Runner, env: dict[str, str], names: list[str], projec
         docker(runner, ["volume", "create", "--label", f"com.docker.compose.project={project}", name], env, "volume_create_failed")
 
 
-def prepare_backup_directory(runner: Runner, env: dict[str, str], backup: str, image: str) -> None:
-    """PostgreSQL archives WAL into archive/ as its own user; Checkpoints land in backups/.
-    Restore and Checkpoint capture re-own these themselves."""
-    try:
-        ready = all(os.stat(os.path.join(backup, leaf)).st_uid == POSTGRES_UID for leaf in ("archive", "backups"))
-    except OSError:
-        ready = False
-    if not ready:
-        # An override image with another postgres uid reruns this idempotent chown on every bootstrap.
-        docker(runner, ["run", "--rm", "--network", "none", "--user", "0:0", "-v", f"{backup}:/backup", "--entrypoint", "sh", image,
-                        "-ec", "mkdir -p /backup/archive /backup/backups && chown postgres:postgres /backup/archive /backup/backups"],
-               env, "backup_directory_init_failed", timeout=900)
-
-
 def installation_state(runner: Runner, env: dict[str, str], project: str, prefix: str) -> tuple[list[str], set[str]]:
     """Every Docker resource an earlier installation of this project could have left, and all volume names."""
     found: list[str] = []
@@ -792,7 +776,7 @@ def prepare(args, env_file: Path, template: Path, explicit: list[str] | None, ru
     entries, profiles, files, project = env.entries, selection["profiles"], selection["files"], selection["project"]
     backup = Path(entries["BP_BACKUP_DIR"])
     if backup == env_file.parent / "backups":
-        # Postgres and the server traverse it as their own users; prepare_backup_directory owns the leaves.
+        # Postgres and the server traverse it as their own users; the postgres entrypoint owns the leaves.
         backup.mkdir(mode=0o755, exist_ok=True)
     if not backup.is_dir():
         raise Refused("backup_directory_required", f"{backup} does not exist; mount it or pass --backup-dir, the server reads Checkpoints from it")
@@ -824,10 +808,9 @@ def prepare(args, env_file: Path, template: Path, explicit: list[str] | None, ru
     try:
         config = json.loads(docker(runner, [*preflight[1:], "config", "--format", "json"], child, "invalid_compose_config"))
         server, storage_init = config["services"]["server"]["environment"], config["services"]["storage-init"]["environment"]
-        server_image, postgres = config["services"]["server"]["image"], config["services"]["postgres"]
-        backup_mount = {mount["target"]: mount["source"] for mount in postgres["volumes"]}["/backup"]
+        server_image = config["services"]["server"]["image"]
     except (ValueError, KeyError, TypeError):
-        raise Refused("invalid_compose_config", "the selected Compose files do not render the server, storage-init and postgres services") from None
+        raise Refused("invalid_compose_config", "the selected Compose files do not render the server and storage-init services") from None
     backend = server.get("BP_BLOB_BACKEND") or "filesystem"
     if backend not in ("filesystem", "s3") or (storage_init.get("BP_BLOB_BACKEND") or "filesystem") != backend \
             or entries.get("BP_BLOB_BACKEND", backend) != backend or (legacy_rustfs and backend != "s3"):
@@ -850,7 +833,6 @@ def prepare(args, env_file: Path, template: Path, explicit: list[str] | None, ru
     ensure_volumes(runner, child, volume_names(resolved["prefix"], profiles), project)
     if not args.build:
         pull_missing_images(runner, child, config)
-    prepare_backup_directory(runner, child, backup_mount, postgres["image"])
     up = runner([*compose, "up", "--detach", "--build" if args.build else "--no-build", "--wait", "--wait-timeout", "300"], env=child)
     if up.returncode:
         raise Refused("compose_up_failed", output(up))

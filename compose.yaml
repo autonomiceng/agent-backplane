@@ -9,8 +9,10 @@ x-logging: &logging
 
 services:
   postgres:
-    # scripts/bootstrap.py creates the backup repository's archive and backups directories.
     image: &postgres-image ${BP_POSTGRES_IMAGE:-postgres:18.6@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280}
+    # The image entrypoint starts as root and drops to postgres itself; first it gives a fresh or
+    # replaced backup repository the archive and backups directories archive.sh writes as postgres.
+    entrypoint: ["sh", "-ec", "mkdir -p /backup/archive /backup/backups && chown postgres:postgres /backup/archive /backup/backups; exec docker-entrypoint.sh \"$$@\"", "postgres"]
     restart: unless-stopped
     logging: *logging
     mem_limit: 4g

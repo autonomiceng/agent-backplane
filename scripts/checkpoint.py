@@ -737,10 +737,11 @@ def validate_archives(source, artifacts):
 
 
 def storage_admin(stack, *args, environment=()):
-    result = subprocess.run(stack.compose + ['run', '--rm', '--no-deps', '-T',
+    # As bun, without storage-init's ownership repair: fenced inspection must not touch the store.
+    result = subprocess.run(stack.compose + ['run', '--rm', '--no-deps', '-T', '--user', 'bun', '--entrypoint', 'bun',
                             '-e', 'BP_STARTUP_VERIFY_TIMEOUT=' + str(startup_timeout(stack)),
                             *[arg for value in environment for arg in ('-e', value)], 'storage-init',
-                            'bun', 'apps/server/blobs/storage-admin.ts', *args],
+                            'apps/server/blobs/storage-admin.ts', *args],
                             capture_output=True, text=True, cwd=ROOT)
     if result.returncode:
         token = 'diagnostic unavailable; use the fenced storage runbook'

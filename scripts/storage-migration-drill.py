@@ -12,7 +12,6 @@ from types import SimpleNamespace
 import urllib.request
 import uuid
 from checkpoint import ROOT, Stack, command, backup, verify
-from bootstrap import prepare_backup_directory, run as bootstrap_run
 
 
 def drill():
@@ -51,7 +50,6 @@ def drill():
             command(['docker', 'volume', 'create', '--label', 'backplane.test-owner=' + project, volume])
         # Compose pins the published server; the drill exercises this checkout's build.
         command(['docker', 'build', '-f', str(ROOT / 'infra/compose/server.Dockerfile'), '-t', values['BP_SERVER_IMAGE'], str(ROOT)])
-        prepare_backup_directory(bootstrap_run, dict(os.environ), str(source_repo), json.loads(command(compose + ['config', '--format', 'json']))['services']['postgres']['image'])
         command(compose + ['up', '-d', '--wait', '--wait-timeout', '180'])
         source = operator['stack_from_env'](env); stacks.append(source)
         capability = root / 'capability'; capability.write_text(source.dc('exec', '-T', 'server', 'cat', '/data/enrollment/capability')); capability.chmod(0o600)

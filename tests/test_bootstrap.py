@@ -49,8 +49,7 @@ def runner_with(volumes=(), containers=(), network_exists=True, ipam=CONTRACT_IP
             profiles = env.get("COMPOSE_PROFILES", "").split(",")
             if "config" in argv:
                 backend = "s3" if "blobs" in profiles else "filesystem"
-                services = {"server": {"image": "server:rendered", "environment": {"BP_BLOB_BACKEND": backend}}, "storage-init": {"environment": {"BP_BLOB_BACKEND": backend}},
-                            "postgres": {"image": "postgres:rendered", "volumes": [{"type": "bind", "source": env.get("BP_BACKUP_DIR"), "target": "/backup"}]}}
+                services = {"server": {"image": "server:rendered", "environment": {"BP_BLOB_BACKEND": backend}}, "storage-init": {"environment": {"BP_BLOB_BACKEND": backend}}}
                 if "compute" in profiles:
                     services["server"]["environment"]["BP_COMPUTE_URL"] = "http://workerd:8080"
                     services["workerd"] = {"environment": {"BP_WORKERD_IMAGE": env.get("BP_WORKERD_IMAGE") or PUBLISHED}}
@@ -125,10 +124,6 @@ class BootstrapTests(unittest.TestCase):
         self.assertIn("COMPOSE_PROFILES='blobs,compute'", text)
         self.assertIn(f"BP_BACKUP_DIR='{self.backup}'", text, "the default backup directory sits beside the env file")
         self.assertTrue(self.backup.is_dir())
-        backup_init = ["docker", "run", "--rm", "--network", "none", "--user", "0:0", "-v", f"{self.backup}:/backup", "--entrypoint", "sh",
-                       "postgres:rendered", "-ec", "mkdir -p /backup/archive /backup/backups && chown postgres:postgres /backup/archive /backup/backups"]
-        self.assertEqual([c for c in calls if c[1] == "run"], [backup_init], "the unowned backup leaves are handed to postgres before up")
-        self.assertLess(calls.index(backup_init), next(i for i, c in enumerate(calls) if c[1] == "compose" and "up" in c))
         self.assertIn("BP_BLOB_BACKEND='s3'", text)
         self.assertEqual(result["enrollment"], "pending")
         self.assertEqual(self.capability.read_text(), "c" * 64 + "\n")

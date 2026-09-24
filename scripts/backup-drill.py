@@ -15,7 +15,6 @@ import sys
 import urllib.request
 import uuid
 from checkpoint import ROOT, Stack, backup, command, restore, inspect_storage, verify, prove_root_credentials, storage_admin
-from bootstrap import prepare_backup_directory, run as bootstrap_run
 
 
 def failure_diagnostics(project):
@@ -115,7 +114,6 @@ def drill(offline=False, s3=False):
                 owned_volumes.append(volume)
             # Compose pins the published server; the drill exercises this checkout's build.
             command(['docker', 'build', '-f', str(ROOT / 'infra/compose/server.Dockerfile'), '-t', values['BP_SERVER_IMAGE'], str(ROOT)])
-            prepare_backup_directory(bootstrap_run, dict(os.environ), str(source), postgres_image)
             command(compose + ['up', '-d', '--wait', '--wait-timeout', '180'])
             stack = Stack(env_file)
             built_image = stack.images['server']['id']
