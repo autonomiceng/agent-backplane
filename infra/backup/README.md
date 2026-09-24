@@ -15,9 +15,10 @@ target LSN, checksums and completion time. S3 manifests also contain private buc
 selection, inventory evidence and a salted credential commitment; they contain no
 plaintext credentials.
 Restore needs the original database passwords and `BP_AUTH_SECRET`.
-The `postgres` service creates the repository's `archive` and `backups` directories
-and assigns them to the PostgreSQL container user each time it starts, before
-PostgreSQL runs, so a fresh or replaced mount needs no separate preparation.
+Each time the `postgres` service starts, before PostgreSQL runs, it creates the
+repository's `archive` directory and assigns it to the PostgreSQL container user, and
+creates `backups` for that user when absent. A fresh or replaced mount needs no
+separate preparation; an existing `backups` directory keeps the owner capture set.
 
 Checkpoint directories stay mode `0700` and their manifests mode `0600`. Capture
 and retention have one operator UID. Capture assigns the `backups` directory to
