@@ -93,3 +93,7 @@ _Avoid_: Prepare, preparation, installer
 **Enrollment**:
 Creating the first User from the capability file with `bp bootstrap`, run through `compose.enroll.yaml` inside the server image. Enrollment is pending until claimed; the claim is permanent (ADR-0020).
 _Avoid_: Sign-up, onboarding, registration
+
+**Status Document**:
+The public Status v2 document the server serves at `/status.json` in every access mode: each component's configured image and version, whether the selected overlays enable it, its health path, the server's origin and the newest Checkpoint the server knew of. It is built from configuration through a closed projection; the operations document never appears in it.
+_Avoid_: Status observation, operations document (for the public form)

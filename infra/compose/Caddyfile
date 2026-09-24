@@ -41,9 +41,13 @@
 	request_header @ready -Authorization
 }
 
+# The server builds the Status Document (docs/operations/health.md); Caddy keeps the public transport rules.
 (public-status) {
 	handle /status.json {
 		route {
+			@status_method not method GET HEAD
+			header @status_method Allow "GET, HEAD"
+			respond @status_method "" 405
 			request_header -Authorization
 			request_header -Proxy-Authorization
 			request_header -Cookie
@@ -53,20 +57,17 @@
 			request_header -If-Modified-Since
 			request_header -Range
 			request_header -If-Range
-			header Content-Type application/json
 			header Cache-Control "no-store"
 			header -ETag
 			header -Accept-Ranges
 			header -Last-Modified
-			@status_method not method GET HEAD
-			header @status_method Allow "GET, HEAD"
-			respond @status_method "" 405
-			root * /srv/status
-			file_server {
-				pass_thru
-			}
-			respond "" 404
+			import upstream
 		}
+	}
+	# The Caddy component's health path: Caddy answering is its probe.
+	handle /health/caddy {
+		header Cache-Control "no-store"
+		respond "" 200
 	}
 }
 

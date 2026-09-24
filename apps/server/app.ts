@@ -10,7 +10,9 @@ import type { ComputeLauncher } from "./compute/compute-launcher.ts";
 import { blobRoutes } from "./blobs/blob-routes.ts";
 import type { BlobStore } from "./blobs/blob-store.ts";
 import { operationsRoute } from "./platform/operations-route.ts";
-import type { OperationsConfig } from "./platform/operations.ts";
+import { readOperationsConfig, type OperationsConfig } from "./platform/operations.ts";
+import { operationsProbe } from "./platform/operations-probe.ts";
+import { readStatusConfig, statusRoute, type StatusConfig } from "./platform/status-route.ts";
 import { PrincipalAdmission, principalAdmission } from "./platform/principal-admission.ts";
 import { setQuotasRoute } from "./platform/set-quotas-route.ts";
 import { dashboardRoutes } from "./dashboard/dashboard-routes.ts";
@@ -60,6 +62,7 @@ export type AppDeps = {
   compute?: ComputeLauncher | undefined;
   blobStore?: BlobStore;
   operations?: OperationsConfig;
+  status?: StatusConfig;
   capabilitySampler?: CapabilitySampler;
   insecureOrigin?: boolean;
 };
@@ -71,6 +74,8 @@ export function createApp(deps: AppDeps) {
   const platform = new Elysia()
     .use(principalAdmission(admission))
     .use(operationsRoute(pool, deps.operations, admission, streams, deps.enrollment, deps.capabilitySampler))
+    // The public document takes only the Checkpoint time from the bounded, cached operations sample.
+    .use(statusRoute(deps.status ?? readStatusConfig({}, authUrl), operationsProbe(pool, deps.operations ?? readOperationsConfig({})), pool, deps.capabilitySampler))
     .use(openapiPlugin())
     .use(healthRoute(pool, deps.expectedSchemaVersion, deps.enrollment, deps.insecureOrigin, deps.operations?.token))
     .use(enrollmentRoute(deps.enrollment, authUrl))

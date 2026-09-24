@@ -53,7 +53,7 @@ A fresh install is minimal. `--profile blobs` adds S3 blob storage on RustFS, `-
 
 Each push to `main` and each `vX.Y.Z` release tag publishes `ghcr.io/autonomiceng/agent-backplane-server` (amd64, arm64) and `ghcr.io/autonomiceng/agent-backplane-workerd` (amd64). Compose uses them by default. See [published images](docs/operations/upgrade.md).
 
-Every shipped image default, including the server and workerd, is pinned as `tag@sha256`. Complete image references in `.env` select unvalidated experiments; see [bootstrap](infra/bootstrap/README.md). Terms are in [CONTEXT.md](CONTEXT.md); guarantees in the [design](docs/DESIGN.md).
+Every shipped image default, including the server and workerd, is pinned as `tag@sha256`, and the server reports the configured references publicly at `/status.json` ([health](docs/operations/health.md#public-status)). Complete image references in `.env` select unvalidated experiments; see [bootstrap](infra/bootstrap/README.md). Terms are in [CONTEXT.md](CONTEXT.md); guarantees in the [design](docs/DESIGN.md).
 
 ## Built on
 

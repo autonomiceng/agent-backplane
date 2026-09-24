@@ -173,3 +173,45 @@ test("enrollment runs the CLI from the server image on the host network without 
   const up = await config(["compose.enroll.yaml"], undefined, []);
   expect(up.services.enroll).toBeUndefined();
 });
+
+test("the server receives every configured image reference and Caddy proxies /status.json to it", async () => {
+  const rendered = await config(["compose.blobs.yaml", "compose.compute.yaml", "compose.gateway.yaml"], "*", [
+    "BP_ACCESS_MODE=proxy", "BP_PUBLIC_URL=https://backplane.example.com",
+    "BP_RUSTFS_ROOT_USER=fixture", "BP_RUSTFS_ROOT_PASSWORD=fixture", "BP_BLOB_S3_ACCESS_KEY=fixture", "BP_BLOB_S3_SECRET_KEY=fixture", "BP_COMPUTE_TOKEN=fixture",
+  ]);
+  const environment = rendered.services.server.environment;
+  // Renovate moves the image: lines; these pass-throughs must move with them.
+  expect(environment.BP_SERVER_IMAGE).toBe(rendered.services.server.image);
+  expect(environment.BP_POSTGRES_IMAGE).toBe(rendered.services.postgres.image);
+  expect(environment.BP_RUSTFS_IMAGE).toBe(rendered.services.rustfs.image);
+  expect(environment.BP_WORKERD_IMAGE).toBe(rendered.services.workerd.image);
+  expect(environment.BP_CADDY_IMAGE).toBe(rendered.services.edge.image);
+  expect(environment.BP_CADDY_ENABLED).toBe("true");
+  expect(rendered.services.edge.init).toBeUndefined();
+  expect(rendered.services.edge.volumes.map((volume: { target: string }) => volume.target)).toEqual(["/etc/caddy/Caddyfile", "/data", "/config"]);
+  const core = await config();
+  expect(core.services.server.environment.BP_CADDY_ENABLED).toBeUndefined();
+  expect(core.services.server.environment.BP_CADDY_IMAGE).toBe(rendered.services.edge.image);
+  const standalone = await config(["compose.edge.yaml"], "edge");
+  expect(standalone.services.server.environment.BP_CADDY_ENABLED).toBe("true");
+
+  const adapt = Bun.spawn(["docker", "run", "--rm", "-e", "BP_ACCESS_MODE=proxy", "-e", "BP_TRUSTED_PROXIES=172.30.0.2/32",
+    "-v", `${join(root, "infra/compose/Caddyfile")}:/etc/caddy/Caddyfile:ro`, standalone.services.edge.image, "caddy", "adapt", "--config", "/etc/caddy/Caddyfile"],
+    { stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, code] = await Promise.all([new Response(adapt.stdout).text(), new Response(adapt.stderr).text(), adapt.exited]);
+  expect(code, stderr).toBe(0);
+  const routes = JSON.parse(stdout).apps.http.servers.srv0.routes;
+  type Route = { match?: { path?: string[] }[]; handle?: { routes?: Route[] }[] };
+  const find = (list: Route[], path: string): Route | undefined => {
+    for (const route of list) {
+      if (route.match?.some(m => m.path?.includes(path))) return route;
+      const nested = find(route.handle?.flatMap(h => h.routes ?? []) ?? [], path);
+      if (nested) return nested;
+    }
+  };
+  const status = JSON.stringify(find(routes, "/status.json"));
+  expect(status).toContain('"upstreams":[{"dial":"server:3000"}]');
+  expect(status).not.toMatch(/file_server|\/srv\/status/);
+  expect(status).toContain('"Cache-Control":["no-store"]');
+  expect(JSON.stringify(routes)).toContain('"/health/caddy"');
+}, 30000);

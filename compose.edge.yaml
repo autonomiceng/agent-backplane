@@ -8,8 +8,6 @@ services:
     image: ${BP_CADDY_IMAGE:-caddy:2.11.4@sha256:13ba145cba2f3e28fa801994876e4c086d1b95d5aa2a520a734765ffb6b12017}
     profiles: [edge]
     restart: unless-stopped
-    # Reap orphaned watchdogs from bounded status probes.
-    init: true
     logging: *logging
     mem_limit: 256m
     mem_reservation: 64m
@@ -37,7 +35,6 @@ services:
       - "${BP_BIND_HOST:-127.0.0.1}:${BP_HTTPS_PORT:-443}:443"
     volumes:
       - ./infra/compose/Caddyfile:/etc/caddy/Caddyfile:ro
-      - ${BP_STATUS_DIR:-./data}/console:/srv/status:ro
       - edge-data:/data
       - edge-config:/config
     healthcheck:
@@ -51,6 +48,11 @@ services:
       blob-internal:
       platform:
         aliases: [bp-gateway]
+
+  server:
+    environment:
+      # The Status Document reports the Caddy component enabled when this overlay is selected.
+      BP_CADDY_ENABLED: "true"
 
 volumes:
   edge-data:

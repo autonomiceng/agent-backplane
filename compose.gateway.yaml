@@ -11,6 +11,10 @@ services:
       BP_ACCESS_MODE: proxy
     ports: !reset []
 
+  server:
+    environment:
+      BP_CADDY_ENABLED: "true"
+
 volumes:
   edge-data:
     external: true

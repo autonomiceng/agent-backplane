@@ -62,7 +62,9 @@ ordered files, profiles and Files backend in `.env`; ordinary Compose commands r
 selection, a rerun preserves it, and a conflicting explicit profile set is refused.
 Capability or storage changes are explicit upgrades or migrations (ADR-0009). The first
 User enrolls through the CLI inside the server image (`compose.enroll.yaml`), so Bun never
-runs on the host.
+runs on the host. The server publishes the Status Document at `/status.json` and one
+status-only health path per component; Caddy proxies both. No host observer or timer exists;
+see [health](operations/health.md#public-status).
 
 ## Tenancy and identity
 

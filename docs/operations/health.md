@@ -41,7 +41,7 @@ abort signal as well as their native ten-second bound. No private storage paths,
 buckets, URLs, configured images, credentials or error details enter capability
 observations. Prometheus exposes `bp_capability_state{capability,state}` and
 `bp_capability_observed_timestamp_seconds{capability}`. These endpoints remain
-operator-gated; no public host observer is implemented.
+operator-gated; the public Status Document below carries none of these observations.
 
 Each signal carries its value, observation time and status. `ok` is within the
 threshold; `warn` is a threshold breach; `stale` is old data or an elapsed deadline;
@@ -157,3 +157,31 @@ The guard requires a running server in the selected project before stopping it.
 Migrations and server share the server image the checkout pins (or `BP_SERVER_IMAGE`);
 `up` pulls it when absent. See [published images](upgrade.md) for moving the pin.
 The migration one-shot finishes before the server resumes traffic.
+
+## Public status
+
+`GET /status.json` is the Status Document, contract 2 (`docs/conventions.md` "Status v2"):
+public in every access mode, `Cache-Control: no-store`, GET and HEAD only, served by the
+server and proxied unchanged by the edge or gateway Caddy. It lists the components `server`,
+`postgres`, `rustfs`, `workerd` and `caddy` with the image reference Compose passed to the
+server (`BP_*_IMAGE`, digest stripped), the version parsed from a dotted numeric tag (null for
+`main-<sha7>` builds), whether the selected overlays enable them (`BP_BLOB_BACKEND=s3`,
+`BP_COMPUTE_URL`, `BP_CADDY_ENABLED`), the server's public origin, and
+`features.backups` with the newest Checkpoint the bounded operations sample knew of.
+`configuredAt` is the server's start time. It is configuration, never observed runtime
+state, and never carries the operations document, Workspace, enrollment, token or path data;
+`apps/server/platform/status-route.ts` names every public field. A server started outside
+Compose reports no components.
+
+Liveness comes from `/health/<component>`, status only with an empty body: `server` is the
+cached readiness answer, `postgres` a bounded `SELECT 1`, `rustfs` and `workerd` the Files
+and Functions capability observations (404 while their overlay is not selected), and `caddy`
+is answered by Caddy itself (404 from the server).
+
+Upgrading from the version 1 status timer: run `scripts/retire-status-timer.sh` as the
+installation user, then `python3 scripts/bootstrap.py`. The script disables and removes
+`agent-backplane-status.timer` and `.service` from the user's systemd directory, reloads the
+user manager, and deletes the observer records and the old `console/status.json` under the
+`BP_STATUS_DIR` saved in `.env`; pass another env file as its argument if bootstrap used one.
+It prints each removal and is safe to rerun. `BP_STATUS_DIR` itself is unused and may be
+removed from `.env`.
