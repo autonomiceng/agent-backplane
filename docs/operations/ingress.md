@@ -69,33 +69,13 @@ the backplane the origin `https://backplane.<tailnet>.ts.net`. Its
 that origin as `BP_PUBLIC_URL` and reruns this bootstrap; nothing else changes here. See
 Edge's [Tailscale setup](https://github.com/autonomiceng/platform-edge/blob/main/docs/operations/tailscale.md).
 
-**Standalone**: the host's own Tailscale daemon serves the server on an HTTPS port of the
-machine's tailnet name and forwards to the loopback API port. Prerequisites: Tailscale
-installed and logged in on the host, MagicDNS and HTTPS certificates enabled for the
-tailnet (`https://login.tailscale.com/admin/dns`).
-
-1. Run bootstrap in Proxy Mode with the tailnet origin, without the `edge` profile:
-
-   ```sh
-   python3 scripts/bootstrap.py --access-mode proxy \
-     --public-url https://host.tail-example.ts.net:8448 --capability-file "$HOME/.bp-enrollment"
-   ```
-
-2. Serve that port from the host daemon:
-
-   ```sh
-   tailscale serve --bg --https=8448 http://127.0.0.1:3000
-   ```
-
-   `tailscale serve status` lists the result; `tailscale serve --https=8448 --set-path=/ off`
-   removes it.
-
-Verify from a tailnet device: open `https://host.tail-example.ts.net:8448/dashboard` and sign
-in. The server needs no trusted-proxy setting: it strips every forwarded header and derives
-cookie security from the configured HTTPS origin (ADR-0021). Operator routes
-(`/health/operations`, `/metrics`) are reachable on that port, since no gateway excludes
-them; they still require `BP_OPERATIONS_TOKEN`. Who can reach the port is decided by your
-tailnet access controls.
+**Standalone**: not offered. The server alone serves its operator routes
+(`/health/operations`, `/metrics`) on the same port as the application, and ADR-0021
+requires any proxy in front of the server to exclude them; the standalone `edge` profile
+does that but accepts only its own certificate names as the browser origin, not a tailnet
+name. Put the server behind Platform Edge for tailnet access. A host `tailscale serve`
+pointed at `127.0.0.1:3000` would work technically, but it exposes the token-gated
+operator routes to every tailnet device the access rule admits, which the contract forbids.
 
 ## Browser address for authentication
 

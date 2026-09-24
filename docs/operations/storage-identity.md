@@ -153,7 +153,7 @@ identity bytes and are never considered blob objects or cleanup targets.
 S3 uses `PUT .backplane-store` with `If-None-Match: *`; a conflict must match the
 persisted intent exactly. This follows the [S3 conditional-write contract](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes.html).
 Timeouts and conflicting publication fail closed and leave the intent retryable.
-The conditional-publication guarantee is qualified for the shipped pinned RustFS
+The conditional-publication guarantee is verified for the shipped pinned RustFS
 image. A different S3 endpoint or image must pass the competing-database publication
 gate and prove that conditional overwrites return 412 before initialization. A losing
 fresh database remains verifying; recreate that disposable database or restore its
