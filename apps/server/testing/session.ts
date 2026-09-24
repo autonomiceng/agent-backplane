@@ -41,7 +41,7 @@ async function session(app: App, email: string, verb: string): Promise<string> {
 }
 
 // Shared app wiring explicitly permits identity-only outsiders after first-User enrollment.
-export async function testApp(pool: Pool, deps: Pick<AppDeps, "blobStore" | "compute" | "migrationProjection" | "operations" | "status"> = {}, registerCleanup: RegisterCleanup = afterAll): Promise<App> {
+export async function testApp(pool: Pool, deps: Pick<AppDeps, "blobStore" | "compute" | "migrationProjection" | "operations" | "status" | "capabilitySampler"> = {}, registerCleanup: RegisterCleanup = afterAll): Promise<App> {
   const dataDir = await mkdtemp(join(tmpdir(), "bp-enrollment-fixture-"));
   // Register in the calling test file: imported module hooks only run for their first file.
   registerCleanup(async () => {

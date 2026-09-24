@@ -102,4 +102,8 @@ test("GET /status.json and the component health paths are public, uncached and s
   expect(workerd.status).toBe(503);
   expect(await workerd.text()).toBe("");
   expect((await degraded.handle(new Request("http://localhost/health/rustfs"))).status).toBe(503);
+  const rejecting = await testApp(pool, { status: readStatusConfig({ ...images, BP_COMPUTE_URL: "http://workerd:8080" }, "http://localhost"), capabilitySampler: () => Promise.reject(new Error("sampler_failed")) });
+  const rejected = await rejecting.handle(new Request("http://localhost/health/workerd"));
+  expect(rejected.status).toBe(503);
+  expect(await rejected.text()).toBe("");
 });

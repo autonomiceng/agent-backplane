@@ -45,7 +45,7 @@ export function publicStatus(sample: StatusSample, config: StatusConfig) {
 // GET /status.json and GET /health/<component> are public in every access mode; bodies carry no diagnostics.
 export function statusRoute(config: StatusConfig, sample: () => Promise<StatusSample>, pool: Pool, capabilities?: CapabilitySampler) {
   const headers = { "cache-control": "no-store" };
-  const capability = async (name: "files" | "functions") => (await capabilities?.())?.[name].state === "healthy" ? 200 : 503;
+  const capability = (name: "files" | "functions") => Promise.resolve(capabilities?.()).then(sample => sample?.[name].state === "healthy" ? 200 : 503, () => 503);
   const probe = (id: Exclude<ComponentId, "server">, run: () => Promise<number>) => async () => new Response(null, { status: config.enabled[id] ? await run() : 404, headers });
   const detail = { hide: true };
   return new Elysia({ name: "status" })

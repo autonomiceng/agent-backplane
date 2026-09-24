@@ -63,8 +63,9 @@ selection, a rerun preserves it, and a conflicting explicit profile set is refus
 Capability or storage changes are explicit upgrades or migrations (ADR-0009). The first
 User enrolls through the CLI inside the server image (`compose.enroll.yaml`), so Bun never
 runs on the host. The server publishes the Status Document at `/status.json` and one
-status-only health path per component; Caddy proxies both. No host observer or timer exists;
-see [health](operations/health.md#public-status).
+status-only health path per component; Caddy proxies both. The stack installs no host
+observer or timer; installs that still carry the version 1 timer run
+`scripts/retire-status-timer.sh` once ([health](operations/health.md#public-status)).
 
 ## Tenancy and identity
 
