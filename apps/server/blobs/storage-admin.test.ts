@@ -5,6 +5,7 @@ test("operator CLI requires an explicit verb and retains checkpoint/fence eviden
   expect(storageAdminOptions(["reconcile", "--fenced", "--checkpoint", "capture-1", "--retain-unreferenced"]))
     .toEqual({ mode: "reconcile", fenced: true, checkpoint: "capture-1", retain: true });
   expect(() => storageAdminOptions([])).toThrow();
+  expect(() => storageAdminOptions(["adopt", "--fenced", "--checkpoint", "capture-1"])).toThrow("blob_binding_usage");
   expect(() => storageAdminOptions(["initialize", "--retain-unreferenced"])).toThrow();
   for (const option of [["--checkpoint", "capture"], ["--retain-unreferenced"], ["--checkpoint", ""]]) {
     expect(() => storageAdminOptions(["inspect", "--fenced", ...option])).toThrow("blob_binding_usage");

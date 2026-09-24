@@ -25,8 +25,6 @@ services:
       BP_WORKERD_IMAGE: ${BP_WORKERD_IMAGE:-ghcr.io/autonomiceng/agent-backplane-workerd:main-91de7da@sha256:9949989b11d68f62229c90bbcc8afb9fd4384d8eb90f09c67acc692d6a45e686}
       BP_WORKERD_HOST_IMAGE_ID: ${BP_WORKERD_HOST_IMAGE_ID:-}
       BP_WORKERD_BINARY_SHA256: ${BP_WORKERD_BINARY_SHA256:-f31da6d248028d698806aa93d1b3aec28bbd4b4b7ddc31e967408ab6406fa5aa}
-      BP_WORKERD_DIGEST: ${BP_WORKERD_DIGEST:-}
-      BP_WORKERD_REPOSITORY: ${BP_WORKERD_REPOSITORY:-}
     volumes:
       - ./apps/server/compute/workerd:/compute:ro
     read_only: true

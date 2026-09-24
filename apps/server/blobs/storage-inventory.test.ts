@@ -4,7 +4,7 @@ import { storageInventory } from "./storage-inventory.ts";
 test("inventory distinguishes referenced/staged bytes and rejects a duplicate enumeration", async () => {
   const f = await adoptionFixture();
   try {
-    const blob = await f.legacy();
+    const blob = await f.writeBlob();
     await f.store.stage(blob.workspaceId, blob.id, Buffer.from("stage"));
     const proof = await f.admin.begin(tx => storageInventory(tx, f.store, true));
     expect(proof.objects.map(ref => ref.classification).sort()).toEqual(["referenced", "unreferenced"]);

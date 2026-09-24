@@ -33,7 +33,7 @@ Source inputs were checked against the official npm release integrity:
 
 This fixes build inputs; it does not claim bit-identical OCI output from different
 Docker builders. Record `docker image inspect` content identity after building. A local
-image ID is not a registry manifest digest. Do not place it in the legacy `BP_WORKERD_DIGEST`. The [runtime identity contract](../runtime.md)
+image ID is not a registry manifest digest. The [runtime identity contract](../runtime.md)
 accepts local tags through `BP_WORKERD_IMAGE` and verifies executable bytes against
 `BP_WORKERD_BINARY_SHA256` at startup. Record the actual image ID from each build as candidate artifact evidence. With compute
 selected and `BP_WORKERD_IMAGE` unset or empty, bootstrap pulls the published build of this

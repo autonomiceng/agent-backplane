@@ -61,7 +61,7 @@ standalone Caddy. Behind Platform Edge (`--access-mode proxy`) no Caddy runs: Ed
 the server directly at `bp-server:3000` (ADR-0021). Bootstrap records the native Compose project,
 ordered files, profiles and Files backend in `.env`; ordinary Compose commands reuse that
 selection, a rerun preserves it, and a conflicting explicit profile set is refused.
-Capability or storage changes are explicit upgrades or migrations (ADR-0009). The first
+Bootstrap never changes the capabilities or Files backend of an existing installation (ADR-0009). The first
 User enrolls through the CLI inside the server image (`compose.enroll.yaml`), so Bun never
 runs on the host. The server publishes the Status Document at `/status.json` and one
 status-only health path per component; the standalone edge proxies `/status.json` and
@@ -120,7 +120,7 @@ Hero view: the Run timeline, showing which harnesses touched which tables, queue
 
 ## Files and Functions (selectable overlays, experimental)
 
-Blobs: Workspace-scoped, provenance-stamped storage. Filesystem storage ships with core; `--profile blobs` selects the S3 overlay with digest-pinned RustFS 1.0.0. Backend switches require explicit migration. See ADR-0009.
+Blobs: Workspace-scoped, provenance-stamped storage. Filesystem storage ships with core; `--profile blobs` selects the S3 overlay with digest-pinned RustFS 1.0.0. An installation keeps the backend it started with; there is no tool that moves Files between backends. See ADR-0009.
 
 Compute: single-node workerd, one isolate per submitted function, invoked over HTTP with the Workspace credential bound. Deployment and invocation provenance are recorded separately. A fresh install omits both overlays. Selected Functions pull the published, digest-pinned workerd image
 when its image override is absent or blank. Bootstrap success requires core readiness

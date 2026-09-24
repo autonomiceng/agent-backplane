@@ -1,4 +1,4 @@
-// Case 10's authority evidence. Run only against root's owned 512 MiB runtime container.
+// Container-memory authority case. Run only through tests/acceptance/workerd-gate.py, which owns the 512 MiB runtime container.
 import { expect, test } from "bun:test";
 import { workerdPgFixture } from "./workerd-pg-fixture.ts";
 

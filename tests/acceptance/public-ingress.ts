@@ -36,9 +36,11 @@ async function scenario() {
   assert(!config.services.server.env_file, "server env_file exposes host secrets");
   const serverEnv = config.services.server.environment;
   assert.equal(new URL(serverEnv.BP_PUBLIC_URL).origin, edge.origin);
+  // Core plus edge server settings, and the configured image references the Status Document reports.
   const allowed = new Set(["BP_DATABASE_URL", "BP_PORT", "BP_DATA_DIR", "BP_OPERATIONS_TOKEN",
-    "NODE_ENV", "BP_RETENTION_PURGE_INTERVAL", "BP_BACKUP_KEEP",
-    "BP_BACKUP_DIR", "BP_AUTH_SECRET", "BP_PUBLIC_URL", "BP_AUTH_URL", "BP_SIGNUP", "BP_ACCESS_MODE"]);
+    "NODE_ENV", "BP_RETENTION_PURGE_INTERVAL", "BP_BACKUP_KEEP", "BP_STARTUP_VERIFY_TIMEOUT",
+    "BP_BACKUP_DIR", "BP_AUTH_SECRET", "BP_PUBLIC_URL", "BP_SIGNUP", "BP_ACCESS_MODE", "BP_CADDY_ENABLED",
+    "BP_SERVER_IMAGE", "BP_POSTGRES_IMAGE", "BP_RUSTFS_IMAGE", "BP_WORKERD_IMAGE", "BP_CADDY_IMAGE"]);
   assert(Object.keys(serverEnv).every(key => allowed.has(key)), "unexpected core server environment key");
   const ids = (await compose("ps", "-q", "server", "postgres", "edge")).trim().split(/\s+/);
   assert.equal(ids.length, 3, "server, postgres and edge must be running");

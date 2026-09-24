@@ -9,7 +9,7 @@ import { principalFixture, issueKey, createRun } from "../../testing/session.ts"
 import { filesystemStore } from "../filesystem-store.ts";
 import { adoptStorage, type AdoptionOptions } from "../storage-adoption.ts";
 import { verifyStorageBinding } from "../storage-binding.ts";
-export const adoption = { mode: "adopt", checkpoint: "checkpoint-1", fenced: true, retain: false } satisfies AdoptionOptions;
+export const reconciliation = { mode: "reconcile", checkpoint: "checkpoint-1", fenced: true, retain: false } satisfies AdoptionOptions;
 export const initialization = { mode: "initialize", checkpoint: "", fenced: false, retain: false } satisfies AdoptionOptions;
 export async function adoptionFixture() {
   const url = await migratedDatabase(), admin = createPool(adminUrl(url));
@@ -34,7 +34,7 @@ export async function adoptionFixture() {
         await Bun.sleep(10);
       }
     };
-    const legacy = async () => {
+    const writeBlob = async () => {
       const runtime = createPool(url, 1);
       try {
         const f = await principalFixture(runtime, { blobStore: store }, cleanup => cleanups.push(cleanup));
@@ -56,7 +56,7 @@ export async function adoptionFixture() {
       try { const release = await verifyStorageBinding(runtime, selected); await release(); }
       finally { await runtime.close(); await waitForStoppedRuntime(); }
     };
-    return { url, admin, dataDir, store, legacy, verify, close, operate: (options: AdoptionOptions) => adoptStorage(admin, store, options) };
+    return { url, admin, dataDir, store, writeBlob, verify, close, operate: (options: AdoptionOptions) => adoptStorage(admin, store, options) };
   } catch (error) {
     try { await close(); } catch { /* Preserve the setup failure after attempting every cleanup. */ }
     throw error;

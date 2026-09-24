@@ -37,10 +37,8 @@ export function normalizeOrigin(value: string): string {
 export function resolvePublicOrigin(env: Record<string, string | undefined>, fallback: string): string {
   const allow = env.BP_ALLOW_INSECURE_ORIGIN ?? "false";
   if (allow !== "true" && allow !== "false") throw new ConfigError("BP_ALLOW_INSECURE_ORIGIN must be true or false");
-  const canonical = env.BP_PUBLIC_URL ? normalizeOrigin(env.BP_PUBLIC_URL) : undefined;
-  const auth = env.BP_AUTH_URL ? normalizeOrigin(env.BP_AUTH_URL) : undefined;
-  const origin = canonical ?? normalizeOrigin(fallback);
-  if (auth && origin !== auth) throw new ConfigError("BP_PUBLIC_URL and BP_AUTH_URL must match");
+  if (env.BP_AUTH_URL) throw new ConfigError("BP_AUTH_URL is unsupported; use BP_PUBLIC_URL");
+  const origin = env.BP_PUBLIC_URL ? normalizeOrigin(env.BP_PUBLIC_URL) : normalizeOrigin(fallback);
   if (origin.startsWith("http:") && !isLoopbackHost(new URL(origin).hostname) && allow !== "true") {
     throw new ConfigError("non-loopback HTTP requires BP_ALLOW_INSECURE_ORIGIN=true");
   }

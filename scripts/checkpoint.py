@@ -16,7 +16,6 @@ import time
 import tarfile
 import tempfile
 import uuid
-import runpy
 from urllib.parse import urlsplit
 from datetime import datetime, timezone
 
@@ -140,6 +139,18 @@ def require_empty(path):
         raise ValueError('restore refuses non-empty targets')
 
 
+def require_checkpoint_version(doc, services):
+    """Only the current manifest shape restores: helper images, storage binding and upstream recovery references recorded."""
+    images, schema = doc.get('images'), doc.get('after', {}).get('schema')
+    current = (doc.get('version') == 1 and isinstance(images, dict) and 'server' in images and 'migrate' in images
+               and ('storage-init' in images or 'storage-init' not in services) and isinstance(schema, int) and schema >= 32
+               and isinstance(doc.get('storage'), dict) and 'migration' not in doc
+               and all('recoveryReference' in image for name, image in images.items()
+                       if name not in ('server', 'migrate', 'storage-init') and not (name == 'blob-bootstrap' and image.get('id') == images['server'].get('id'))))
+    if not current:
+        raise ValueError('unsupported_checkpoint_version: this Checkpoint predates the current manifest; restore it with the checkout that captured it')
+
+
 class Stack:
     def __init__(self, env_file, source=None, *, compose_files=None):
         self.env_file = env_file.resolve()
@@ -172,9 +183,7 @@ class Stack:
             doc = json.loads((source / 'manifest.json').read_text())
             if doc['artifacts'] != inventory(source):
                 raise ValueError('checkpoint artifacts or checksums differ')
-            captured_schema = doc.get('after', {}).get('schema')
-            if 'storage-init' in self.services and ('storage-init' not in doc['images'] or isinstance(captured_schema, int) and captured_schema < 32):
-                raise ValueError('pre-binding Checkpoint requires the matching pre-upgrade checkout before restore; its archived image has no storage-init command')
+            require_checkpoint_version(doc, self.services)
             recorded = doc['images']
             if 'server-image.tar' in doc['artifacts']:
                 command(['docker', 'load', '--input', str(source / 'server-image.tar')])
@@ -185,12 +194,12 @@ class Stack:
         blob_services = ['rustfs', 'blob-bootstrap'] if self.backend == 's3' else []
         for service in ('postgres', 'server', *(['edge'] if 'edge' in self.services else []), *helpers, *blob_services):
             ref = self.services[service]['image']
-            expected = recorded.get(service, recorded.get(helpers.get(service))) if recorded is not None else None
+            expected = recorded.get(service) if recorded is not None else None
             try:
                 if recorded is not None:
                     if expected is None or expected['reference'] != ref:
                         raise ValueError(f'{service}: restore requires the recorded image reference; check the env file and exported BP_* settings')
-                    recovery = expected.get('recoveryReference', ref)
+                    recovery = expected.get('recoveryReference')
                     covered = service == 'blob-bootstrap' and expected['id'] == recorded['server']['id']
                     if service not in helpers and service != 'server' and not covered:
                         if not re.fullmatch(r'[^\s@]+@sha256:[a-f0-9]{64}', recovery):
@@ -217,7 +226,7 @@ class Stack:
                     raise ValueError(f'{service}: helper must use the same content as {helpers[service]}')
             elif service != 'server' and not (service == 'blob-bootstrap' and image_id == self.images['server']['id']):
                 digests = info.get('RepoDigests') or []
-                recovery = expected.get('recoveryReference', ref) if expected is not None else next((d for d in digests
+                recovery = expected['recoveryReference'] if expected is not None else next((d for d in digests
                     if re.fullmatch(r'[^\s@]+@sha256:[a-f0-9]{64}', d)
                     and command(['docker', 'image', 'inspect', '--format', '{{.Id}}', d]) == image_id), None)
                 if recovery is None:
@@ -312,128 +321,23 @@ def wal_boundary(base_manifest, segment_bytes):
     return boundaries
 
 
-def pin_checkpoint(repository, checkpoint, migration):
-    if str(uuid.UUID(migration)) != migration:
-        raise ValueError('invalid migration pin identity')
-    directory = repository / '.pins'
-    directory.mkdir(mode=0o700, exist_ok=True)
-    if directory.is_symlink() or directory.stat().st_mode & 0o077:
-        raise CheckpointPinError(directory, 'directory_invalid')
-    digest = hashlib.sha256((checkpoint / 'manifest.json').read_bytes()).hexdigest() if checkpoint is not None else None
-    record = dict(checkpoint=checkpoint.name, manifestSha256=digest, migration=migration) if checkpoint is not None else dict(checkpoint=None, migration=migration)
-    path = directory / (migration + '-' + (digest or 'pending') + '.json')
-    content = json.dumps(record, sort_keys=True).encode() + b'\n'
-    # Callers hold the repository lock. Only a fully synced record is published;
-    # this recognizable unpublished name carries no checkpoint custody obligation.
-    if path.exists() or path.is_symlink():
-        if (path.is_symlink() or not path.is_file() or path.stat().st_mode & 0o077 or path.stat().st_nlink != 1
-                or path.stat().st_uid != os.getuid() or path.stat().st_size > 4096 or path.read_bytes() != content):
-            raise CheckpointPinError(path, 'record_invalid')
-    else:
-        temporary = directory / ('.' + path.name + '.' + uuid.uuid4().hex + '.tmp')
-        try:
-            with os.fdopen(os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600), 'wb') as file:
-                file.write(content); file.flush(); os.fsync(file.fileno())
-            os.replace(temporary, path)
-        finally:
-            temporary.unlink(missing_ok=True)
-    for parent in (directory, repository):
-        fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(fd)
-        finally:
-            os.close(fd)
-    return path, digest
-
-
-class CheckpointPinError(ValueError):
-    def __init__(self, path, reason):
-        super().__init__('blob_binding_checkpoint_pin_recovery_required')
-        self.reason = reason if reason in ('directory_invalid', 'record_invalid', 'identity_invalid', 'reservation_invalid',
-            'checkpoint_invalid', 'checkpoint_missing', 'manifest_changed', 'artifacts_changed', 'unreadable') else 'unreadable'
-        name = path.name
-        self.pin = name if name == '.pins' or re.fullmatch(r'[a-f0-9-]{36}-(?:[a-f0-9]{64}|pending)\.json', name) else 'unrecognized-entry'
-
-
-def pinned_checkpoints(repository):
-    path = repository / '.pins'
-    reason = 'directory_invalid'
-    try:
-        directory = path
-        if directory.is_symlink():
-            raise ValueError('blob_binding_checkpoint_pin_recovery_required')
-        if not directory.exists():
-            return set()
-        if not directory.is_dir() or directory.stat().st_mode & 0o077:
-            raise ValueError('blob_binding_checkpoint_pin_recovery_required')
-        result = set()
-        for path in directory.iterdir():
-            reason = 'record_invalid'
-            if path.is_symlink() or not path.is_file() or path.stat().st_mode & 0o077 or path.stat().st_nlink != 1 or path.stat().st_uid != os.getuid() or path.stat().st_size > 4096:
-                raise ValueError('invalid checkpoint pin')
-            if re.fullmatch(r'\.[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}-(?:[a-f0-9]{64}|pending)\.json\.[a-f0-9]{32}\.tmp', path.name):
-                continue
-            record = json.loads(path.read_text())
-            migration, name = record['migration'], record['checkpoint']
-            reason = 'identity_invalid'
-            if str(uuid.UUID(migration)) != migration:
-                raise ValueError('invalid pin identity')
-            if name is None:
-                reason = 'reservation_invalid'
-                if set(record) != {'checkpoint', 'migration'} or path.name != migration + '-pending.json':
-                    raise ValueError('invalid reservation')
-                candidates = [candidate for candidate in repository.iterdir() if candidate.is_dir() and not candidate.is_symlink()
-                              and (candidate / 'manifest.json').is_file()
-                              and json.loads((candidate / 'manifest.json').read_text()).get('migration', {}).get('id') == migration]
-            else:
-                reason = 'record_invalid'
-                digest = record['manifestSha256']
-                if (set(record) != {'checkpoint', 'migration', 'manifestSha256'} or not re.fullmatch('[a-f0-9]{64}', digest)
-                        or path.name != migration + '-' + digest + '.json' or Path(name).name != name or name in ('.', '..')):
-                    raise ValueError('invalid pinned checkpoint')
-                candidates = [repository / name]
-            for checkpoint in candidates:
-                reason = 'checkpoint_invalid'
-                if checkpoint.is_symlink() or (checkpoint / 'manifest.json').is_symlink():
-                    raise ValueError('invalid pinned checkpoint')
-                manifest_bytes = (checkpoint / 'manifest.json').read_bytes()
-                reason = 'manifest_changed'
-                if name is not None and hashlib.sha256(manifest_bytes).hexdigest() != record['manifestSha256']:
-                    raise ValueError('pinned checkpoint manifest changed')
-                doc = json.loads(manifest_bytes)
-                reason = 'artifacts_changed'
-                if doc['artifacts'] != inventory(checkpoint):
-                    raise ValueError('pinned checkpoint artifacts changed')
-                result.add(checkpoint.name)
-        return result
-    except (ValueError, OSError, KeyError, TypeError, AttributeError) as error:
-        if isinstance(error, FileNotFoundError):
-            reason = 'checkpoint_missing' if reason == 'checkpoint_invalid' else 'unreadable'
-        elif isinstance(error, OSError):
-            reason = 'unreadable'
-        raise CheckpointPinError(path, reason) from None
-
-
 def prune_checkpoints(root, keep, remove=shutil.rmtree):
     if keep < 1:
         raise ValueError('BP_BACKUP_KEEP must be positive')
-    pins = pinned_checkpoints(root)
     complete = []
     for path in root.iterdir():
         if path.is_dir() and not path.is_symlink() and (path / 'manifest.json').is_file():
             doc = json.loads((path / 'manifest.json').read_text())
             complete.append((doc['completedAt'], path, doc))
     complete.sort(key=lambda item: item[0], reverse=True)
-    kept = [item for index, item in enumerate(complete) if index < keep or item[1].name in pins]
     boundaries = {}
-    for _, path, doc in kept:
+    for _, path, doc in complete[:keep]:
         base = json.loads((path / 'postgres/backup_manifest').read_text())
         segment_bytes = doc.get('walSegmentBytes') or (path / 'wal' / doc['segment']).stat().st_size
         for timeline, name in wal_boundary(base, segment_bytes).items():
             boundaries[timeline] = min(boundaries.get(timeline, name), name)
     for _, path, _ in complete[keep:]:
-        if path.name not in pins:
-            remove(path)
+        remove(path)
     return boundaries
 
 
@@ -540,9 +444,7 @@ def qualify_tar(stack):
             raise ValueError('checkpoint helper did not preserve xattrs or numeric ownership')
 
 
-def backup(stack, offline=False, fenced=False, migration=None):
-    # The repository lock protects immutable custody even before application writers stop.
-    pinned_checkpoints(stack.backups / 'backups')
+def backup(stack, offline=False, fenced=False):
     stack.attest()
     if any('@' not in image['reference'] for name, image in stack.images.items() if name in ('postgres', 'edge')):
         print('Upstream image custody is external: retain the recorded immutable references in a registry or a tested off-host image archive; publication was not checked.', file=sys.stderr, flush=True)
@@ -584,9 +486,6 @@ def backup(stack, offline=False, fenced=False, migration=None):
         if stack.backend == 's3':
             prove_root_credentials(stack)
         storage = inspect_storage(stack, offline)
-        pending = storage.get("migration")
-        if pending != migration:
-            raise ValueError("pending storage migration requires its explicit offline checkpoint")
         rustfs_exit = None
         if stack.backend == 's3':
             stopped.append('rustfs')
@@ -653,13 +552,7 @@ def backup(stack, offline=False, fenced=False, migration=None):
                                       digest=credentials_digest(stack, name, salt))
         doc['walSegmentBytes'] = segment_bytes
         doc['captureMode'] = 'offline' if offline else 'coordinated'
-        if migration:
-            if not offline or migration.get("phase") != "committed_pending_checkpoint":
-                raise ValueError("migration checkpoint requires pending cutover and offline capture")
-            doc["migration"] = migration
         publish_checkpoint(dest, doc)
-        if migration:
-            pin_checkpoint(stack.backups / "backups", dest, migration["id"])
         completed = dest
         # Revalidate after publication so pending reservations also protect this capture.
         boundaries = prune_checkpoints(stack.backups / 'backups', stack.keep,
@@ -786,8 +679,7 @@ def storage_evidence(stack, evidence):
     if not re.fullmatch('[a-f0-9]{64}', digest):
         raise ValueError('invalid storage inventory digest')
     return dict(**identity, backend=binding['backend'], phase=binding['phase'], inventorySha256=digest,
-                objectCount=len(evidence['objects']), bucket=stack.services['server']['environment'].get('BP_BLOB_S3_BUCKET') if stack.backend == 's3' else None,
-                **({'migration': evidence['migration']} if evidence.get('migration') else {}))
+                objectCount=len(evidence['objects']), bucket=stack.services['server']['environment'].get('BP_BLOB_S3_BUCKET') if stack.backend == 's3' else None)
 
 
 def inspect_storage(stack, offline=False):
@@ -838,8 +730,6 @@ def prepare_restored_storage(stack, checkpoint, retain_unreferenced=False, captu
     evidence = json.loads(storage_admin(stack, 'inspect', '--fenced'))
     if (evidence.get('intent') or {}).get('phase') != 'ready':
         raise RuntimeError('restored storage has an unfinished binding intent; keep the server stopped and retry its original operator command before starting')
-    if evidence.get("migration") and not captured:
-        raise RuntimeError("pending migration requires exact captured storage evidence")
     if captured is not None:
         if captured.get('inspection') != 'failed' and storage_evidence(stack, evidence) != captured:
             raise RuntimeError('restored storage differs from source identity or full inventory; keep server and bootstrap stopped')
@@ -851,9 +741,7 @@ def prepare_restored_storage(stack, checkpoint, retain_unreferenced=False, captu
         storage_admin(stack, 'reconcile', '--fenced', '--checkpoint', checkpoint, '--retain-unreferenced')
 
 
-def restore(stack, source, retain_unreferenced=False, migration_budget=3600):
-    if type(migration_budget) is not int or not 1 <= migration_budget <= 86400:
-        raise ValueError('blob_binding_migration_budget_invalid')
+def restore(stack, source, retain_unreferenced=False):
     source = source.resolve()
     doc = verify(source, stack)
     if source.parent != stack.backups / 'backups' or source.name != doc['name']:
@@ -918,8 +806,6 @@ def restore(stack, source, retain_unreferenced=False, migration_budget=3600):
         mv "$1/checkpoint.auto.conf" "$1/postgresql.auto.conf"
     ''', data, gate, mounts=pgmount, user='postgres')
     prepare_restored_storage(stack, doc['name'], retain_unreferenced, doc.get('storage'), doc.get('mounts'))
-    if doc.get("migration"):
-        runpy.run_path(str(ROOT / "scripts/storage-migrate.py"))["finalize_restored_migration"](stack, source, doc, budget=migration_budget)
     stack.dc('up', '-d', '--no-build', '--pull', 'never', 'server')
     deadline = time.monotonic() + startup_timeout(stack)
     while time.monotonic() < deadline:
@@ -948,14 +834,11 @@ def main():
     parser.add_argument('--fenced', action='store_true', help='attest exclusive operator control: exclude all external writers and mutating helpers until this command finishes')
     parser.add_argument('--offline', action='store_true', help='capture a fenced stopped server without restarting it')
     parser.add_argument('--retain-unreferenced', action='store_true', help='explicitly retain restored cleanup leftovers before starting the server')
-    parser.add_argument('--migration-budget', type=int, help='restore migration-finalization helper seconds, 1..86400; default 3600')
     args = parser.parse_args()
     if args.offline and args.action != 'backup':
         parser.error('--offline is only valid for backup')
     if args.retain_unreferenced and args.action != 'restore':
         parser.error('--retain-unreferenced is only valid for restore')
-    if args.migration_budget is not None and (args.action != 'restore' or not 1 <= args.migration_budget <= 86400):
-        parser.error('--migration-budget requires restore and 1..86400 seconds')
     if not args.fenced:
         parser.error('--fenced is required; hold the external writer fence throughout capture or restore')
     os.umask(0o077)
@@ -970,7 +853,7 @@ def main():
                 else:
                     if args.checkpoint is None:
                         raise ValueError('checkpoint path required')
-                    restore(stack, args.checkpoint, args.retain_unreferenced, migration_budget=args.migration_budget if args.migration_budget is not None else 3600)
+                    restore(stack, args.checkpoint, args.retain_unreferenced)
         finally:
             lock_path.unlink()
 
@@ -985,6 +868,4 @@ if __name__ == '__main__':
         main()
     except (RuntimeError, ValueError, OSError, KeyError) as error:
         print(f'Checkpoint failed: {error}', file=sys.stderr)
-        if isinstance(error, CheckpointPinError):
-            print(json.dumps(dict(reason=error.reason, pin=error.pin)), file=sys.stderr)
         sys.exit(1)

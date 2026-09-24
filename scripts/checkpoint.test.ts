@@ -41,71 +41,22 @@ with tempfile.TemporaryDirectory() as root:
 `)).toContain("restore refuses non-empty targets");
 });
 
-test("retention preserves committed custody, ignores unpublished pin debris and refuses broken pins before deleting bytes", async () => {
-  expect(await python(`import json, os, tempfile, uuid
-from types import SimpleNamespace
+test("retention keeps the newest complete Checkpoints and their WAL boundary", async () => {
+  expect(await python(`import json, tempfile
 from pathlib import Path
 import checkpoint as cp
 with tempfile.TemporaryDirectory() as root:
- p=Path(root)/'backups'; p.mkdir(); migration=str(uuid.uuid4())
+ p=Path(root)/'backups'; p.mkdir()
  for i in range(1,5):
   d=p/str(i); (d/'postgres').mkdir(parents=True)
   (d/'postgres/backup_manifest').write_text(json.dumps({'WAL-Ranges':[{'Timeline':1,'Start-LSN':f'0/{i:02X}000000'}]}))
-  doc={'completedAt':str(i), 'walSegmentBytes':16777216, 'artifacts':cp.inventory(d)}
-  if i==2: pending_doc={**doc,'migration':{'id':migration,'phase':'committed_pending_checkpoint'}}
-  else: (d/'manifest.json').write_text(json.dumps(doc))
- pin,_=cp.pin_checkpoint(p,p/'1',migration)
- # Die during the real staging-file fsync, leaving a partial unpublished record.
- child=os.fork()
- if child==0:
-  def crash(fd): os.ftruncate(fd,1); os._exit(23)
-  cp.os.fsync=crash
-  cp.pin_checkpoint(p,None,migration)
-  os._exit(24)
- assert os.waitpid(child,0)[1]==23<<8
- assert any(path.name.endswith('.tmp') and path.stat().st_size==1 for path in (p/'.pins').iterdir())
- assert cp.pinned_checkpoints(p)=={'1'}
- reservation,_=cp.pin_checkpoint(p,None,migration)
- assert cp.pinned_checkpoints(p)=={'1'}
- # Publishing after the early check must still gain the reservation's protection.
- (p/'2/manifest.json').write_text(json.dumps(pending_doc))
- assert cp.pinned_checkpoints(p)=={'1','2'}
- original=reservation.read_bytes(); reservation.write_bytes(b'{')
- # No Docker/database boundary is supplied: broken custody must stop before either.
- try: cp.backup(SimpleNamespace(backups=p.parent),offline=True,fenced=True)
- except cp.CheckpointPinError as error:
-  assert str(error)=='blob_binding_checkpoint_pin_recovery_required'
-  assert error.reason=='record_invalid' and error.pin==reservation.name
- else: raise AssertionError('broken pin reached capture')
- try: cp.prune_checkpoints(p,1)
- except ValueError as error: assert str(error)=='blob_binding_checkpoint_pin_recovery_required'
- else: raise AssertionError('malformed committed pin allowed pruning')
- assert all((p/str(i)/'postgres/backup_manifest').is_file() for i in range(1,5))
- reservation.write_bytes(original)
- # A moved pinned checkpoint and unrecognized old atomic-write debris also fail closed.
- (p/'1').rename(p/'moved')
- try: cp.prune_checkpoints(p,1)
- except cp.CheckpointPinError as error:
-  assert str(error)=='blob_binding_checkpoint_pin_recovery_required'
-  assert error.reason=='checkpoint_missing' and error.pin==pin.name
- else: raise AssertionError('missing pinned checkpoint allowed pruning')
- (p/'moved').rename(p/'1')
- legacy=p/'.pins/.migration-unknown'; legacy.write_bytes(b''); legacy.chmod(0o600)
- try: cp.prune_checkpoints(p,1)
- except ValueError as error: assert str(error)=='blob_binding_checkpoint_pin_recovery_required'
- else: raise AssertionError('unknown pin debris ignored')
- private=cp.CheckpointPinError(Path('credential-secret-value'), 'arbitrary secret exception')
- assert private.pin=='unrecognized-entry' and private.reason=='unreadable'
- assert str(private)=='blob_binding_checkpoint_pin_recovery_required'
- legacy.unlink()
- assert all((p/str(i)/'postgres/backup_manifest').is_file() for i in range(1,5))
+  (d/'manifest.json').write_text(json.dumps({'completedAt':str(i), 'walSegmentBytes':16777216, 'artifacts':cp.inventory(d)}))
  (p/'incomplete').mkdir()
- boundaries=cp.prune_checkpoints(p,1)
- assert sorted(x.name for x in p.iterdir())==['.pins','1','2','4','incomplete']
- assert boundaries=={1:'000000010000000000000001'}
- assert pin.read_bytes() and reservation.read_bytes()==original
- print('custody retained')
-`)).toContain("custody retained");
+ boundaries=cp.prune_checkpoints(p,2)
+ assert sorted(x.name for x in p.iterdir())==['3','4','incomplete']
+ assert boundaries=={1:'000000010000000000000003'}
+ print('retention kept')
+`)).toContain("retention kept");
 });
 
 test("destroy refuses a mismatched typed project before accessing Docker", async () => {
@@ -192,25 +143,18 @@ test("restore resolves recorded immutable content and rejects unavailable or dif
   await python(imageFixture + `
 stack = cp.Stack(p/'.env'); recorded = stack.images
 running = False
-(p/'manifest.json').write_text(json.dumps({'images':recorded,'artifacts':{},'after':{'schema':31}}))
-try: cp.Stack(p/'.env', p)
-except ValueError as error: assert 'matching pre-upgrade checkout' in str(error)
-else: raise AssertionError('old runtime was sent through newer initialization')
-(p/'manifest.json').write_text(json.dumps({'images':recorded,'artifacts':{}}))
+def write(images, **fields):
+ (p/'manifest.json').write_text(json.dumps({'version':1,'images':images,'artifacts':{},'after':{'schema':35},'storage':{'backend':'filesystem'},**fields}))
 def refused(fragment):
  try: cp.Stack(p/'.env', p)
  except ValueError as error:
   assert fragment in str(error), str(error)
   assert 'private registry diagnostics' not in str(error)
  else: raise AssertionError('unsafe restore accepted')
+write(recorded)
 services['server']['image'] = 'other-server'
 refused('recorded image reference')
 services['server']['image'] = refs['server']
-recovery = recorded['postgres'].pop('recoveryReference')
-(p/'manifest.json').write_text(json.dumps({'images':recorded,'artifacts':{}}))
-refused('no immutable recovery image')
-recorded['postgres']['recoveryReference'] = recovery
-(p/'manifest.json').write_text(json.dumps({'images':recorded,'artifacts':{}}))
 missing = digests['pg:experiment']
 refused('pull or load the recorded image')
 missing = None
@@ -221,18 +165,35 @@ ids['pg:experiment'] = 'sha256:moved-tag'
 restored = cp.Stack(p/'.env', p)
 assert restored.images == recorded
 assert not pulled, 'already loaded immutable content should not need a registry'
-local_missing.add(recovery)
+local_missing.add(recorded['postgres']['recoveryReference'])
 cp.Stack(p/'.env', p)
-assert pulled == [recovery]
-# Version-1 manifests without recoveryReference still accept their original digest pins.
-for service in ('postgres','edge'):
- ref = digests[refs[service]]
- services[service]['image'] = ref
- recorded[service] = {'reference':ref, 'id':recorded[service]['id']}
- digests[ref] = ref
-del recorded['migrate']
-(p/'manifest.json').write_text(json.dumps({'images':recorded,'artifacts':{}}))
-cp.Stack(p/'.env', p)
+assert pulled == [recorded['postgres']['recoveryReference']]
+root.cleanup()
+`);
+});
+
+test("restore refuses every earlier manifest shape with unsupported_checkpoint_version before touching images", async () => {
+  await python(imageFixture + `
+stack = cp.Stack(p/'.env'); recorded = stack.images
+running = False
+def refused(doc):
+ (p/'manifest.json').write_text(json.dumps({'artifacts':{},**doc}))
+ inspected = []
+ cp.command = lambda args, env=None: inspected.append(args) or command(args, env)
+ try: cp.Stack(p/'.env', p)
+ except ValueError as error: assert str(error).startswith('unsupported_checkpoint_version: '), str(error)
+ else: raise AssertionError('earlier manifest accepted: '+json.dumps(doc)[:200])
+ assert not [args for args in inspected if args[:3] == ['docker','image','inspect'] or args[:2] == ['docker','pull']]
+current = {'version':1,'images':recorded,'after':{'schema':35},'storage':{'backend':'filesystem'}}
+without_recovery = {name:{key:value for key,value in image.items() if key != 'recoveryReference'} for name,image in recorded.items()}
+without_helpers = {name:image for name,image in recorded.items() if name not in ('migrate','storage-init')}
+for doc in ({**current,'images':without_recovery}, {**current,'images':without_helpers}, {**current,'after':{'schema':31}},
+            {**current,'after':{}}, {**current,'version':2}, {**current,'migration':{'id':'x','phase':'committed_pending_checkpoint'}},
+            {key:value for key,value in current.items() if key != 'storage'}):
+ refused(doc)
+cp.command = command
+(p/'manifest.json').write_text(json.dumps({'artifacts':{},**current}))
+assert cp.Stack(p/'.env', p).images == recorded
 root.cleanup()
 `);
 });
@@ -485,7 +446,7 @@ ids[digests['bootstrap:custom']]='sha256:independent'
 recorded=cp.Stack(p/'.env').images
 assert recorded['blob-bootstrap']['id']!=recorded['server']['id']
 running=False
-(p/'manifest.json').write_text(json.dumps({'images':recorded,'artifacts':{}}))
+(p/'manifest.json').write_text(json.dumps({'version':1,'images':recorded,'artifacts':{},'after':{'schema':35},'storage':{'backend':'s3'}}))
 local_missing.add(digests['bootstrap:custom'])
 restored=cp.Stack(p/'.env',p)
 assert restored.images==recorded and pulled==[digests['bootstrap:custom']]
@@ -786,40 +747,5 @@ actual['Image']='recorded-image'; recorded['rustfs-data']['entrypoint']=['differ
 try: cp.prepare_restored_storage(stack,'capture',False,captured,recorded)
 except ValueError as error: assert 'launch or mount evidence differs' in str(error)
 else: raise AssertionError('captured launch evidence ignored')
-`);
-});
-
-test("restore migration budget refuses invalid input before target selection and preserves custom or default handoff", async () => {
-  await python(`import contextlib, io, json, sys, tempfile
-from pathlib import Path
-from types import SimpleNamespace
-import checkpoint as cp
-with tempfile.TemporaryDirectory() as root:
- p=Path(root); env=p/'install.env'; env.write_text('private fixture'); env.chmod(0o600)
- def forbidden(*args,**kwargs): raise AssertionError('invalid budget reached target selection')
- cp.Stack=forbidden
- for action, budget in (('restore','0'),('restore','86401'),('backup','7100')):
-  sys.argv=['checkpoint.py',action,str(p/'capture'),'--env-file',str(env),'--fenced','--migration-budget',budget]
-  diagnostic=io.StringIO()
-  with contextlib.redirect_stderr(diagnostic):
-   try: cp.main()
-   except SystemExit as error: assert error.code==2
-   else: raise AssertionError('invalid CLI budget accepted')
-  assert '--migration-budget requires restore and 1..86400 seconds' in diagnostic.getvalue()
-  assert not env.with_suffix('.env.lock').exists() and not (p/'.checkpoint.lock').exists()
- # Direct callers get the same check before even source verification.
- try: cp.restore(SimpleNamespace(),p/'absent',migration_budget=0)
- except ValueError as error: assert str(error)=='blob_binding_migration_budget_invalid'
- else: raise AssertionError('direct invalid budget accepted')
- cp.Stack=lambda *args:SimpleNamespace(backups=p)
- receipt=p/'restore-handoff.json'
- def restore_boundary(stack,source,retain_unreferenced,migration_budget):
-  receipt.write_text(json.dumps({'budget':migration_budget,'retain':retain_unreferenced,'source':str(source)}))
- cp.restore=restore_boundary
- for option, expected in (([],3600),(['--migration-budget','7100'],7100)):
-  sys.argv=['checkpoint.py','restore',str(p/'capture'),'--env-file',str(env),'--fenced',*option]
-  cp.main()
-  assert json.loads(receipt.read_text())=={'budget':expected,'retain':False,'source':str(p/'capture')}
-  assert not env.with_suffix('.env.lock').exists()
 `);
 });

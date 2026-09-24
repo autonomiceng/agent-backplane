@@ -1,9 +1,9 @@
-// Root-run process gate: legacy refusal, explicit adoption and loss of runtime ownership.
+// Process gate: unbound refusal, explicit initialization and loss of runtime ownership. Owns its cluster and processes.
 import assert from "node:assert/strict";
 import { resolve } from "node:path";
 import { readFile } from "node:fs/promises";
 import { startCluster } from "../../apps/server/testing/postgres.ts";
-import { adoptionFixture, adoption } from "../../apps/server/blobs/testing/storage-adoption-fixture.ts";
+import { adoptionFixture, initialization } from "../../apps/server/blobs/testing/storage-adoption-fixture.ts";
 const cluster = await startCluster(); Bun.env.BP_TEST_POSTGRES_URL = cluster.url;
 const fixture = await adoptionFixture();
 const children: ReturnType<typeof Bun.spawn>[] = [];
@@ -26,22 +26,21 @@ async function exited(child: ReturnType<typeof Bun.spawn>, timeout = 10000) {
   finally { clearTimeout(timer); }
 }
 try {
-  const blob = await fixture.legacy();
-  const bytes = await fixture.store.open(blob.workspaceId, blob.id);
   const refused = await start(); assert.equal(await exited(refused.child), 1);
   const [out, err] = await refused.output;
-  assert(err.includes("blob_binding_required"), "legacy refusal did not identify adoption requirement");
+  assert(err.includes("blob_binding_required"), "unbound refusal did not identify the missing binding");
   assert(!out.includes("listening") && !out.includes("retention.purge"), "refused server admitted traffic or purge");
-  assert.deepEqual(await fixture.store.open(blob.workspaceId, blob.id), bytes);
   await assert.rejects(readFile(resolve(fixture.dataDir, "blobs/.backplane-store")));
-  await fixture.operate(adoption);
+  await fixture.operate(initialization);
+  const blob = await fixture.writeBlob();
+  const bytes = await fixture.store.open(blob.workspaceId, blob.id);
   async function ready(active: Awaited<ReturnType<typeof start>>) {
     const deadline = performance.now() + 15000;
     while (true) {
       const response = await fetch(active.origin + "/health/ready", { headers: { authorization: `Bearer ${operations}` }, signal: AbortSignal.timeout(1000) }).catch(() => undefined);
       await response?.body?.cancel(); if (response?.ok) return;
-      assert(active.child.exitCode === null, "adopted server exited before readiness");
-      assert(performance.now() < deadline, "adopted server readiness deadline exceeded"); await Bun.sleep(100);
+      assert(active.child.exitCode === null, "initialized server exited before readiness");
+      assert(performance.now() < deadline, "initialized server readiness deadline exceeded"); await Bun.sleep(100);
     }
   }
   const active = await start(); await ready(active);
@@ -59,7 +58,7 @@ try {
   const [, restarted] = await beforeRestart.output; assert(restarted.includes("blob_binding_lease_lost"));
   const recovered = await start(); await ready(recovered);
   assert.deepEqual(await fixture.store.open(blob.workspaceId, blob.id), bytes);
-  console.log("PASS: unbound legacy startup preserves bytes and starts no listener/purge; explicit adoption starts the real server; session loss and PostgreSQL restart exit the old process; a new process recovers the unchanged store");
+  console.log("PASS: unbound startup starts no listener/purge; explicit initialization starts the real server; session loss and PostgreSQL restart exit the old process; a new process recovers the unchanged store");
 } finally {
   for (const child of children) if (child.exitCode === null) { child.kill("SIGKILL"); await child.exited; }
   await fixture.close(); await cluster.stop();

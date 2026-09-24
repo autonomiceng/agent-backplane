@@ -1,6 +1,6 @@
 # agent-backplane
 
-A shared backend your AI agents plug into: typed state, queues, files, approvals and an audit trail that names the agent behind every change. Self-hosted, one Docker Compose file.
+A shared backend your AI agents plug into: typed state, queues, files, approvals and an audit trail that names the agent behind every change. Self-hosted with Docker Compose: six Compose files, `compose.yaml` for core and five overlays.
 
 [![CI](https://img.shields.io/github/actions/workflow/status/autonomiceng/agent-backplane/ci.yml?label=CI)](https://github.com/autonomiceng/agent-backplane/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
@@ -96,6 +96,7 @@ Each runs alone. Shared conventions live in [docs/conventions.md](docs/conventio
 ```sh
 bun run check   # typecheck, lint, generated-contract drift, dashboard build
 bun run test    # tests against a real embedded Postgres
+bun run test:examples  # examples/, outside the default suite
 docker compose --env-file .env config -q  # after bootstrap creates .env
 docker compose --env-file .env -f compose.yaml -f compose.dev.yaml build  # server image from this checkout
 ```

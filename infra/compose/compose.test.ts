@@ -89,7 +89,11 @@ test("proxy mode is core behind Platform Edge: no Caddy overlay and no gateway f
   const everything = await config(["compose.blobs.yaml", "compose.compute.yaml", "compose.edge.yaml"], "*", [
     ...Object.entries(settings).map(([key, value]) => `${key}=${value}`),
     "BP_RUSTFS_ROOT_USER=fixture", "BP_RUSTFS_ROOT_PASSWORD=fixture", "BP_BLOB_S3_ACCESS_KEY=fixture", "BP_BLOB_S3_SECRET_KEY=fixture", "BP_COMPUTE_TOKEN=fixture",
+    // Unsupported settings left in an env file never reach a container.
+    "BP_AUTH_URL=https://backplane.example.com", `BP_WORKERD_DIGEST=sha256:${"a".repeat(64)}`, "BP_WORKERD_REPOSITORY=registry.example/workerd",
   ]);
+  expect(Object.keys(everything.services).sort()).toEqual(["blob-bootstrap", "edge", "migrate", "postgres", "rustfs", "server", "storage-init", "workerd"]);
+  expect(JSON.stringify(everything)).not.toMatch(/BP_AUTH_URL|BP_WORKERD_DIGEST|BP_WORKERD_REPOSITORY/);
   // The standalone edge is the only Caddy: loopback ports, project network only, no proxy or console settings.
   expect(Object.keys(everything.services.edge.networks)).toEqual(["default"]);
   expect(Object.keys(everything.services.edge.environment).sort()).toEqual(["BP_ACCESS_MODE", "BP_EDGE_HOST", "BP_PUBLIC_URL"]);

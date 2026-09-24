@@ -21,7 +21,6 @@ import { createMigrationProjection } from "./schema/migration-projection.ts";
 
 const purgeInterval = readPurgeInterval(Bun.env.BP_RETENTION_PURGE_INTERVAL);
 const config = readConfig(Bun.env);
-if (Bun.env.BP_AUTH_URL) console.warn("BP_AUTH_URL is deprecated; use BP_PUBLIC_URL");
 const compute = createComputeLauncher({ url: Bun.env.BP_COMPUTE_URL, token: Bun.env.BP_COMPUTE_TOKEN, runtimeDigest: Bun.env.BP_WORKERD_RUNTIME_ID, timeoutMs: Bun.env.BP_COMPUTE_TIMEOUT_MS });
 const blobStore = createBlobStore(Bun.env, config.dataDir);
 const migrations = await loadMigrations(new URL("../../db/migrations", import.meta.url).pathname);

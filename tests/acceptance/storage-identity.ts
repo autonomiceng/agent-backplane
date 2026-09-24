@@ -1,5 +1,5 @@
 import { capabilityProbe } from "../../apps/server/platform/capability-probe.ts";
-// Root-run real RustFS/PostgreSQL identity gate. Every resource belongs to this invocation.
+// Real RustFS/PostgreSQL identity gate. Every resource belongs to this invocation.
 import assert from "node:assert/strict";
 import { createHash, createHmac } from "node:crypto";
 import { startCluster, migratedDatabase, adminUrl, type TestCluster } from "../../apps/server/testing/postgres.ts";
