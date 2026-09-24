@@ -145,12 +145,12 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(oct(self.env.stat().st_mode & 0o777), "0o600", "an unchanged env file is tightened on every run")
 
     def test_rerun_preserves_recorded_profiles_and_refuses_a_conflicting_explicit_set(self):
-        code, _, _ = self.bootstrap("--access-mode", "proxy", "--public-url", "https://backplane.example.com", profiles=("gateway", "blobs", "compute"))
+        code, _, _ = self.bootstrap("--access-mode", "proxy", "--public-url", "https://backplane.example.com", profiles=("blobs", "compute"))
         self.assertEqual(code, 0)
         saved = self.env.read_text()
         code, result, calls = self.bootstrap(http=fake_http("claimed", "s3"))
         self.assertEqual(code, 0)
-        self.assertEqual(result["profiles"], ["gateway", "blobs", "compute"])
+        self.assertEqual(result["profiles"], ["blobs", "compute"])
         self.assertEqual(result["enrollment"], "claimed")
         self.assertIsNone(result["capabilityFile"])
         self.assertEqual(self.env.read_text(), saved)
@@ -158,12 +158,41 @@ class BootstrapTests(unittest.TestCase):
             with self.assertRaises(bootstrap.Refused) as refused:
                 self.bootstrap(profiles=flags)
             self.assertEqual(refused.exception.code, "selection_conflict")
-            self.assertIn("recorded COMPOSE_PROFILES='gateway,blobs,compute'", refused.exception.detail)
+            self.assertIn("recorded COMPOSE_PROFILES='blobs,compute'", refused.exception.detail)
             self.assertIn("omit --profile", refused.exception.detail)
         self.assertEqual(self.env.read_text(), saved)
         with self.assertRaises(bootstrap.Refused) as refused:
             self.bootstrap("--access-mode", "local")
         self.assertEqual(refused.exception.code, "env_conflict")
+
+    def test_proxy_mode_runs_core_only_behind_edge_and_the_gateway_profile_is_retired(self):
+        code, result, calls = self.bootstrap("--access-mode", "proxy", "--public-url", "https://backplane.example.com")
+        self.assertEqual(code, 0)
+        self.assertEqual(result["profiles"], [])
+        self.assertEqual(result["composeFiles"], [str(ROOT / "compose.yaml")])
+        self.assertEqual(result["url"], "https://backplane.example.com")
+        self.assertNotIn("rustfsConsole", result)
+        up = next(c for c in calls if c[1] == "compose" and "up" in c)
+        self.assertNotIn("--profile", up)
+        self.assertEqual([c[-1] for c in calls if c[1:3] == ["volume", "create"]], ["agent-backplane_postgres-data", "agent-backplane_server-data"])
+        text = self.env.read_text()
+        self.assertIn("COMPOSE_PROFILES=''", text)
+        self.assertNotIn("BP_TRUSTED_PROXIES", text)
+        self.assertNotIn("BP_RUSTFS_CONSOLE", text)
+        recorded = text.replace("COMPOSE_PROFILES=''", "COMPOSE_PROFILES='gateway,blobs'").replace(
+            f"COMPOSE_FILE='{ROOT / 'compose.yaml'}'", f"COMPOSE_FILE='{ROOT / 'compose.yaml'}:{ROOT / 'compose.gateway.yaml'}:{ROOT / 'compose.blobs.yaml'}'")
+        self.assertNotEqual(recorded, text)
+        self.env.write_text(recorded)
+        runner = runner_with()
+        for extra in ((), ("--profile", "gateway"), ("--dry-run",), ("--profile", "blobs"), ("--profile", "")):
+            with self.assertRaises(bootstrap.Refused, msg=extra) as refused:
+                self.bootstrap(*extra, runner=runner)
+            self.assertEqual(refused.exception.code, "gateway_profile_retired")
+            self.assertIn("Upgrading from the internal gateway", refused.exception.detail)
+            self.assertIn("compose.gateway.yaml", refused.exception.detail)
+        self.assertEqual(runner.calls, [], "the refusal precedes every Docker call")
+        self.assertEqual(self.env.read_text(), recorded)
+        self.assertFalse((ROOT / "compose.gateway.yaml").exists())
 
     def test_proxy_requires_public_url_and_non_loopback_http_needs_the_insecure_override(self):
         with self.assertRaises(bootstrap.Refused) as refused:
@@ -267,17 +296,17 @@ class BootstrapTests(unittest.TestCase):
         self.assertFalse(self.env.exists())
 
     def test_compose_command_lists_the_recorded_files_and_profiles_in_order(self):
-        files = [ROOT / "compose.yaml", ROOT / "compose.gateway.yaml", ROOT / "compose.blobs.yaml", ROOT / "compose.compute.yaml"]
-        self.env.write_text("COMPOSE_PROJECT_NAME='original'\nCOMPOSE_PROFILES='gateway,blobs,compute'\nBP_ACCESS_MODE=proxy\n"
+        files = [ROOT / "compose.yaml", ROOT / "compose.blobs.yaml", ROOT / "compose.compute.yaml"]
+        self.env.write_text("COMPOSE_PROJECT_NAME='original'\nCOMPOSE_PROFILES='blobs,compute'\nBP_ACCESS_MODE=proxy\n"
                             "BP_PUBLIC_URL=https://backplane.example.com\nBP_WORKERD_IMAGE=agent-backplane-workerd:local\n"
                             f"COMPOSE_FILE='{':'.join(map(str, files))}'\n" + "".join(f"{key}={'e' * size * 2}\n" for key, size in bootstrap.SECRETS.items()))
         code, result, calls = self.bootstrap(http=fake_http("claimed", "s3"))
         self.assertEqual(code, 0)
         up = next(c for c in calls if c[1] == "compose" and "up" in c)
         self.assertEqual(up[:8], ["docker", "compose", "--project-name", "original", "--project-directory", str(ROOT), "--env-file", str(self.env)])
-        self.assertEqual(up[8:16], [part for path in files for part in ("-f", str(path))])
-        self.assertEqual(up[16:22], ["--profile", "gateway", "--profile", "blobs", "--profile", "compute"])
-        self.assertEqual(up[22:], ["up", "--detach", "--no-build", "--wait", "--wait-timeout", "300"])
+        self.assertEqual(up[8:14], [part for path in files for part in ("-f", str(path))])
+        self.assertEqual(up[14:18], ["--profile", "blobs", "--profile", "compute"])
+        self.assertEqual(up[18:], ["up", "--detach", "--no-build", "--wait", "--wait-timeout", "300"])
         pull = next(c for c in calls if c[1] == "pull")
         self.assertEqual(pull, ["docker", "pull", "server:rendered"], "only an absent rendered image is pulled, before up")
         self.assertLess(calls.index(pull), calls.index(up))
@@ -286,7 +315,7 @@ class BootstrapTests(unittest.TestCase):
         self.assertFalse(any(c[1] == "pull" and "--platform" in c for c in calls), "an explicit workerd override is verified, never pulled")
         self.assertEqual([c[-2:] for c in calls if c[1:3] == ["volume", "create"]][:1],
                          [["com.docker.compose.project=original", "agent-backplane_postgres-data"]])
-        self.assertIn("COMPOSE_PROFILES='gateway,blobs,compute'", self.env.read_text())
+        self.assertIn("COMPOSE_PROFILES='blobs,compute'", self.env.read_text())
         self.assertIn("BP_BLOB_BACKEND='s3'", self.env.read_text())
         with self.assertRaises(bootstrap.Refused) as refused:
             self.bootstrap("--build", http=fake_http("claimed", "s3"))

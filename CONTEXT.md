@@ -87,7 +87,7 @@ A complete, fenced recovery set for the local deployment: PostgreSQL base backup
 _Avoid_: Snapshot (when meaning the coordinated recovery set)
 
 **Bootstrap**:
-`python3 scripts/bootstrap.py`: the host entrypoint that records the Compose selection in `.env`, generates secrets once, creates the Platform Network and volumes, starts the stack and exports the enrollment capability. A fresh install is minimal; profiles are opt-in; a recorded selection is preserved on rerun.
+`python3 scripts/bootstrap.py`: the host entrypoint that records the Compose selection in `.env`, generates secrets once, creates the Platform Network and volumes, starts the stack and exports the enrollment capability. A fresh install is minimal; profiles (`blobs`, `compute`, `edge`) are opt-in; a recorded selection is preserved on rerun. Behind Platform Edge (`proxy` mode) no profile adds a Caddy: Edge reaches `bp-server:3000` directly.
 _Avoid_: Prepare, preparation, installer
 
 **Enrollment**:

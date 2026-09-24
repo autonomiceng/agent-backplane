@@ -37,8 +37,8 @@ test("native image defaults survive empty settings and accept complete reference
   expect(override.edge.image).toBe(`mirror/caddy@sha256:${"b".repeat(64)}`);
 }, 15000);
 
-test("helpers inherit server and PostgreSQL references including the internal gateway", async () => {
-  const services = await config(["BP_POSTGRES_IMAGE=pg-local", "BP_SERVER_IMAGE=server-local", "BP_CADDY_IMAGE=caddy-local"], ["gateway", "blobs"]);
+test("helpers inherit server and PostgreSQL references beside the standalone edge", async () => {
+  const services = await config(["BP_POSTGRES_IMAGE=pg-local", "BP_SERVER_IMAGE=server-local", "BP_CADDY_IMAGE=caddy-local"], ["edge", "blobs"]);
   expect(services.postgres.image).toBe("pg-local");
   for (const name of ["migrate", "storage-init", "blob-bootstrap"]) expect(services[name].image).toBe(services.server.image);
   expect(services.edge.image).toBe("caddy-local");

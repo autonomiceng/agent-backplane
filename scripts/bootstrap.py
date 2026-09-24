@@ -35,11 +35,15 @@ ROOT = Path(__file__).resolve().parent.parent
 PROJECT = "agent-backplane"
 NETWORK = "platform"
 # Platform Network allocation shared by every stack (docs/conventions.md). Edge holds this
-# reserved address outside the dynamic range, so siblings trust it without discovery.
+# reserved address outside the dynamic range and reaches the server directly at bp-server:3000.
 PLATFORM_SUBNET = "172.30.0.0/24"
 PLATFORM_IP_RANGE = "172.30.0.128/25"
-EDGE_PROXY = "172.30.0.2/32"
-PROFILES = ("blobs", "compute", "edge", "gateway")
+EDGE_ADDRESS = "172.30.0.2"
+PROFILES = ("blobs", "compute", "edge")
+# The internal gateway behind Platform Edge is gone (ADR-0021, 2026-09-24); the profile name is refused, not ignored.
+GATEWAY_RETIRED = ("the internal gateway profile is retired: Platform Edge reaches bp-server:3000 directly. Remove gateway from "
+                   "COMPOSE_PROFILES and compose.gateway.yaml from COMPOSE_FILE as docs/operations/ingress.md "
+                   "\"Upgrading from the internal gateway\" describes, then rerun")
 # Secrets each profile needs and how many random bytes each gets (hex encoded).
 CORE_SECRETS = {"BP_AUTH_SECRET": 32, "BP_POSTGRES_ADMIN_PASSWORD": 32, "BP_POSTGRES_PASSWORD": 32, "BP_OPERATIONS_TOKEN": 32}
 # RustFS service-account creation accepts at most 40 characters.
@@ -55,8 +59,7 @@ MANAGED = set(SECRETS) | set(SELECTORS) | set(RETIRED) | {
     "BP_POSTGRES_IMAGE", "BP_SERVER_IMAGE", "BP_CADDY_IMAGE", "BP_RUSTFS_IMAGE", "BP_BLOB_BOOTSTRAP_IMAGE",
     "BP_WORKERD_REPOSITORY", "BP_WORKERD_DIGEST", "BP_WORKERD_IMAGE", "BP_WORKERD_BINARY_SHA256",
     "BP_DATA_DIR", "BP_PLATFORM_NETWORK", "BP_PLATFORM_SUBNET", "BP_PLATFORM_IP_RANGE", "BP_VOLUME_PREFIX",
-    "BP_BACKUP_KEEP", "BP_RUSTFS_CONSOLE", "BP_RUSTFS_HOST", "BP_RUSTFS_URL", "BP_RUSTFS_URL_HOST", "BP_RUSTFS_AUTHORITY",
-    "BP_RUSTFS_CONSOLE_ALLOW", "BP_TRUSTED_PROXIES",
+    "BP_BACKUP_KEEP",
 }
 NAME_LINE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)")
 ASSIGNMENT = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
@@ -318,55 +321,6 @@ def resolve_access(entries: dict[str, str], edge: bool = False) -> dict[str, str
     return {"mode": mode, "host": host, "origin": origin}
 
 
-def check_peer_list(value: str, exact: bool, code: str) -> None:
-    """Caddy tokens: IP literals or CIDRs only, host routes when a trusted proxy."""
-    if (not value.strip() and not exact) or re.search(r"[^a-fA-F0-9:./ ]", value):
-        raise Refused(code, "use space-separated IP literals or CIDRs")
-    for literal in value.split():
-        ip, _, mask = literal.partition("/")
-        if not is_ip(ip) or literal.count("/") > 1:
-            raise Refused(code, f"{literal} is not an IP literal or CIDR")
-        bits = 32 if is_ipv4(ip) else 128
-        if mask and (not re.fullmatch(r"0|[1-9][0-9]*", mask) or int(mask) > bits or (not exact and int(mask) == 0) or (exact and int(mask) != bits)):
-            raise Refused(code, f"{literal} must be an exact host" if exact else f"{literal} has an invalid prefix length")
-
-
-def resolve_rustfs_console(entries: dict[str, str], profiles: list[str], access: dict[str, str]) -> dict[str, str]:
-    """Console routing fields for Caddy: literals only, never Caddy syntax."""
-    enabled = entries.get("BP_RUSTFS_CONSOLE", "false")
-    if enabled not in ("true", "false"):
-        raise Refused("rustfs_console_invalid", "BP_RUSTFS_CONSOLE must be true or false")
-    if enabled == "true" and ("blobs" not in profiles or not {"edge", "gateway"} & set(profiles)):
-        raise Refused("rustfs_console_requires_blobs_and_ingress", "the console needs the blobs profile plus edge or gateway")
-    if enabled == "true" and entries.get("BP_BLOB_BACKEND", "s3") != "s3":
-        raise Refused("rustfs_console_storage_conflict", "the console needs the S3 Files backend")
-    host = (entries.get("BP_RUSTFS_HOST") or f"rustfs.{entries.get('BP_PUBLIC_DOMAIN') or 'localhost'}").lower()
-    if len(host) > 253 or not all(DNS_LABEL.match(label) for label in host.split(".")) or is_ip(host) \
-            or (access["mode"] == "public" and ("." not in host or host.endswith(".localhost"))):
-        raise Refused("rustfs_host_invalid", "BP_RUSTFS_HOST must be a DNS hostname")
-    if enabled == "true" and access["mode"] == "proxy" and not entries.get("BP_RUSTFS_URL"):
-        raise Refused("rustfs_url_required", "set BP_RUSTFS_URL to the console's external HTTPS origin")
-    try:
-        origin = normalize_origin(entries.get("BP_RUSTFS_URL") or f"https://{host}:{entries.get('BP_HTTPS_PORT') or '443'}")
-    except Refused:
-        raise Refused("rustfs_url_invalid", "BP_RUSTFS_URL must be one HTTPS origin") from None
-    scheme, url_host, url_port = split_origin(origin)
-    if (enabled == "true" or access["mode"] != "local") and scheme != "https":
-        raise Refused("rustfs_url_invalid", "BP_RUSTFS_URL must use HTTPS")
-    if "edge" in profiles:
-        listener = (entries.get("BP_HTTPS_PORT") or "443") if scheme == "https" else (entries.get("BP_HTTP_PORT") or "80")
-        if url_host != host or int(url_port) != int(listener):
-            raise Refused("rustfs_url_listener_conflict", f"BP_RUSTFS_URL must select the standalone listener for {host}")
-    # Gateway routing sees authority, not scheme. Native aliases must not capture Backplane.
-    browser_host = split_origin(access["origin"])[1]
-    if f"{url_host}:{url_port}" == ":".join(split_origin(access["origin"])[1:]) or host in (browser_host, access["host"], "localhost", "127.0.0.1"):
-        raise Refused("rustfs_origin_conflict", "the console origin must differ from the Backplane browser origin")
-    check_peer_list(entries.get("BP_RUSTFS_CONSOLE_ALLOW", "127.0.0.1/8 ::1"), False, "operator_allow_invalid")
-    check_peer_list(entries.get("BP_TRUSTED_PROXIES") or EDGE_PROXY, True, "trusted_proxies_invalid")
-    authority = url_host + ("" if url_port == ("443" if scheme == "https" else "80") else f":{url_port}")
-    return {"enabled": enabled, "host": host, "origin": origin, "authority": authority, "urlHost": url_host.strip("[]")}
-
-
 def platform_allocation(entries: dict[str, str]) -> tuple[str, str, str]:
     subnet, ip_range = entries.get("BP_PLATFORM_SUBNET") or PLATFORM_SUBNET, entries.get("BP_PLATFORM_IP_RANGE") or PLATFORM_IP_RANGE
     try:
@@ -376,14 +330,9 @@ def platform_allocation(entries: dict[str, str]) -> tuple[str, str, str]:
     # The derived gateway is the subnet's first host; the range needs an allocatable host besides it.
     if not dynamic.subnet_of(pool) or min(int(dynamic[-1]), int(pool[-1]) - 1) < max(int(dynamic[0]), int(pool[0]) + 2):
         raise Refused("invalid_platform_network", "BP_PLATFORM_IP_RANGE must lie inside BP_PLATFORM_SUBNET with an allocatable host")
-    # Docker could hand a trusted proxy address inside the dynamic range to any attached container.
-    for peer in (entries.get("BP_TRUSTED_PROXIES") or EDGE_PROXY).split():
-        try:
-            trusted = ipaddress.ip_network(peer, strict=False)
-        except ValueError:
-            continue
-        if trusted.version == 4 and trusted.overlaps(dynamic):
-            raise Refused("invalid_platform_network", f"BP_PLATFORM_IP_RANGE {dynamic} must exclude trusted proxy {peer}")
+    # Docker could otherwise hand Edge's reserved address to any attached container.
+    if ipaddress.ip_address(EDGE_ADDRESS) in dynamic:
+        raise Refused("invalid_platform_network", f"BP_PLATFORM_IP_RANGE {dynamic} must exclude Edge's reserved address {EDGE_ADDRESS}")
     return str(pool), str(dynamic), str(next(pool.hosts()))
 
 
@@ -416,7 +365,7 @@ def ensure_network(runner: Runner, env: dict[str, str], name: str, subnet: str, 
 
 def volume_names(prefix: str, profiles: list[str]) -> list[str]:
     names = ["postgres-data", "server-data"]
-    if {"edge", "gateway"} & set(profiles):
+    if "edge" in profiles:
         names += ["edge-data", "edge-config"]
     if "blobs" in profiles:
         names.append("rustfs-data")
@@ -631,7 +580,7 @@ def bootstrap(argv: list[str], runner: Runner | None = None) -> int:
     parser.add_argument("--dry-run", action="store_true", help="render and validate the plan, write nothing, call no Docker")
     parser.add_argument("--capability-file", help="where the pending enrollment capability is exported (required until enrolled)")
     parser.add_argument("--compose-project", help="Compose project name recorded on the first run")
-    parser.add_argument("--profile", action="append", default=None, help="blobs, compute, edge or gateway; repeatable; '' records none")
+    parser.add_argument("--profile", action="append", default=None, help="blobs, compute or edge; repeatable; '' records none")
     parser.add_argument("--access-mode", choices=("local", "public", "proxy"))
     parser.add_argument("--public-url")
     parser.add_argument("--backup-dir")
@@ -642,8 +591,10 @@ def bootstrap(argv: list[str], runner: Runner | None = None) -> int:
     env_file = Path(args.env_file).resolve()
     template = ROOT / ".env.example"
     explicit = None if args.profile is None else [name for name in args.profile if name]
+    if "gateway" in (explicit or []):
+        raise Refused("gateway_profile_retired", GATEWAY_RETIRED)
     if args.profile is not None and ("" in args.profile and len(args.profile) != 1 or any(name not in PROFILES for name in explicit or [])):
-        parser.error("--profile accepts blobs, compute, edge or gateway; '' alone selects none")
+        parser.error("--profile accepts blobs, compute or edge; '' alone selects none")
     if not args.dry_run and os.environ.get("DOCKER_HOST", "unix://").partition("://")[0] != "unix":
         raise Refused("remote_docker_unsupported", "bootstrap reads the capability through the local Docker socket")
 
@@ -671,6 +622,8 @@ def select(env: EnvFile, args, explicit: list[str] | None) -> dict:
     secrets_present = any(key in entries for key in SECRETS)
     if "COMPOSE_PROFILES" in entries:
         profiles = [name for name in dict.fromkeys(entries["COMPOSE_PROFILES"].split(",")) if name]
+        if "gateway" in profiles:
+            raise Refused("gateway_profile_retired", GATEWAY_RETIRED)
         if explicit is not None and sorted(set(explicit)) != sorted(set(profiles)):
             requested = ",".join(explicit) or "''"
             raise Refused("selection_conflict", f"recorded COMPOSE_PROFILES='{entries['COMPOSE_PROFILES']}' differs from --profile {requested}; "
@@ -681,9 +634,7 @@ def select(env: EnvFile, args, explicit: list[str] | None) -> dict:
     else:
         profiles = list(dict.fromkeys(explicit or []))
     if any(name not in PROFILES for name in profiles):
-        raise Refused("selection_conflict", "COMPOSE_PROFILES may name only blobs, compute, edge or gateway")
-    if "edge" in profiles and "gateway" in profiles:
-        raise Refused("choose_one_gateway", "edge (standalone) and gateway (behind Platform Edge) are mutually exclusive")
+        raise Refused("selection_conflict", "COMPOSE_PROFILES may name only blobs, compute or edge")
     derived = [str(ROOT / "compose.yaml"), *(str(ROOT / f"compose.{name}.yaml") for name in profiles)]
     fresh = "COMPOSE_FILE" not in entries
     files = [str((env.path.parent / name).resolve()) if name else "" for name in entries["COMPOSE_FILE"].split(":")] if not fresh else derived
@@ -704,7 +655,7 @@ def select(env: EnvFile, args, explicit: list[str] | None) -> dict:
 
 
 def settings(env: EnvFile, args, selection: dict) -> dict:
-    """Access, console and network settings, applied to the env file in memory."""
+    """Access and network settings, applied to the env file in memory."""
     entries = env.entries
     for key, value in (("BP_ACCESS_MODE", args.access_mode), ("BP_PUBLIC_URL", args.public_url), ("BP_BACKUP_DIR", args.backup_dir)):
         if value is None:
@@ -719,15 +670,8 @@ def settings(env: EnvFile, args, selection: dict) -> dict:
     env.default("BP_BACKUP_DIR", str(env.path.parent / "backups"))
     profiles = selection["profiles"]
     access = resolve_access(entries, "edge" in profiles)
-    if "gateway" in profiles and access["mode"] != "proxy":
-        raise Refused("gateway_requires_proxy_mode", "--profile gateway needs --access-mode proxy and --public-url")
     env.default("BP_ACCESS_MODE", access["mode"])
     env.default("BP_PUBLIC_URL", access["origin"])
-    console = resolve_rustfs_console(entries, profiles, access)
-    # Refresh derived routing fields when the selected URL changes; never replace user settings.
-    for key, value in (("BP_RUSTFS_URL_HOST", console["urlHost"]), ("BP_RUSTFS_AUTHORITY", console["authority"])):
-        if entries.get(key) != value:
-            env.save(key, value)
     # The blob helper runs BP_BLOB_BOOTSTRAP_IMAGE, or BP_SERVER_IMAGE when that is empty.
     for key in ("BP_RUSTFS_IMAGE", "BP_BLOB_BOOTSTRAP_IMAGE", "BP_SERVER_IMAGE"):
         if key in entries and not IMAGE_REFERENCE.fullmatch(entries[key]):
@@ -738,7 +682,7 @@ def settings(env: EnvFile, args, selection: dict) -> dict:
     if not SAFE_NAME.match(prefix):
         raise Refused("invalid_volume_prefix", "BP_VOLUME_PREFIX must be a Docker volume name prefix")
     subnet, ip_range, gateway = platform_allocation(entries)
-    return {"access": access, "console": console, "network": network, "prefix": prefix, "subnet": subnet, "ip_range": ip_range,
+    return {"access": access, "network": network, "prefix": prefix, "subnet": subnet, "ip_range": ip_range,
             "gateway": gateway, "data_dir": (env.path.parent / (entries.get("BP_DATA_DIR") or "data")).resolve(),
             "secrets": {**CORE_SECRETS, **(BLOB_SECRETS if "blobs" in profiles else {}), **(COMPUTE_SECRETS if "compute" in profiles else {})}}
 
@@ -851,7 +795,6 @@ def prepare(args, env_file: Path, template: Path, explicit: list[str] | None, ru
     print(json.dumps({
         "project": project, "envFile": str(env_file), "profiles": profiles, "composeFiles": files, "url": origin,
         "enrollment": enrollment, "capabilityFile": str(capability) if enrollment == "pending" else None,
-        "rustfsConsole": resolved["console"]["origin"] + "/rustfs/console/" if resolved["console"]["enabled"] == "true" else None,
         "next": enrollment_command(ROOT, env_file, origin, capability, cli_state_dir(), server_image) if enrollment == "pending"
         else f"Enrollment is complete; open {origin}/dashboard or run bp with the saved credentials.",
     }))

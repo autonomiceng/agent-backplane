@@ -56,15 +56,16 @@ Compose overlays: the base file starts Postgres and the server. `python3 scripts
 file, generates missing secrets, creates the Platform Network and durable volumes, starts the
 selection with `up --wait`, waits for readiness and exports the pending enrollment capability.
 A fresh install is minimal: core plus filesystem Files, no workerd. `--profile blobs` and
-`--profile compute` opt into RustFS-backed Files and Functions; the `edge` or `gateway`
-ingress profile is selected separately. Bootstrap records the native Compose project,
+`--profile compute` opt into RustFS-backed Files and Functions; `--profile edge` adds the
+standalone Caddy. Behind Platform Edge (`--access-mode proxy`) no Caddy runs: Edge reaches
+the server directly at `bp-server:3000` (ADR-0021). Bootstrap records the native Compose project,
 ordered files, profiles and Files backend in `.env`; ordinary Compose commands reuse that
 selection, a rerun preserves it, and a conflicting explicit profile set is refused.
 Capability or storage changes are explicit upgrades or migrations (ADR-0009). The first
 User enrolls through the CLI inside the server image (`compose.enroll.yaml`), so Bun never
 runs on the host. The server publishes the Status Document at `/status.json` and one
-status-only health path per component; Caddy proxies `/status.json` and answers
-`/health/caddy` itself. The stack installs no host
+status-only health path per component; the standalone edge proxies `/status.json` and
+answers `/health/caddy` itself. The stack installs no host
 observer or timer; installs that still carry the version 1 timer run
 `scripts/retire-status-timer.sh` once ([health](operations/health.md#public-status)).
 
