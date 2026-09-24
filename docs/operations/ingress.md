@@ -39,7 +39,7 @@ HTTP authentication requires a loopback origin unless a directly launched server
 
 The server strips `Forwarded`, every `X-Forwarded-*`, `X-Real-IP`, `CF-Connecting-IP` and `True-Client-IP`. It never derives an authentication origin from a request Host header. The configured scheme determines cookie security through the HTTP upstream connection. Both standalone listeners exclude operator routes (`/health/operations`, `/metrics` and normalized variants) and strip Authorization from public readiness. Operators use the loopback server port with `BP_OPERATIONS_TOKEN`.
 
-Edge and server share the project network and external platform network. Trust the host and Docker peers, restrict Docker access and network membership, and isolate untrusted peers. Custom gateways must preserve browser Origin and Fetch Metadata and carry SSE without buffering or a stream lifetime limit. See [ADR-0021](../adr/0021-proxy-trust-boundary.md).
+The standalone edge shares only the project network with the server; Platform Edge reaches the server over the external Platform Network. Trust the host and Docker peers, restrict Docker access and network membership, and isolate untrusted peers. Custom gateways must preserve browser Origin and Fetch Metadata and carry SSE without buffering or a stream lifetime limit. See [ADR-0021](../adr/0021-proxy-trust-boundary.md).
 
 ## Local certificate trust
 
@@ -84,7 +84,7 @@ environment file bootstrap records:
 2. Remove the `compose.gateway.yaml` entry from `COMPOSE_FILE`, keeping the order of the rest.
 3. Delete the `BP_TRUSTED_PROXIES`, `BP_RUSTFS_CONSOLE`, `BP_RUSTFS_CONSOLE_ALLOW`, `BP_RUSTFS_HOST`, `BP_RUSTFS_URL`, `BP_RUSTFS_URL_HOST` and `BP_RUSTFS_AUTHORITY` lines; nothing reads them.
 4. Rerun `python3 scripts/bootstrap.py` with the same `--env-file` and `--compose-project` as before. It refuses with `gateway_profile_retired` until steps 1 and 2 are done, and never edits the selection itself.
-5. Remove the orphaned gateway container, which the reduced selection leaves running: `docker compose --env-file .env up -d --remove-orphans` (add `--project-name` if bootstrap used one). Its `edge-data` and `edge-config` volumes hold internal CA state and stay until you delete them deliberately.
+5. Remove the orphaned gateway container, which the reduced selection leaves running: `docker compose --env-file <the same env file> up -d --remove-orphans`, with `--project-name <the same project>` when bootstrap used one; the recorded `COMPOSE_FILE` in that file selects the services. Its `edge-data` and `edge-config` volumes hold internal CA state and stay until you delete them deliberately.
 6. Re-run Platform Edge's bootstrap so it renders the direct `bp-server:3000` routes.
 
 Standalone `edge` installations (local or public mode) are unaffected.

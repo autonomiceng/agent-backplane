@@ -622,6 +622,8 @@ def select(env: EnvFile, args, explicit: list[str] | None) -> dict:
     secrets_present = any(key in entries for key in SECRETS)
     if "COMPOSE_PROFILES" in entries:
         profiles = [name for name in dict.fromkeys(entries["COMPOSE_PROFILES"].split(",")) if name]
+        if "gateway" in profiles:
+            raise Refused("gateway_profile_retired", GATEWAY_RETIRED)
         if explicit is not None and sorted(set(explicit)) != sorted(set(profiles)):
             requested = ",".join(explicit) or "''"
             raise Refused("selection_conflict", f"recorded COMPOSE_PROFILES='{entries['COMPOSE_PROFILES']}' differs from --profile {requested}; "
@@ -631,8 +633,6 @@ def select(env: EnvFile, args, explicit: list[str] | None) -> dict:
                       "profile of the existing installation, or --profile '' for core only, so the selection is recorded")
     else:
         profiles = list(dict.fromkeys(explicit or []))
-    if "gateway" in profiles:
-        raise Refused("gateway_profile_retired", GATEWAY_RETIRED)
     if any(name not in PROFILES for name in profiles):
         raise Refused("selection_conflict", "COMPOSE_PROFILES may name only blobs, compute or edge")
     derived = [str(ROOT / "compose.yaml"), *(str(ROOT / f"compose.{name}.yaml") for name in profiles)]

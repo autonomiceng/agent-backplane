@@ -184,7 +184,7 @@ class BootstrapTests(unittest.TestCase):
         self.assertNotEqual(recorded, text)
         self.env.write_text(recorded)
         runner = runner_with()
-        for extra in ((), ("--profile", "gateway"), ("--dry-run",)):
+        for extra in ((), ("--profile", "gateway"), ("--dry-run",), ("--profile", "blobs"), ("--profile", "")):
             with self.assertRaises(bootstrap.Refused, msg=extra) as refused:
                 self.bootstrap(*extra, runner=runner)
             self.assertEqual(refused.exception.code, "gateway_profile_retired")

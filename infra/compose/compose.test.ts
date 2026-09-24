@@ -238,7 +238,9 @@ test("the server receives every configured image reference and Caddy proxies /st
   expect(code, stderr).toBe(0);
   const servers = JSON.parse(stdout).apps.http.servers;
   expect(JSON.stringify(servers)).not.toContain("trusted_proxies");
-  const routes = Object.values(servers as Record<string, { listen: string[]; routes: never[] }>).find(server => server.listen.includes(":80"))!.routes;
+  const http = Object.values(servers as Record<string, { listen: string[]; routes: never[] }>).find(server => server.listen.includes(":80"));
+  expect(http).toBeDefined();
+  const routes = http?.routes ?? [];
   type Route = { match?: { path?: string[] }[]; handle?: { routes?: Route[] }[] };
   const find = (list: Route[], path: string): Route | undefined => {
     for (const route of list) {
