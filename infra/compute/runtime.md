@@ -27,15 +27,16 @@ establishes neither H-PROOF/F-GATE nor B-DEFAULT approval.
 
 ## Network
 
-`compose.compute.yaml` attaches workerd to one network, `compute`, which it shares only with
-the server. Postgres, RustFS and the edge are not on it, so workerd can neither resolve nor
-reach them. The server calls `http://workerd:8080`; workerd calls back only `server:3000`, the
-`api` service in `config.capnp`. The network is a routed bridge, not `internal`, because
-declared HTTPS egress needs a route out. Everything else workerd fetches goes through the
-`internet` service in `config.capnp`, whose `public` allow list refuses RFC 1918, carrier-grade
-NAT (which includes Tailscale), loopback and link-local addresses. Preparation children have
-no outbound access. Invocation children reach only the loader's `Egress` entrypoint: Workspace
-API paths on `server:3000` and their exact declared HTTPS URLs.
+`compose.compute.yaml` attaches workerd to one network, `compute`, which it shares only with the
+server. Postgres, RustFS and the edge are not on it, so workerd has no shared-network path to
+them and cannot resolve their names; Postgres publishes a host port only under
+`compose.dev.yaml`, on loopback. The server calls `http://workerd:8080`; workerd calls back only
+`server:3000`, the `api` service in `config.capnp`. The network is a routed bridge, not
+`internal`, because declared HTTPS egress needs a route out. Every other worker fetch goes
+through the `internet` service in `config.capnp`, whose `public` allow list refuses RFC 1918,
+carrier-grade NAT (which includes Tailscale), loopback and link-local addresses. Preparation
+children have no outbound access. Invocation children reach only the loader's `Egress`
+entrypoint: Workspace API paths on `server:3000` and their exact declared HTTPS URLs.
 
 To check an installed compute selection, run `docker compose exec workerd getent hosts postgres`.
 It must print nothing and exit 2. `docker compose exec workerd getent hosts server` prints the
