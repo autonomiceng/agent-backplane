@@ -41,7 +41,7 @@ copying it into the recovery repository.
 
 Both filesystem and S3 capture perform two full object-byte SHA-256 inspections
 inside the writer fence, before and after physical capture. Plan downtime for both
-passes plus archiving. Each fenced `inspect`, `adopt` and `reconcile` command uses a total
+passes plus archiving. Each fenced `inspect` and `reconcile` command uses a total
 `BP_STARTUP_VERIFY_TIMEOUT` budget (default 120 seconds). PostgreSQL timeouts run
 on the reserved lease session and leave up to five seconds for cleanup before the
 process deadline. Both PostgreSQL expiry and the process deadline report
@@ -71,7 +71,7 @@ and unchanged audit heads across the fenced backup, hashes all artifacts, writes
 the manifest last and resumes the services that it stopped. Incomplete checkpoints
 have no manifest and cannot be restored. Archive and filesystem errors fail closed.
 
-Capture compares configured image references with container content IDs, including migration and initialization helpers. PostgreSQL and Caddy need locally verified immutable references; an override without one is refused before fencing. Publish and pull that exact image, or select a reproducible image and reconcile the running deployment before retrying. PostgreSQL recovery requires version 18 and its existing data layout. The manifest keeps configured references, observed IDs and immutable recovery references separately; resolved environments remain private. The server archive is saved by content ID. Restore verifies recovered IDs before writing target volumes and starts with builds and pulls disabled. A mutable tag alone never establishes recovery identity. Older version-1 manifests retain support for their recorded digest pins and matching content IDs.
+Capture compares configured image references with container content IDs, including migration and initialization helpers. PostgreSQL and Caddy need locally verified immutable references; an override without one is refused before fencing. Publish and pull that exact image, or select a reproducible image and reconcile the running deployment before retrying. PostgreSQL recovery requires version 18 and its existing data layout. The manifest keeps configured references, observed IDs and immutable recovery references separately; resolved environments remain private. The server archive is saved by content ID. Restore verifies recovered IDs before writing target volumes and starts with builds and pulls disabled. A mutable tag alone never establishes recovery identity. A manifest from an earlier format, without recorded helper images, storage binding or upstream recovery references, is refused with `unsupported_checkpoint_version` before any image or volume is touched; restore it with the checkout that captured it.
 
 Docker can attach RepoDigests to unpublished local builds and aliases. This proves local
 immutable identity, not publication or continued registry availability. Upstream image
@@ -194,28 +194,8 @@ The bucket defaults to `backplane`. Root credentials belong only to RustFS and
 its isolated bootstrap. Never enable bucket versioning: both enabled and suspended
 versioning stop bootstrap, and deleting current objects would leave old bytes.
 
-For legacy unbound stores, a manual MinIO-to-RustFS copy can precede explicit
-[verified adoption](../../docs/operations/storage-identity.md). Already bound
-fresh-target migrations require a separate supported migration protocol; do not
-edit or copy only their marker to bypass identity checks.
-
-For the legacy unbound copy:
-
-1. Fence all writers and stop the server and cleanup workers. Take coordinated
-   PostgreSQL and MinIO backups and retain the original MinIO volume untouched.
-2. Start RustFS with the fresh `rustfs-data` volume and run bootstrap. Never attach
-   a MinIO volume to RustFS. Keep the server stopped during the copy.
-3. Using an operator S3 transfer tool with separate source and destination
-   credentials, copy objects explicitly, preserving each complete object key,
-   including Workspace prefixes. Copy current objects into the unversioned bucket.
-4. Verify object sizes and SHA-256 hashes against every live `control.blobs`
-   reference through a read-only database connection. Download objects to compute
-   hashes; multipart ETags are not content hashes. Resolve missing or mismatched
-   bytes before proceeding.
-5. Select the RustFS endpoint and scoped credentials, run fenced verified adoption
-   with the matching checkpoint reference, then start the server and resume writers. Keep the source volume and matching backup until the migration
-   is verified and the retention window has passed. Rollback after new writes
-   requires another coordinated migration.
+The Files backend of an installation never changes in place, and a store without a
+binding is refused rather than adopted. A different backend means a new installation.
 
 Pause deletion as well as writes for every coordinated backup. Record matching
 PostgreSQL and RustFS snapshot identifiers. During recovery, restore both stores,
@@ -247,8 +227,8 @@ deployment_compose config --format json | python3 -c 'import json, sys; print("\
 ```
 
 This prints only the resolved volume names. Never substitute fresh volumes for an
-existing installation. Keep pre-image Checkpoints and their original server image
-separately; the new automatic image recovery requires a new Checkpoint.
+existing installation. An earlier-format Checkpoint restores only with the checkout
+that captured it (`unsupported_checkpoint_version`).
 
 The legacy wrappers and `bp restore-drill` require `BP_BACKUP_ADMIN_URL_FILE`, the
 path to an operator-owned regular file with no group or other permissions containing
@@ -274,7 +254,7 @@ and canonical `postgresql.conf`, `pg_hba.conf` and `pg_ident.conf` files directl
 data directory. Socket-only URLs and relocated or symlinked configuration are refused
 before capture. These constraints do not alter the core Compose Checkpoint interface.
 
-For storage adoption or recovery when startup is blocked, stop server and edge
+For storage recovery when startup is blocked, stop server and edge
 writers, then use `bash scripts/backup.sh --offline --fenced --env-file PATH` with the same
 Compose configuration. Offline capture requires PostgreSQL running and leaves the
 application stopped. It preserves hidden storage markers, publication candidates,

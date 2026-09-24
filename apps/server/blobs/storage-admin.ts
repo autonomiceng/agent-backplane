@@ -1,4 +1,4 @@
-// Operator entrypoint shared by the one-shot image and explicit offline adoption/reconciliation.
+// Operator entrypoint shared by the one-shot image and fenced offline inspection/reconciliation.
 import { parseArgs } from "node:util";
 import { writeSync } from "node:fs";
 import { createPool } from "../platform/pool.ts";
@@ -10,7 +10,7 @@ export function storageAdminOptions(argv: string[]): AdoptionOptions {
     fenced: { type: "boolean" }, checkpoint: { type: "string" }, "retain-unreferenced": { type: "boolean" },
   } });
   const mode = positionals[0];
-  if (positionals.length !== 1 || mode !== "initialize" && mode !== "adopt" && mode !== "reconcile" && mode !== "inspect") throw new Error("blob_binding_usage");
+  if (positionals.length !== 1 || mode !== "initialize" && mode !== "reconcile" && mode !== "inspect") throw new Error("blob_binding_usage");
   if ((mode === "initialize" || mode === "inspect") && (values.checkpoint !== undefined || values["retain-unreferenced"] !== undefined)) throw new Error("blob_binding_usage");
   return { mode, fenced: values.fenced ?? false, checkpoint: values.checkpoint ?? "", retain: values["retain-unreferenced"] ?? false };
 }

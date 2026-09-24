@@ -207,9 +207,7 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(bootstrap.resolve_access({})["origin"], "http://localhost:3000")
         self.assertEqual(bootstrap.resolve_access({"BP_PUBLIC_DOMAIN": "example.com", "BP_HTTPS_PORT": "8443"}, edge=True)["origin"], "https://backplane.example.com:8443")
         for entries in ({"BP_ACCESS_MODE": "public", "BP_PUBLIC_DOMAIN": "example.com"},
-                        {"BP_ACCESS_MODE": "local", "BP_TLS_ISSUER": "acme"},
-                        {"BP_PUBLIC_URL": "https://127.0.0.2"},
-                        {"BP_PUBLIC_URL": "http://localhost:3000", "BP_AUTH_URL": "http://localhost"}):
+                        {"BP_PUBLIC_URL": "https://127.0.0.2"}):
             with self.assertRaises(bootstrap.Refused, msg=entries):
                 bootstrap.resolve_access(entries)
         self.assertFalse(self.env.exists())
@@ -253,6 +251,20 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(plan["compose"][-3:], ["up", "-d", "--wait"])
         self.assertEqual(plan["warnings"], [])
         self.assertEqual(plan["backupDir"], str(self.backup), "the default backup directory is created on the real run")
+
+    def test_each_unsupported_setting_is_refused_by_name_with_its_replacement_before_docker(self):
+        for key, replacement in bootstrap.UNSUPPORTED.items():
+            for line in (f"{key}=legacy-value\n", f"export {key}=\n"):
+                self.env.write_text(line)
+                runner = runner_with()
+                with self.assertRaises(bootstrap.Refused, msg=line) as refused:
+                    self.bootstrap(runner=runner, profiles=("compute",))
+                self.assertEqual(refused.exception.code, "unsupported_setting")
+                self.assertIn(f"{key} is unsupported, use {replacement}", refused.exception.detail)
+                self.assertEqual(runner.calls, [], "the refusal precedes every Docker call")
+                self.assertEqual(self.env.read_text(), line)
+        self.assertEqual(set(bootstrap.UNSUPPORTED), {"BP_SCHEME", "BP_TLS_ISSUER", "BP_EDGE_CA", "BP_PUBLIC_HOST", "BP_EDGE_BIND_HOST",
+                                                      "BP_AUTH_URL", "BP_WORKERD_REPOSITORY", "BP_WORKERD_DIGEST"})
 
     def test_malformed_blob_image_reference_is_refused_before_docker(self):
         for line in ("BP_RUSTFS_IMAGE='rustfs/rustfs latest'\n", "BP_BLOB_BOOTSTRAP_IMAGE='-helper:1'\n", "BP_SERVER_IMAGE='server:1;x'\n"):

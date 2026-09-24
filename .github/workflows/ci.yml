@@ -8,7 +8,7 @@ permissions:
 jobs:
   gates:
     runs-on: ubuntu-latest
-    # Serialized image builds, real storage/runtime gates and three physical recovery drills.
+    # Serialized image builds, real storage/runtime gates and two physical recovery drills.
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -24,13 +24,12 @@ jobs:
       # Tests start embedded PostgreSQL; no service container is needed.
       # Host rollout acceptance stays separate; the isolated storage/runtime gates run below.
       - run: bun run test
+      - run: bun run test:examples
       - run: bun tests/acceptance/storage-startup.ts
       - run: bun tests/acceptance/storage-identity.ts
-      - run: bun tests/acceptance/storage-migration.ts
       - run: docker build -f infra/compose/server.Dockerfile .
       - run: docker build --platform linux/amd64 -f infra/compute/image/Dockerfile -t agent-backplane-workerd:1.20260918.1 infra/compute/image
       - run: bun tests/acceptance/workerd-image.ts agent-backplane-workerd:1.20260918.1 --lifecycle
       - run: python3 tests/acceptance/workerd-gate.py agent-backplane-workerd:1.20260918.1
       - run: python3 scripts/backup-drill.py --offline
       - run: python3 scripts/backup-drill.py --s3
-      - run: python3 scripts/storage-migration-drill.py

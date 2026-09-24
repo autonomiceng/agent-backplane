@@ -9,8 +9,9 @@ Run the existing gates from the repository root:
 ```sh
 mise exec -- bun run check
 mise exec -- bun run test
+mise exec -- bun run test:examples
 ```
 
-With Bun installed directly, omit `mise exec --`. The check gate runs type checking, linting, generated-contract drift checks and the dashboard build. Tests use embedded PostgreSQL without a service container. Docker acceptance scenarios run separately against prepared deployments; CI runs the two gates above.
+With Bun installed directly, omit `mise exec --`. The check gate runs type checking, linting, generated-contract drift checks and the dashboard build. Tests use embedded PostgreSQL without a service container. `bun run test` leaves `examples/` to `test:examples`. Docker acceptance scenarios run separately against prepared deployments; CI runs the gates above.
 
 Report bugs and proposals through the issue templates. Report vulnerabilities through the [security policy](.github/SECURITY.md).

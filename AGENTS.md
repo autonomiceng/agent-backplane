@@ -39,10 +39,11 @@ Bun workspaces monorepo. One server process serves the API, SSE, and the built d
 - `packages/cli/` and `packages/mcp/` - `backplane`/`bp` and the stdio MCP server. `runtime/` is hand-written; `generated/` comes from the OpenAPI contract and is never edited by hand.
 - `contracts/openapi/` - the canonical `openapi.json`. `tooling/openapi/` exports it, `tooling/codegen/` generates the CLI and MCP from it.
 - `db/internal/` - Drizzle table catalog for the backplane's own tables only. `db/migrations/` - ordered, forward-only SQL for the protected `control`, `queue`, `audit` schemas. Workspace schemas never enter Drizzle; their Migrations live in the database ledger with a git projection under `$BP_DATA_DIR`.
-- `infra/` - `compose/` (the server image and Caddyfile), `postgres/` (pins), `init/` (fresh-install SQL such as PGMQ), `observability/`, `backup/`, `bootstrap/README.md` (installation and recovery).
+- `infra/` - `compose/` (the server image and Caddyfile), `postgres/` (pins), `init/` (fresh-install SQL such as PGMQ), `compute/` (the workerd image recipe and Runtime Identity), `backup/`, `bootstrap/README.md` (installation and recovery).
 - `scripts/bootstrap.py` - the host bootstrap: Python 3.11 standard library, no Bun. Root `compose*.yaml` hold every service and profile; `compose.enroll.yaml` runs the first-User enrollment inside the server image. Tests in `tests/test_bootstrap*.py` use a fake runner and never call Docker. `scripts/retire-status-timer.sh` removes the version 1 status timer from existing installs once.
 - `skills/backplane/` - the versioned SKILL.md that teaches agents the CLI, with executable examples.
-- `tests/acceptance/` and `tests/adversarial/` - cross-primitive scenarios against a real Postgres. Unit tests sit beside their module as `<name>.test.ts`.
+- `tests/acceptance/` - cross-primitive scenarios and container gates that own their fixtures, against a real Postgres. Unit tests sit beside their module as `<name>.test.ts`.
+- `examples/` - worked agent examples, run by `bun run test:examples`; `bun run test` leaves them out.
 
 Conventions: kebab-case files, one concept per file, no barrels, sibling test per production module. Routes are `/api/v1/workspaces/:workspaceId/<primitive>`. Roles are `bp_server` (login), `bp_executor` and `bp_p_<workspace>_<principal>` (NOLOGIN). Env vars are `BP_*`.
 

@@ -15,7 +15,8 @@
     "generated:check": "bun tooling/openapi/export.ts --check && bun tooling/codegen/generate.ts --check",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint apps db packages tooling tests",
-    "test": "bun test --preload ./apps/server/testing/preload.ts",
+    "test": "bun test --preload ./apps/server/testing/preload.ts --path-ignore-patterns 'examples/**'",
+    "test:examples": "bun test --preload ./apps/server/testing/preload.ts examples/",
     "test:integration": "bun run test",
     "dev": "bun --watch apps/server/main.ts",
     "dev:cluster": "bun apps/server/testing/dev-cluster.ts",
@@ -25,7 +26,6 @@
   },
   "devDependencies": {
     "@types/bun": "1.4.2",
-    "auth": "1.7.4",
     "drizzle-kit": "0.31.10",
     "embedded-postgres": "18.4.0-beta.17",
     "oxlint": "1.82.0",

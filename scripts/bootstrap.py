@@ -51,13 +51,23 @@ BLOB_SECRETS = {"BP_RUSTFS_ROOT_USER": 10, "BP_RUSTFS_ROOT_PASSWORD": 32, "BP_BL
 COMPUTE_SECRETS = {"BP_COMPUTE_TOKEN": 32}
 SECRETS = CORE_SECRETS | BLOB_SECRETS | COMPUTE_SECRETS
 SELECTORS = ("COMPOSE_PROJECT_NAME", "COMPOSE_FILE", "COMPOSE_PROFILES")
-RETIRED = ("BP_SCHEME", "BP_TLS_ISSUER", "BP_EDGE_CA", "BP_PUBLIC_HOST", "BP_EDGE_BIND_HOST")
+# Settings nothing reads any more, with their replacements. Any assignment, even empty, is refused.
+UNSUPPORTED = {
+    "BP_SCHEME": "BP_ACCESS_MODE",
+    "BP_TLS_ISSUER": "BP_ACCESS_MODE (local uses the internal CA, public uses ACME)",
+    "BP_EDGE_CA": "the edge root certificate exported from edge-data (docs/operations/ingress.md)",
+    "BP_PUBLIC_HOST": "BP_PUBLIC_DOMAIN",
+    "BP_EDGE_BIND_HOST": "BP_BIND_HOST",
+    "BP_AUTH_URL": "BP_PUBLIC_URL",
+    "BP_WORKERD_REPOSITORY": "BP_WORKERD_IMAGE",
+    "BP_WORKERD_DIGEST": "BP_WORKERD_IMAGE and BP_WORKERD_BINARY_SHA256",
+}
 # Assignments bootstrap reads or writes; every other line is preserved verbatim.
-MANAGED = set(SECRETS) | set(SELECTORS) | set(RETIRED) | {
-    "COMPOSE_PATH_SEPARATOR", "COMPOSE_ENV_FILES", "BP_BLOB_BACKEND", "BP_ACCESS_MODE", "BP_PUBLIC_URL", "BP_AUTH_URL",
+MANAGED = set(SECRETS) | set(SELECTORS) | set(UNSUPPORTED) | {
+    "COMPOSE_PATH_SEPARATOR", "COMPOSE_ENV_FILES", "BP_BLOB_BACKEND", "BP_ACCESS_MODE", "BP_PUBLIC_URL",
     "BP_ALLOW_INSECURE_ORIGIN", "BP_PUBLIC_DOMAIN", "BP_PORT", "BP_BIND_HOST", "BP_HTTP_PORT", "BP_HTTPS_PORT", "BP_BACKUP_DIR",
     "BP_POSTGRES_IMAGE", "BP_SERVER_IMAGE", "BP_CADDY_IMAGE", "BP_RUSTFS_IMAGE", "BP_BLOB_BOOTSTRAP_IMAGE",
-    "BP_WORKERD_REPOSITORY", "BP_WORKERD_DIGEST", "BP_WORKERD_IMAGE", "BP_WORKERD_BINARY_SHA256",
+    "BP_WORKERD_IMAGE", "BP_WORKERD_BINARY_SHA256",
     "BP_DATA_DIR", "BP_PLATFORM_NETWORK", "BP_PLATFORM_SUBNET", "BP_PLATFORM_IP_RANGE", "BP_VOLUME_PREFIX",
     "BP_BACKUP_KEEP",
 }
@@ -141,6 +151,10 @@ class EnvFile:
             if key == "BP_WORKERD_EFFECTIVE_IMAGE":
                 raise Refused("workerd_effective_image_persisted", "BP_WORKERD_EFFECTIVE_IMAGE is bootstrap's child setting; remove it from " + str(path))
             if key is None or key not in MANAGED:
+                continue
+            if key in UNSUPPORTED:
+                # Refused in settings() by name, whatever the line's form.
+                self.assignments.setdefault(key, index)
                 continue
             if key in self.assignments:
                 raise Refused("env_repair_required", f"{key} is set twice in {path}")
@@ -264,8 +278,6 @@ def resolve_public_origin(entries: dict[str, str], fallback: str) -> str:
     if allow not in ("true", "false"):
         raise Refused("invalid_access_settings", "BP_ALLOW_INSECURE_ORIGIN must be true or false")
     origin = normalize_origin(entries["BP_PUBLIC_URL"]) if entries.get("BP_PUBLIC_URL") else normalize_origin(fallback)
-    if entries.get("BP_AUTH_URL") and normalize_origin(entries["BP_AUTH_URL"]) != origin:
-        raise Refused("invalid_access_settings", "BP_PUBLIC_URL and BP_AUTH_URL must match")
     if origin.startswith("http:") and not is_loopback_host(split_origin(origin)[1]) and allow != "true":
         raise Refused("invalid_access_settings", "non-loopback HTTP requires BP_ALLOW_INSECURE_ORIGIN=true")
     return origin
@@ -276,9 +288,6 @@ def resolve_access(entries: dict[str, str], edge: bool = False) -> dict[str, str
     mode = entries.get("BP_ACCESS_MODE", "local")
     if mode not in ("local", "public", "proxy"):
         raise Refused("invalid_access_settings", "BP_ACCESS_MODE must be local, public or proxy")
-    retired = [key for key in RETIRED if key in entries]
-    if retired:
-        raise Refused("invalid_access_settings", "use BP_ACCESS_MODE, BP_PUBLIC_DOMAIN and BP_BIND_HOST for access settings; remove " + ", ".join(retired))
     domain = entries.get("BP_PUBLIC_DOMAIN", "")
     host = f"backplane.{domain or 'localhost'}".lower()
     if edge and (len(host) > 253 or not all(DNS_LABEL.match(label) for label in host.split("."))):
@@ -391,8 +400,6 @@ def installation_state(runner: Runner, env: dict[str, str], project: str, prefix
 
 def verify_workerd_image(entries: dict[str, str], env: dict[str, str], runner: Runner, published: str, pull_default: bool) -> dict[str, str]:
     """Docker stays on the trusted host; every launch verifies the executables it will run."""
-    if entries.get("BP_WORKERD_REPOSITORY") or entries.get("BP_WORKERD_DIGEST"):
-        raise Refused("workerd_legacy_identity_requires_migration", "replace BP_WORKERD_REPOSITORY/BP_WORKERD_DIGEST with BP_WORKERD_IMAGE")
     reference = entries.get("BP_WORKERD_IMAGE") or published
     binary = entries.get("BP_WORKERD_BINARY_SHA256") or WORKERD_BINARY
     if not IMAGE_REFERENCE.fullmatch(reference) or not re.fullmatch(r"[0-9a-f]{64}", binary):
@@ -657,6 +664,10 @@ def select(env: EnvFile, args, explicit: list[str] | None) -> dict:
 def settings(env: EnvFile, args, selection: dict) -> dict:
     """Access and network settings, applied to the env file in memory."""
     entries = env.entries
+    unsupported = [key for key in UNSUPPORTED if key in env.assignments]
+    if unsupported:
+        raise Refused("unsupported_setting", "; ".join(f"{key} is unsupported, use {UNSUPPORTED[key]}" for key in unsupported)
+                      + f"; remove {', '.join(unsupported)} from {env.path}")
     for key, value in (("BP_ACCESS_MODE", args.access_mode), ("BP_PUBLIC_URL", args.public_url), ("BP_BACKUP_DIR", args.backup_dir)):
         if value is None:
             continue

@@ -102,7 +102,6 @@ services:
       BP_AUTH_SECRET: ${BP_AUTH_SECRET:?set BP_AUTH_SECRET to a random string of at least 32 characters}
       BP_ACCESS_MODE: ${BP_ACCESS_MODE:-local}
       BP_PUBLIC_URL: ${BP_PUBLIC_URL:-}
-      BP_AUTH_URL: ${BP_AUTH_URL:-}
       BP_SIGNUP: ${BP_SIGNUP:-closed}
       # Configured image references for the public Status Document (GET /status.json); the
       # optional pins repeat their overlay defaults so a core install can report them disabled.

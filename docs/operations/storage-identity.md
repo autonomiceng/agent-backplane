@@ -1,16 +1,15 @@
-# Blob storage identity and offline adoption
+# Blob storage identity
 
-Once activated, startup verifies the selected store before enrollment, requests, sampling or purge.
-It writes no binding, marker or blob bytes. A separate operator command initializes
-or adopts storage. Deploy the operator, schema, cleanup exclusions and bootstrap
-service together before activating the startup check. The shared-image initialization service precedes server startup.
+Startup verifies the selected store before enrollment, requests, sampling or purge.
+It writes no binding, marker or blob bytes. A separate operator command initializes,
+inspects or reconciles storage. The shared-image initialization service precedes server startup.
 
 ## New installation
 
-Normal preparation now runs the shared-image `storage-init` after migrations and
+Bootstrap runs the shared-image `storage-init` after migrations and
 data-directory setup, before `server`. It automatically initializes only an empty
-installation. The explicit operator command below also supports fenced inspection,
-adoption and reconciliation. With PostgreSQL running, migrations applied, the data
+installation. The explicit operator command below also supports fenced inspection
+and reconciliation. With PostgreSQL running, migrations applied, the data
 directory initialized, and all writers stopped,
 use the deployment Compose selection described below. Place the matching
 PostgreSQL admin URL in a private owner-only file readable by the container's `bun`
@@ -33,23 +32,18 @@ there are no Users, Workspaces, referenced bytes, retained bytes, or conflicting
 marker. It commits a `verifying` intent, conditionally publishes the marker,
 rechecks the complete inventory, then commits `ready`. A repeated bootstrap with a
 ready binding only checks backend/marker identity and performs no writes. Full
-content verification still belongs to server startup. Legacy data makes
-initialization exit with `blob_binding_explicit_adoption_required`.
+content verification still belongs to server startup. Data without a binding makes
+initialization exit with `blob_binding_unbound_data_unsupported`; an unbound store is
+never bound after the fact.
 
 ## Existing installation and crash recovery
 
 Use the [deployment Compose function](health.md) matching the running project's
 image, env file, overlays and profiles. Do not change the backend or attach a fresh
 volume. Stop the server, edge ingress if present, other server processes, storage
-writers and cleanup. Keep them stopped throughout capture and adoption.
+writers and cleanup. Keep them stopped throughout capture and reconciliation.
 
-Keep the pre-upgrade checkout and image available. A pre-binding Checkpoint must
-be restored with that checkout, before the `storage-init` service existed. Never
-run an old archived server image through a newer initialization command. If the
-old helper lacks `--offline`, fence ingress and enrolled-agent writes, run its
-normal Checkpoint, then stop the server before changing checkout or schema.
-
-For filesystem storage with the offline-capable helper, capture while stopped:
+For filesystem storage, capture while stopped:
 
 ```sh
 deployment_compose stop server
@@ -67,11 +61,11 @@ the capture to reconcile leftovers before resuming traffic.
 For local S3, follow the [RustFS checkpoint procedure](s3-checkpoints.md) with
 writers and deletion fenced. Unsupported S3 layouts refuse before capture.
 
-With the reviewed matching image built or loaded, apply the repository migration
+With the matching image available, apply the repository migrations
 without starting the server, then inspect the store:
 
 ```sh
-adoption_tasks_ok() {
+storage_tasks_ok() {
   deployment_compose up -d --no-deps --no-build migrate || return 1
   container=$(deployment_compose ps -aq migrate) || return 1
   # Exactly one container ID is required for the one-shot service.
@@ -80,7 +74,7 @@ adoption_tasks_ok() {
   # storage-init's entrypoint assigns /data to bun; `true` replaces initialization.
   deployment_compose run --rm --no-deps -T storage-init true
 }
-adoption_tasks_ok && storage_operator inspect --fenced
+storage_tasks_ok && storage_operator inspect --fenced
 ```
 
 PostgreSQL must already be healthy. The migration finishes and exits; `up --wait`
@@ -88,7 +82,7 @@ can reject its successful completion because it expects running or healthy
 containers. Wait for its container and require exit code zero, then repair data
 ownership, before inspection. Keep the server and ingress stopped if either step fails.
 
-`--fenced` and, for mutating adoption/reconciliation, `--checkpoint` are explicit operator attestations. Inspection requires fencing but no checkpoint reference. The checkpoint ID
+`--fenced` and, for reconciliation, `--checkpoint` are explicit operator attestations. Inspection requires fencing but no checkpoint reference. The checkpoint ID
 is a non-secret recovery reference recorded durably, not an automatically validated
 archive. Keep the completed capture and its integrity evidence. The command also
 refuses any observed `bp_server` database sessions, acquires the same advisory
@@ -97,21 +91,9 @@ and external object writers must be stopped; database checks cannot fence them.
 
 Inspection outputs object IDs, physical staging status, size, SHA-256 and one of
 `referenced`, `retained`, or `unreferenced`. It does not print blob bodies, application
-keys, credentials, endpoints or signed URLs. To adopt an unbound legacy store:
-
-```sh
-storage_operator adopt --fenced --checkpoint CAPTURE_ID
-```
-
-If inspection reports unreferenced or staging bytes, explicitly preserve them:
-
-```sh
-storage_operator adopt --fenced --checkpoint CAPTURE_ID \
-  --retain-unreferenced
-```
-
-For an already bound installation with normal crash leftovers, use `reconcile`
-instead of `adopt`, after a new fenced capture:
+keys, credentials, endpoints or signed URLs. For a bound installation with normal
+crash leftovers, reconcile after a new fenced capture; unreferenced or staging bytes
+need the explicit retention flag:
 
 ```sh
 storage_operator reconcile --fenced --checkpoint CAPTURE_ID \
@@ -165,7 +147,7 @@ persisted intent exactly. This follows the [S3 conditional-write contract](https
 Timeouts and conflicting publication fail closed and leave the intent retryable.
 The conditional-publication guarantee is qualified for the shipped pinned RustFS
 image. A different S3 endpoint or image must pass the competing-database publication
-gate and prove that conditional overwrites return 412 before adoption. A losing
+gate and prove that conditional overwrites return 412 before initialization. A losing
 fresh database remains verifying; recreate that disposable database or restore its
 pre-operation capture. Never reset its binding with SQL.
 
@@ -174,7 +156,7 @@ pre-operation capture. Never reset its binding with SQL.
 The singleton protected binding and private root marker contain logical database,
 store and generation UUIDs plus the backend. Credentials, endpoint spelling and
 filesystem paths are not identity. Rotation or an equivalent endpoint continues to
-work; a backend switch requires a separate fenced migration. A copied marker alone
+work; there is no backend switch for an existing installation. A copied marker alone
 cannot authorize content: startup checks the complete inventory and hashes every
 reference and retained object. A complete matching database/store clone is legitimate
 fenced restore. Keep its source server stopped.
@@ -188,7 +170,7 @@ contain ordinary cleanup leftovers. Restore inspects the recovered inventory whi
 Use `bash scripts/restore.sh CHECKPOINT --fenced --env-file .env --retain-unreferenced` to
 explicitly preserve such leftovers. Without that flag, unreferenced bytes stop
 recovery before server startup; the restored stores remain available for inspection.
-Already retained bytes need no new opt-in. An unfinished adoption intent still
+Already retained bytes need no new opt-in. An unfinished initialization or reconciliation intent still
 requires its original exact retry evidence. If that gate refuses, leave the source fenced,
 keep the restored server stopped, and use the restored capture's ID with the
 `reconcile --fenced --checkpoint CAPTURE_ID --retain-unreferenced` command above.
@@ -227,9 +209,6 @@ budget in seconds (default 120, range 1..86400). It controls the server healthch
 start period and checkpoint resume/restore readiness waits. Raise it before large
 store operations. Expiry is not evidence of corruption: inspect logs and service
 state before deciding whether verification is slow or an operator action is needed.
-Adoption performs three complete reads around durable publication to detect changed
-bytes before certifying the binding; budget that offline I/O as well.
-Future fresh-target migration can retain the database UUID and attribution while
-allocating a new store UUID/generation; this command intentionally refuses backend
-or foreign-store replacement. That migration and coordinated S3 checkpoints are
-separate work.
+Initialization and reconciliation perform three complete reads around durable publication
+to detect changed bytes before certifying the binding; budget that offline I/O as well.
+The command refuses backend or foreign-store replacement.

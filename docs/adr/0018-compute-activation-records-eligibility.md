@@ -50,8 +50,8 @@ image override lives only in its child environment, and bootstrap refuses persis
 overrides. Bare Compose cannot enforce this restriction; its operator owns the accuracy
 of the selected reference and declarations. The evidence record never selects
 future images. Direct Compose reports a null image ID unless the trusted operator
-supplies a declaration. Use an immutable reference for repeatability. There is no
-shipped image default until runtime qualification, publication and B-DEFAULT approval.
+supplies a declaration. Use an immutable reference for repeatability. There was no
+shipped image default until publication (2026-09-23 amendment).
 The known amd64 binary hash alone does not qualify another architecture or image.
 
 
@@ -77,7 +77,7 @@ not evidence of runtime child exit.
 
 Amended 2026-09-20 (local artifact delivery): Superseding the publication prerequisite
 above, a qualified pinned local-build recipe may become the supported amd64 default after
-H-PROOF/F-GATE and B-DEFAULT approval. Registry publication is optional; installations
+runtime qualification. Registry publication is optional; installations
 instead need build network access and compatible Docker/BuildKit tooling. Bootstrap
 verifies workerd and the pinned Bun supervisor executable hashes and version output from
 the resolved image ID, and records both as private launch evidence. Bun identity remains
@@ -86,7 +86,7 @@ remain distinct from registry manifest digests. This claims neither registry rel
 arm64 qualification and leaves the trusted operator/enrolled-agent authority boundary
 unchanged. Default promotion on another architecture requires its actual runtime gate.
 
-Amended 2026-09-20 (B-PROMOTE preparation, pending H-PROOF): Fresh full bootstrap selects
+Amended 2026-09-20 (full default, superseded by ADR-0009's minimal default): Fresh full bootstrap selects
 Functions and uses the existing pinned local-build path for a missing/blank image override.
 Minimal mode omits workerd. Existing selections and explicit artifacts remain authoritative;
 mode flags do not silently activate Functions on an installed system. Bootstrap success
@@ -94,10 +94,9 @@ requires the existing authenticated operations capability sampler to report fres
 Files and selected Functions with matching backends, in addition to core readiness. The
 bounded sampler reads the storage binding/marker and verifies Runtime Identity with a
 loader round trip, creating no Workspace writes or invocation Runs. It establishes current
-readiness only. H-PROOF/F-GATE, host console/runtime confirmation by root, architecture
-qualification and the trusted operator/enrolled-agent boundary remain unchanged.
+readiness only, not runtime or architecture qualification; the trusted operator/enrolled-agent
+boundary remains unchanged.
 
 Amended 2026-09-23 (published image delivery): A missing or blank workerd override now
 pulls the digest-pinned published image instead of building the local recipe (ADR-0009).
-Executable verification, launch evidence, the amd64-only default and the remaining gates
-are unchanged.
+Executable verification, launch evidence and the amd64-only default are unchanged.

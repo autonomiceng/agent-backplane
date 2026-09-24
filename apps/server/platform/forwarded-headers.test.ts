@@ -39,8 +39,9 @@ async function fixture(publicOrigin: string) {
 
 test("spoofed proxy headers bypass authentication or operator authorization", async () => {
   const origin = (env: Record<string, string | undefined>) => resolvePublicOrigin(env, "http://localhost:3000");
-  expect(origin({ BP_PUBLIC_URL: "HTTPS://BÜCHER.example:443/", BP_AUTH_URL: "https://xn--bcher-kva.example" })).toBe("https://xn--bcher-kva.example");
-  expect(() => origin({ BP_PUBLIC_URL: "", BP_AUTH_URL: "https://backplane.example" })).toThrow("must match");
+  expect(origin({ BP_PUBLIC_URL: "HTTPS://BÜCHER.example:443/" })).toBe("https://xn--bcher-kva.example");
+  expect(origin({ BP_PUBLIC_URL: "https://backplane.example", BP_AUTH_URL: "" })).toBe("https://backplane.example");
+  expect(() => origin({ BP_PUBLIC_URL: "https://backplane.example", BP_AUTH_URL: "https://backplane.example" })).toThrow("BP_AUTH_URL is unsupported; use BP_PUBLIC_URL");
   expect(origin({ BP_PUBLIC_URL: "http://127.42.0.1" })).toBe("http://127.42.0.1");
   expect(origin({ BP_PUBLIC_URL: "http://[::1]" })).toBe("http://[::1]");
   expect(origin({ BP_PUBLIC_URL: "http://backplane.example", BP_ALLOW_INSECURE_ORIGIN: "true" })).toBe("http://backplane.example");
@@ -49,7 +50,6 @@ test("spoofed proxy headers bypass authentication or operator authorization", as
     expect(() => origin({ BP_PUBLIC_URL: value })).toThrow();
   }
   expect(() => origin({ BP_ALLOW_INSECURE_ORIGIN: "1" })).toThrow();
-  expect(() => origin({ BP_PUBLIC_URL: "https://a.example", BP_AUTH_URL: "https://b.example" })).toThrow("must match");
   const client = (env: Record<string, string | undefined>) => credentials(env, "none", undefined).url;
   expect(client({ BP_PUBLIC_URL: "HTTPS://BP.EXAMPLE:443/", BP_URL: "https://bp.example", BP_AUTH_URL: "https://bp.example/" })).toBe("https://bp.example");
   expect(client({ BP_URL: "http://127.42.0.1/" })).toBe("http://127.42.0.1");

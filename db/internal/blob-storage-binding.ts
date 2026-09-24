@@ -1,4 +1,4 @@
-// Private installation identity; only fenced operator adoption may populate it.
+// Private installation identity; only the fenced storage operator (apps/server/blobs/storage-admin.ts) populates it.
 import { sql } from "drizzle-orm";
 import { boolean, check, integer, pgSchema, primaryKey, text, uuid } from "drizzle-orm/pg-core";
 export const blobStorageBinding = pgSchema("control").table("blob_storage_binding", {
