@@ -170,9 +170,12 @@ contain ordinary cleanup leftovers. Restore inspects the recovered inventory whi
 Use `bash scripts/restore.sh CHECKPOINT --fenced --env-file .env --retain-unreferenced` to
 explicitly preserve such leftovers. Without that flag, unreferenced bytes stop
 recovery before server startup; the restored stores remain available for inspection.
-Already retained bytes need no new opt-in. An unfinished initialization or reconciliation intent still
-requires its original exact retry evidence. If that gate refuses, leave the source fenced,
-keep the restored server stopped, and use the restored capture's ID with the
+Already retained bytes need no new opt-in. An unfinished intent still requires its
+original exact retry: `inspect` reports its saved operation, checkpoint reference and
+retention flag. Rerun `storage_operator initialize` for an initialization intent, or
+`reconcile --fenced` with the saved checkpoint reference and retention flag for a
+reconciliation intent. If a ready restored store refuses on leftovers instead, leave the
+source fenced, keep the restored server stopped, and use the restored capture's ID with the
 `reconcile --fenced --checkpoint CAPTURE_ID --retain-unreferenced` command above.
 Only start the restored server after reconciliation succeeds. The legacy
 PostgreSQL-only helper does not recover blob bytes.
