@@ -144,7 +144,9 @@ test("only migrate, storage-init and blob-bootstrap run once before the server; 
   expect(Object.keys(blobs.services).sort()).toEqual(["blob-bootstrap", "migrate", "postgres", "rustfs", "server", "storage-init"]);
   expect(Object.keys(blobs.services.server.depends_on).sort()).toEqual(["blob-bootstrap", "migrate", "postgres", "storage-init"]);
   expect(blobs.services.postgres.depends_on).toBeUndefined();
-  expect(blobs.services.postgres.entrypoint[2]).toMatch(/^mkdir -p \/backup\/archive && chown postgres:postgres \/backup\/archive && if \[ ! -d \/backup\/backups \]; then .* fi && exec docker-entrypoint\.sh /);
+  expect(blobs.services.postgres.entrypoint.slice(0, 2)).toEqual(["sh", "-ec"]);
+  expect(blobs.services.postgres.entrypoint[2]).toBe("mkdir -p /backup/archive && chown postgres:postgres /backup/archive && "
+    + "if [ ! -d /backup/backups ]; then mkdir /backup/backups && chown postgres:postgres /backup/backups; fi && exec docker-entrypoint.sh \"$$@\"");
   expect(blobs.services.rustfs.depends_on).toBeUndefined();
   expect(blobs.services["storage-init"]).toMatchObject({ user: "0:0", command: ["bun", "apps/server/blobs/storage-admin.ts", "initialize"] });
   expect(blobs.services["storage-init"].entrypoint.slice(0, 2)).toEqual(["sh", "-ec"]);
