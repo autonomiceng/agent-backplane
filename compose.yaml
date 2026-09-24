@@ -59,7 +59,7 @@ services:
 
   migrate:
     # Published by .github/workflows/publish.yml; compose.dev.yaml builds this checkout instead.
-    image: &server-image ${BP_SERVER_IMAGE:-ghcr.io/autonomiceng/agent-backplane-server:main-91de7da@sha256:5285c2593406ec16fc09217252c534c206643d13988e9fc85a3403012b4a5299}
+    image: &server-image ${BP_SERVER_IMAGE:-ghcr.io/autonomiceng/agent-backplane-server:main-f59d65f@sha256:93eb37b3810c7affc59d6ca38a0598da119f4ba8e51aaf1856f01354f99d4f1d}
     restart: "no"
     logging: *logging
     command: ["bun", "db/migrate-cli.ts"]
