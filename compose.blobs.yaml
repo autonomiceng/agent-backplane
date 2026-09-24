@@ -5,7 +5,7 @@ x-logging: &logging
 
 services:
   blob-image-check:
-    image: &blob-helper-image ${BP_BLOB_BOOTSTRAP_IMAGE:-${BP_SERVER_IMAGE:-ghcr.io/autonomiceng/agent-backplane-server:main-f59d65f@sha256:93eb37b3810c7affc59d6ca38a0598da119f4ba8e51aaf1856f01354f99d4f1d}}
+    image: &blob-helper-image ${BP_BLOB_BOOTSTRAP_IMAGE:-${BP_SERVER_IMAGE:-ghcr.io/autonomiceng/agent-backplane-server:main-c628063@sha256:2b94e6494f1f16d1a957323a79415fe0f5e3ad67d38ecfef8275f8e2efb962a4}}
     profiles: [blobs]
     entrypoint: ["bun", "/app/infra/init/blobs/bootstrap.js", "--images"]
     restart: "no"
