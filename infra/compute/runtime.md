@@ -25,6 +25,22 @@ establishes neither H-PROOF/F-GATE nor B-DEFAULT approval.
 
 `BP_COMPUTE_URL` is a secret-bearing destination: verification sends the control token before checking identity, so every HTTPS override must point to an operator-owned runtime. It accepts HTTPS authorities, the private Compose authority `http://workerd:8080`, and explicit loopback HTTP (`localhost`, IPv4 `127.0.0.0/8`, or IPv6 `[::1]`, with any port). Other cleartext authorities, including private LAN addresses, are refused before any token is sent. Loopback is for an operator-owned local runtime; the Compose hostname relies on the trusted private network. No arbitrary hostname is resolved to decide this exception. Userinfo, query strings and fragments are refused. A path prefix is preserved for `/identity`, `/prepare` and `/invoke`; path construction never changes the configured authority. Identity and preparation refuse redirects. Invocation returns function 3xx responses as ordinary results without following their Location. An invalid nonempty URL disables compute operations with `compute_unavailable` while core remains available.
 
+## Network
+
+`compose.compute.yaml` attaches workerd to one network, `compute`, which it shares only with
+the server. Postgres, RustFS and the edge are not on it, so workerd can neither resolve nor
+reach them. The server calls `http://workerd:8080`; workerd calls back only `server:3000`, the
+`api` service in `config.capnp`. The network is a routed bridge, not `internal`, because
+declared HTTPS egress needs a route out. Everything else workerd fetches goes through the
+`internet` service in `config.capnp`, whose `public` allow list refuses RFC 1918, carrier-grade
+NAT (which includes Tailscale), loopback and link-local addresses. Preparation children have
+no outbound access. Invocation children reach only the loader's `Egress` entrypoint: Workspace
+API paths on `server:3000` and their exact declared HTTPS URLs.
+
+To check an installed compute selection, run `docker compose exec workerd getent hosts postgres`.
+It must print nothing and exit 2. `docker compose exec workerd getent hosts server` prints the
+server's `compute` address.
+
 ## Measurements and compatibility
 
 The trusted mounted entrypoint measures the executable before `exec`, refuses a mismatched expected hash, and exports `BP_WORKERD_RUNTIME_ID=workerd-binary-sha256:<observed-hash>` to the private authenticated loader. It also measures the control files in this exact order: `loader.js`, `config.capnp`, `start.sh`, `supervisor.ts`, `child-process.ts`. Each file's SHA-256 becomes a line `<lowercase-hex>  <filename>\n`; the SHA-256 of those five concatenated lines is `BP_WORKERD_CONTROL_SHA256`. This matches POSIX `sha256sum` output from `/compute` and Bun's explicit file-reading helper. There is no file I/O on module import.

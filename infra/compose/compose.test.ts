@@ -179,6 +179,18 @@ test("bare Compose preserves explicit workerd image selection", async () => {
   expect(local.services.workerd.environment.BP_WORKERD_HOST_IMAGE_ID).toBe("");
 });
 
+test("workerd shares only the compute network, and only with the server", async () => {
+  const rendered = await config(["compose.blobs.yaml", "compose.compute.yaml", "compose.gateway.yaml", "compose.dev.yaml"], "*", [
+    "BP_ACCESS_MODE=proxy", "BP_PUBLIC_URL=https://backplane.example.com",
+    "BP_RUSTFS_ROOT_USER=fixture", "BP_RUSTFS_ROOT_PASSWORD=fixture",
+    "BP_BLOB_S3_ACCESS_KEY=fixture", "BP_BLOB_S3_SECRET_KEY=fixture", "BP_COMPUTE_TOKEN=fixture",
+  ]);
+  expect(Object.keys(rendered.services.workerd.networks)).toEqual(["compute"]);
+  const members = Object.keys(rendered.services).filter(name => "compute" in (rendered.services[name].networks ?? {}));
+  expect(members.sort()).toEqual(["server", "workerd"]);
+  expect(rendered.services.server.environment.BP_COMPUTE_URL).toBe("http://workerd:8080");
+});
+
 test("enrollment runs the CLI from the server image on the host network without a forced password", async () => {
   const enroll = await config(["compose.enroll.yaml"], "enroll", []);
   expect(enroll.services.enroll.image).toBe(enroll.services.server.image);

@@ -126,6 +126,9 @@ when its image override is absent or blank. Bootstrap success requires core read
 and fresh authenticated Files/Functions observations from the existing operations sampler.
 The sampler reads the storage binding/marker and verifies runtime identity with a loader
 round trip, without Workspace writes. This does not replace runtime release qualification.
+Function code runs on the `compute` network, which only workerd and the server join, so it
+cannot resolve or reach Postgres or RustFS; workerd itself allows only public addresses and
+`server:3000` ([runtime](../infra/compute/runtime.md#network)).
 
 ## Operations
 
