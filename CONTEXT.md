@@ -31,8 +31,8 @@ _Avoid_: image digest, attestation
 hosted bot, which the backplane records but never controls.
 _Avoid_: runtime, client, platform
 
-**Approval**: a request, raised by a Principal against a row or Message, that an Approver
-must decide before the gated action proceeds.
+**Approval**: a request, raised by a Principal against a row, Message or Migration, that
+an Approver must decide before the gated action proceeds.
 _Avoid_: review, sign-off, hold, confirmation
 
 **Approver**: a User, or a Principal a User has delegated to, with the right to decide
