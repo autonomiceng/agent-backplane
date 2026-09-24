@@ -103,12 +103,13 @@ to publish a port for a container that sits only on an internal network, so use 
 
 ```sh
 ip="$(docker inspect --format '{{ (index .NetworkSettings.Networks "agent-backplane_blob-internal").IPAddress }}' \
-  "$(docker compose --env-file .env ps -q rustfs)")"
+  "$(docker compose --env-file <the bootstrap env file> ps -q rustfs)")"
 echo "http://$ip:9001/rustfs/console/"
 ```
 
-Replace `agent-backplane` with the Compose project name if bootstrap recorded another one.
-Open that address in a browser on the host, or from another machine forward it over SSH,
-`ssh -L 9001:$ip:9001 <host>`, and open `http://localhost:9001/rustfs/console/`. The
-session is plaintext HTTP inside the host; close the tunnel when done. The address changes
-when the container is recreated.
+Use the env file bootstrap wrote (`.env` by default) and, when bootstrap used
+`--compose-project`, that project name in place of `agent-backplane` in the network name.
+Open the printed address in a browser on the host. From another machine, copy the printed
+address and forward it over SSH, `ssh -L 9001:<printed address>:9001 <host>`, then open
+`http://localhost:9001/rustfs/console/`. The session is plaintext HTTP inside the host;
+close the tunnel when done. The address changes when the container is recreated.
