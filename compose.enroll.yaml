@@ -6,7 +6,7 @@
 # `docker compose up` ignores it.
 services:
   enroll:
-    image: ${BP_SERVER_IMAGE:-ghcr.io/autonomiceng/agent-backplane-server:main-c628063@sha256:2b94e6494f1f16d1a957323a79415fe0f5e3ad67d38ecfef8275f8e2efb962a4}
+    image: ${BP_SERVER_IMAGE:-ghcr.io/autonomiceng/agent-backplane-server:main-88b39bb@sha256:95b04dd5893ebac0e1db3bb5f634cd78dba3a56d160e7555e99d5f6aeaa846d0}
     profiles: [enroll]
     # The host's loopback and DNS: --url is the same browser URL agents on this host use.
     network_mode: host
