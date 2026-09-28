@@ -346,8 +346,10 @@ def tls_issuer(mode: str, configured: str) -> str:
     return issuer
 
 
-def certificate_covers(names: set[str], host: str) -> bool:
-    return host in names or ("." in host and f"*.{host.split('.', 1)[1]}" in names)
+def certificate_covers(dns_names: set[str], ip_names: set[str], host: str) -> bool:
+    if is_ip(host):
+        return host in ip_names
+    return host in dns_names or ("." in host and f"*.{host.split('.', 1)[1]}" in dns_names)
 
 
 def trust_file(entries: dict[str, str], key: str) -> Path:
@@ -393,9 +395,15 @@ def check_tls_inputs(runner: Runner, entries: dict[str, str], access: dict[str, 
     result = runner(["openssl", "x509", "-in", str(certificate), "-noout", "-ext", "subjectAltName"])
     if result.returncode:
         raise Refused("invalid_settings", f"openssl cannot read {certificate} as a PEM certificate")
-    names = {value.lower() for match in SAN_NAME.findall(result.stdout) for value in match if value}
+    certificate_key = runner(["openssl", "x509", "-in", str(certificate), "-pubkey", "-noout"])
+    private_key = runner(["openssl", "pkey", "-in", str(key), "-pubout", "-passin", "pass:"])
+    if certificate_key.returncode or private_key.returncode or certificate_key.stdout.strip() != private_key.stdout.strip():
+        raise Refused("invalid_settings", f"{certificate} and {key} must be a readable, matching certificate and private key")
+    matches = SAN_NAME.findall(result.stdout)
+    dns_names = {name.lower() for name, _ in matches if name}
+    ip_names = {name for _, name in matches if name}
     hosts = [access["host"]] + (["localhost", "127.0.0.1"] if access["mode"] == "local" else [])
-    missing = [host for host in hosts if not certificate_covers(names, host)]
+    missing = [host for host in hosts if not certificate_covers(dns_names, ip_names, host)]
     if missing:
         raise Refused("invalid_settings", f"{certificate} does not cover {', '.join(missing)}")
 

@@ -409,11 +409,35 @@ class BootstrapTests(unittest.TestCase):
         def san(argv):
             return subprocess.CompletedProcess(argv, 0, "X509v3 Subject Alternative Name:\n DNS:*.example.com, DNS:localhost, IP Address:127.0.0.1\n", "")
         bootstrap.check_tls_inputs(san, entries, access)
-        self.assertTrue(bootstrap.certificate_covers({"*.example.com"}, "backplane.example.com"))
-        self.assertFalse(bootstrap.certificate_covers({"*.example.com"}, "x.backplane.example.com"))
+        self.assertTrue(bootstrap.certificate_covers({"*.example.com"}, set(), "backplane.example.com"))
+        self.assertFalse(bootstrap.certificate_covers({"*.example.com"}, set(), "x.backplane.example.com"))
+        self.assertFalse(bootstrap.certificate_covers({"127.0.0.1"}, set(), "127.0.0.1"))
         with self.assertRaises(bootstrap.Refused) as refused:
             bootstrap.check_tls_inputs(san, entries, {"mode": "local", "host": "x.backplane.example.com"})
         self.assertIn("x.backplane.example.com", refused.exception.detail)
+        def dns_ip(argv):
+            return subprocess.CompletedProcess(argv, 0, "DNS:*.example.com, DNS:localhost, DNS:127.0.0.1", "")
+        with self.assertRaises(bootstrap.Refused) as refused:
+            bootstrap.check_tls_inputs(dns_ip, entries, access)
+        self.assertIn("127.0.0.1", refused.exception.detail)
+
+    def test_tls_files_reject_a_mismatched_private_key(self):
+        directory = self.dir / "certs"
+        directory.mkdir()
+        certificate, key = directory / "tls.crt", directory / "tls.key"
+        subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-subj", "/CN=backplane.example.com",
+                        "-keyout", str(key), "-out", str(certificate), "-days", "1",
+                        "-addext", "subjectAltName=DNS:backplane.example.com,DNS:localhost,IP:127.0.0.1"],
+                       check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        entries = {"BP_TLS_ISSUER": "files", "BP_TLS_DIR": str(directory)}
+        access = {"mode": "local", "host": "backplane.example.com"}
+        bootstrap.check_tls_inputs(bootstrap.run, entries, access)
+        subprocess.run(["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048", "-out", str(key)],
+                       check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        with self.assertRaises(bootstrap.Refused) as refused:
+            bootstrap.check_tls_inputs(bootstrap.run, entries, access)
+        self.assertEqual(refused.exception.code, "invalid_settings")
+        self.assertIn("matching certificate and private key", refused.exception.detail)
 
     def test_private_acme_inputs_and_overlay_selection(self):
         access = {"mode": "public", "host": "backplane.example.com"}
