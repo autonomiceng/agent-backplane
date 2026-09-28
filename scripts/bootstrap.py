@@ -20,6 +20,9 @@ import os
 import re
 import secrets
 import shlex
+import shutil
+import socket
+import ssl
 import subprocess
 import stat
 import sys
@@ -54,7 +57,6 @@ SELECTORS = ("COMPOSE_PROJECT_NAME", "COMPOSE_FILE", "COMPOSE_PROFILES")
 # Settings nothing reads any more, with their replacements. Any assignment, even empty, is refused.
 UNSUPPORTED = {
     "BP_SCHEME": "BP_ACCESS_MODE",
-    "BP_TLS_ISSUER": "BP_ACCESS_MODE (local uses the internal CA, public uses ACME)",
     "BP_EDGE_CA": "the edge root certificate exported from edge-data (docs/operations/ingress.md)",
     "BP_PUBLIC_HOST": "BP_PUBLIC_DOMAIN",
     "BP_EDGE_BIND_HOST": "BP_BIND_HOST",
@@ -70,12 +72,17 @@ MANAGED = set(SECRETS) | set(SELECTORS) | set(UNSUPPORTED) | {
     "BP_WORKERD_IMAGE", "BP_WORKERD_BINARY_SHA256",
     "BP_DATA_DIR", "BP_PLATFORM_NETWORK", "BP_PLATFORM_SUBNET", "BP_PLATFORM_IP_RANGE", "BP_VOLUME_PREFIX",
     "BP_BACKUP_KEEP",
+    "BP_TLS_ISSUER", "BP_ACME_EMAIL", "BP_ACME_CA", "BP_ACME_CA_ROOT", "BP_ACME_EAB_KEY_ID",
+    "BP_ACME_EAB_HMAC", "BP_TLS_DIR", "BP_TLS_CA",
 }
 NAME_LINE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)")
 ASSIGNMENT = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
 DNS_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$", re.IGNORECASE)
 SAFE_NAME = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]*$")
 IMAGE_REFERENCE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/:@-]*")
+SAN_NAME = re.compile(r"DNS:([^,\s]+)|IP Address:([^,\s]+)")
+TLS_OVERLAYS = ("compose.files.yaml", "compose.acme-ca-root.yaml", "compose.acme-eab.yaml")
+MODE_OVERLAYS = ("compose.public.yaml",)
 # Verified upstream amd64 workerd executable and the pinned Bun supervisor, by architecture.
 WORKERD_BINARY = "f31da6d248028d698806aa93d1b3aec28bbd4b4b7ddc31e967408ab6406fa5aa"
 WORKERD_VERSION = "workerd 2026-09-18"
@@ -330,6 +337,93 @@ def resolve_access(entries: dict[str, str], edge: bool = False) -> dict[str, str
     return {"mode": mode, "host": host, "origin": origin}
 
 
+def tls_issuer(mode: str, configured: str) -> str:
+    if mode == "proxy":
+        return ""
+    issuer = configured or ("acme" if mode == "public" else "internal")
+    if issuer not in ("internal", "acme", "files") or (mode == "public" and issuer == "internal") or (mode == "local" and issuer == "acme"):
+        raise Refused("invalid_settings", f"BP_TLS_ISSUER={issuer} is unsupported in {mode} mode")
+    return issuer
+
+
+def certificate_covers(names: set[str], host: str) -> bool:
+    return host in names or ("." in host and f"*.{host.split('.', 1)[1]}" in names)
+
+
+def trust_file(entries: dict[str, str], key: str) -> Path:
+    path = ROOT / entries[key]
+    try:
+        if not path.is_file():
+            raise OSError("not a regular file")
+        ssl.create_default_context(cadata=path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, ssl.SSLError) as error:
+        raise Refused("invalid_settings", f"{key} ({path}) must be a readable PEM file holding CA certificates") from error
+    return path
+
+
+def check_tls_inputs(runner: Runner, entries: dict[str, str], access: dict[str, str]) -> None:
+    issuer = entries.get("BP_TLS_ISSUER", "")
+    if not issuer:
+        return
+    if issuer == "acme":
+        ca = entries.get("BP_ACME_CA", "")
+        try:
+            parsed = urllib.parse.urlsplit(ca) if ca else None
+        except ValueError:
+            raise Refused("invalid_settings", "BP_ACME_CA must be an HTTPS ACME directory URL") from None
+        if ca and (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.fragment or any(c.isspace() for c in ca)):
+            raise Refused("invalid_settings", "BP_ACME_CA must be an HTTPS ACME directory URL")
+        if bool(entries.get("BP_ACME_EAB_KEY_ID")) != bool(entries.get("BP_ACME_EAB_HMAC")):
+            raise Refused("invalid_settings", "BP_ACME_EAB_KEY_ID and BP_ACME_EAB_HMAC must be set together")
+        if entries.get("BP_ACME_CA_ROOT") and not ca:
+            raise Refused("invalid_settings", "BP_ACME_CA_ROOT needs BP_ACME_CA")
+    for key in ("BP_TLS_CA", "BP_ACME_CA_ROOT"):
+        if entries.get(key) and (key == "BP_TLS_CA" and issuer in ("acme", "files") or key == "BP_ACME_CA_ROOT" and issuer == "acme"):
+            trust_file(entries, key)
+    if issuer != "files":
+        return
+    if not entries.get("BP_TLS_DIR"):
+        raise Refused("invalid_settings", "BP_TLS_ISSUER=files needs BP_TLS_DIR holding tls.crt and tls.key")
+    directory = ROOT / entries["BP_TLS_DIR"]
+    certificate, key = directory / "tls.crt", directory / "tls.key"
+    if not directory.is_dir() or not certificate.is_file() or not key.is_file():
+        raise Refused("invalid_settings", f"BP_TLS_DIR ({directory}) must hold regular tls.crt and tls.key files")
+    if shutil.which("openssl") is None:
+        raise Refused("openssl_missing", "install openssl to inspect the certificate subject alternative names")
+    result = runner(["openssl", "x509", "-in", str(certificate), "-noout", "-ext", "subjectAltName"])
+    if result.returncode:
+        raise Refused("invalid_settings", f"openssl cannot read {certificate} as a PEM certificate")
+    names = {value.lower() for match in SAN_NAME.findall(result.stdout) for value in match if value}
+    hosts = [access["host"]] + (["localhost", "127.0.0.1"] if access["mode"] == "local" else [])
+    missing = [host for host in hosts if not certificate_covers(names, host)]
+    if missing:
+        raise Refused("invalid_settings", f"{certificate} does not cover {', '.join(missing)}")
+
+
+def tls_overlays(entries: dict[str, str]) -> list[str]:
+    issuer = entries.get("BP_TLS_ISSUER", "")
+    if issuer == "files":
+        return ["compose.files.yaml"]
+    if issuer == "acme":
+        return [name for name, key in (("compose.acme-ca-root.yaml", "BP_ACME_CA_ROOT"),
+                                       ("compose.acme-eab.yaml", "BP_ACME_EAB_KEY_ID")) if entries.get(key)]
+    return []
+
+
+def check_tls_files_readable(runner: Runner, entries: dict[str, str], compose: list[str]) -> None:
+    mounted = (["/certs/tls.crt", "/certs/tls.key"] if entries.get("BP_TLS_ISSUER") == "files" else
+               ["/certs/acme-ca-root.crt"] if entries.get("BP_TLS_ISSUER") == "acme" and entries.get("BP_ACME_CA_ROOT") else [])
+    if not mounted:
+        return
+    with tempfile.NamedTemporaryFile("w", suffix=".yaml") as isolated:
+        isolated.write("services:\n  edge:\n    networks: !reset []\n    network_mode: none\n")
+        isolated.flush()
+        result = runner(compose + ["-f", isolated.name, "run", "--rm", "--no-deps", "-T", "--entrypoint", "sh",
+                                   "edge", "-ec", f"cat {' '.join(mounted)} >/dev/null"])
+    if result.returncode:
+        raise Refused("tls_files_unreadable", "Caddy cannot read " + ", ".join(mounted) + "; " + output(result)[-500:])
+
+
 def platform_allocation(entries: dict[str, str]) -> tuple[str, str, str]:
     subnet, ip_range = entries.get("BP_PLATFORM_SUBNET") or PLATFORM_SUBNET, entries.get("BP_PLATFORM_IP_RANGE") or PLATFORM_IP_RANGE
     try:
@@ -495,6 +589,58 @@ def wait_ready(base: str, timeout: float = 120.0) -> str:
         time.sleep(3)
 
 
+class LocalHTTPSConnection(http.client.HTTPSConnection):
+    def __init__(self, hostname: str, port: int, address: str, context: ssl.SSLContext):
+        super().__init__(hostname, port, timeout=5, context=context)
+        self.address = address
+
+    def connect(self) -> None:
+        sock = socket.create_connection((self.address, self.port), self.timeout)
+        try:
+            self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
+        except BaseException:
+            sock.close()
+            raise
+
+
+def probe_trust(entries: dict[str, str], runner: Runner, compose: list[str]) -> str:
+    if entries["BP_TLS_ISSUER"] == "internal":
+        certificate = runner(compose + ["exec", "-T", "edge", "cat", "/data/caddy/pki/authorities/local/root.crt"])
+        if certificate.returncode:
+            raise Refused("not_ready", "cannot read the standalone edge's public root certificate")
+        return certificate.stdout
+    for key in ("BP_TLS_CA", "BP_ACME_CA_ROOT"):
+        if entries.get(key):
+            return trust_file(entries, key).read_text(encoding="utf-8")
+    return ""
+
+
+def probe_edge(entries: dict[str, str], access: dict[str, str], runner: Runner, compose: list[str], timeout: float = 120.0) -> None:
+    trusted = probe_trust(entries, runner, compose)
+    context = ssl.create_default_context()
+    if trusted:
+        context.load_verify_locations(cadata=trusted)
+    bind = entries.get("BP_BIND_HOST") or "127.0.0.1"
+    address = "127.0.0.1" if bind == "0.0.0.0" else "::1" if bind in ("::", "[::1]") else bind
+    port = int(entries.get("BP_HTTPS_PORT") or "443")
+    deadline, last = time.monotonic() + timeout, ""
+    while time.monotonic() < deadline:
+        connection = LocalHTTPSConnection(access["host"], port, address, context)
+        try:
+            connection.request("GET", "/health/caddy")
+            response = connection.getresponse()
+            if response.status == 200:
+                return
+            last = f"http {response.status}"
+        except (OSError, http.client.HTTPException) as error:
+            last = str(error)
+        finally:
+            connection.close()
+        time.sleep(3)
+    hint = "; set BP_TLS_CA to the issuing CA's PEM file" if "CERTIFICATE_VERIFY_FAILED" in last and entries["BP_TLS_ISSUER"] != "internal" and not entries.get("BP_TLS_CA") else ""
+    raise Refused("not_ready", f"https://{access['host']}:{port}/health/caddy: {last}{hint}")
+
+
 def wait_capabilities(base: str, token: str, selected: dict[str, str], timeout: float = 30.0) -> None:
     """Operations may return 503 for an absent first backup; only the selected capabilities matter."""
     deadline = time.monotonic() + timeout
@@ -645,6 +791,8 @@ def select(env: EnvFile, args, explicit: list[str] | None) -> dict:
     derived = [str(ROOT / "compose.yaml"), *(str(ROOT / f"compose.{name}.yaml") for name in profiles)]
     fresh = "COMPOSE_FILE" not in entries
     files = [str((env.path.parent / name).resolve()) if name else "" for name in entries["COMPOSE_FILE"].split(":")] if not fresh else derived
+    managed = {str(ROOT / name) for name in (*MODE_OVERLAYS, *TLS_OVERLAYS)}
+    files = [name for name in files if name not in managed]
     if args.build and str(ROOT / "compose.dev.yaml") not in files:
         if not fresh:
             raise Refused("selection_conflict", f"--build needs compose.dev.yaml in the recorded COMPOSE_FILE of {env.path}")
@@ -654,14 +802,14 @@ def select(env: EnvFile, args, explicit: list[str] | None) -> dict:
     for name in files:
         if not name or re.search(r"[\n\r$`'\"\\:]", name) or not Path(name).is_file():
             raise Refused("invalid_compose_file", f"COMPOSE_FILE entry {name or '(empty)'} is not a readable file")
-    for key, value in (("COMPOSE_PROJECT_NAME", project), ("COMPOSE_PROFILES", ",".join(profiles)), ("COMPOSE_FILE", ":".join(files))):
+    for key, value in (("COMPOSE_PROJECT_NAME", project), ("COMPOSE_PROFILES", ",".join(profiles))):
         shell = os.environ.get(key)
         if shell is not None and (sorted(shell.split(",")) if key == "COMPOSE_PROFILES" else shell) != (sorted(value.split(",")) if key == "COMPOSE_PROFILES" else value):
             raise Refused("selection_conflict", f"the shell exports {key}; unset it, the recorded selection in {env.path} is authoritative")
     return {"project": project, "profiles": profiles, "files": files, "fresh": fresh and not secrets_present}
 
 
-def settings(env: EnvFile, args, selection: dict) -> dict:
+def settings(env: EnvFile, args, selection: dict, runner: Runner = run) -> dict:
     """Access and network settings, applied to the env file in memory."""
     entries = env.entries
     unsupported = [key for key in UNSUPPORTED if key in env.assignments or key in os.environ]
@@ -681,6 +829,21 @@ def settings(env: EnvFile, args, selection: dict) -> dict:
     env.default("BP_BACKUP_DIR", str(env.path.parent / "backups"))
     profiles = selection["profiles"]
     access = resolve_access(entries, "edge" in profiles)
+    issuer = tls_issuer(access["mode"], entries.get("BP_TLS_ISSUER", "")) if "edge" in profiles else ""
+    if issuer:
+        env.save("BP_TLS_ISSUER", issuer)
+        check_tls_inputs(runner, entries, access)
+    files = selection["files"]
+    if issuer:
+        edge_file = str(ROOT / "compose.edge.yaml")
+        if edge_file not in files:
+            raise Refused("selection_conflict", "the edge profile requires compose.edge.yaml in COMPOSE_FILE")
+        at = files.index(edge_file) + 1
+        overlays = (["compose.public.yaml"] if access["mode"] == "public" else []) + tls_overlays(entries)
+        files[at:at] = [str(ROOT / name) for name in overlays]
+    selected = ":".join(files)
+    if os.environ.get("COMPOSE_FILE") and os.environ["COMPOSE_FILE"] != selected:
+        raise Refused("selection_conflict", "the shell exports COMPOSE_FILE; unset it, the recorded selection is authoritative")
     env.default("BP_ACCESS_MODE", access["mode"])
     env.default("BP_PUBLIC_URL", access["origin"])
     # The blob helper runs BP_BLOB_BOOTSTRAP_IMAGE, or BP_SERVER_IMAGE when that is empty.
@@ -727,7 +890,7 @@ def plan(args, env_file: Path, template: Path, explicit: list[str] | None) -> in
 def prepare(args, env_file: Path, template: Path, explicit: list[str] | None, runner: Runner) -> int:
     env = read_env(env_file, template)
     selection = select(env, args, explicit)
-    resolved = settings(env, args, selection)
+    resolved = settings(env, args, selection, runner)
     entries, profiles, files, project = env.entries, selection["profiles"], selection["files"], selection["project"]
     backup = Path(entries["BP_BACKUP_DIR"])
     if backup == env_file.parent / "backups":
@@ -788,11 +951,15 @@ def prepare(args, env_file: Path, template: Path, explicit: list[str] | None, ru
     ensure_volumes(runner, child, volume_names(resolved["prefix"], profiles), project)
     if not args.build:
         pull_missing_images(runner, child, config)
+    if "edge" in profiles:
+        check_tls_files_readable(runner, entries, compose)
     up = runner([*compose, "up", "--detach", "--build" if args.build else "--no-build", "--wait", "--wait-timeout", "300"], env=child)
     if up.returncode:
         raise Refused("compose_up_failed", output(up))
     base = f"http://127.0.0.1:{entries.get('BP_PORT') or '3000'}"
     enrollment = wait_ready(base)
+    if "edge" in profiles:
+        probe_edge(entries, resolved["access"], runner, compose)
     wait_capabilities(base, entries["BP_OPERATIONS_TOKEN"], {"files": backend, **({"functions": "workerd"} if "compute" in profiles else {})})
     capability = Path(args.capability_file).resolve() if args.capability_file else None
     if enrollment == "pending":

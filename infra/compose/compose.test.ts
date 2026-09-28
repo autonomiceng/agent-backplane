@@ -48,13 +48,14 @@ async function config(overlays: string[] = [], profile?: string, settings = publ
 test("compose renders valid local and HTTPS public origins", async () => {
   const core = await config([], undefined, []);
   expect(readConfig(core.services.server.environment).publicOrigin).toBe("http://localhost:3000");
-  const edge = await config(["compose.edge.yaml"], "edge", [
+  const edge = await config(["compose.edge.yaml", "compose.public.yaml"], "edge", [
     "BP_PUBLIC_DOMAIN=example.com",
     "BP_ACCESS_MODE=public",
     "BP_PUBLIC_URL=https://backplane.example.com",
   ]);
   expect(edge.services.server.environment.BP_PUBLIC_URL).toBe("https://backplane.example.com");
   expect(edge.services.edge.environment.BP_EDGE_HOST).toBe("backplane.example.com");
+  expect(edge.services.edge.environment.BP_TLS_ISSUER).toBe("acme");
 });
 
 test("edge derives the public hostname from BP_PUBLIC_DOMAIN", async () => {
@@ -62,6 +63,26 @@ test("edge derives the public hostname from BP_PUBLIC_DOMAIN", async () => {
   expect(rendered.services.edge.environment.BP_EDGE_HOST).toBe("backplane.example.com");
   expect(rendered.services.edge.environment.BP_ACCESS_MODE).toBe("local");
   expect(rendered.services.server.environment.BP_PUBLIC_URL).toBe("https://backplane.example.com:8443");
+});
+
+test("TLS overlays mount operator files read-only and pass private ACME settings", async () => {
+  const files = await config(["compose.edge.yaml", "compose.files.yaml"], "edge", [
+    ...publicSettings, "BP_TLS_ISSUER=files", "BP_TLS_DIR=/tmp/bp-fixture-certs",
+  ]);
+  expect(files.services.edge.volumes).toContainEqual(expect.objectContaining({
+    type: "bind", source: "/tmp/bp-fixture-certs", target: "/certs", read_only: true,
+    bind: { create_host_path: false },
+  }));
+  const acme = await config(["compose.edge.yaml", "compose.public.yaml", "compose.acme-ca-root.yaml", "compose.acme-eab.yaml"], "edge", [
+    "BP_ACCESS_MODE=public", "BP_PUBLIC_DOMAIN=example.com", "BP_PUBLIC_URL=https://backplane.example.com",
+    "BP_ACME_CA_ROOT=/tmp/bp-fixture-ca.pem", "BP_ACME_EAB_KEY_ID=fixture-id", "BP_ACME_EAB_HMAC=fixture-hmac",
+  ]);
+  expect(acme.services.edge.environment).toMatchObject({ BP_TLS_ISSUER: "acme", BP_ACME_TRUST: "file", BP_ACME_ACCOUNT: "eab",
+    BP_ACME_EAB_KEY_ID: "fixture-id", BP_ACME_EAB_HMAC: "fixture-hmac" });
+  expect(acme.services.edge.volumes).toContainEqual(expect.objectContaining({
+    type: "bind", source: "/tmp/bp-fixture-ca.pem", target: "/certs/acme-ca-root.crt", read_only: true,
+    bind: { create_host_path: false },
+  }));
 });
 
 test("compose publishes only the expected loopback ports", async () => {
@@ -82,7 +103,7 @@ test("compose publishes only the expected loopback ports", async () => {
 test("proxy mode is core behind Platform Edge: no Caddy overlay and no gateway file set", async () => {
   const settings = { BP_ACCESS_MODE: "proxy", BP_PUBLIC_URL: "https://backplane.example.com" };
   const files = (await readdir(root)).filter(name => /^compose.*\.ya?ml$/.test(name)).sort();
-  expect(files).toEqual(["compose.blobs.yaml", "compose.compute.yaml", "compose.dev.yaml", "compose.edge.yaml", "compose.enroll.yaml", "compose.yaml"]);
+  expect(files).toEqual(["compose.acme-ca-root.yaml", "compose.acme-eab.yaml", "compose.blobs.yaml", "compose.compute.yaml", "compose.dev.yaml", "compose.edge.yaml", "compose.enroll.yaml", "compose.files.yaml", "compose.public.yaml", "compose.yaml"]);
   const proxy = await config([], undefined, Object.entries(settings).map(([key, value]) => `${key}=${value}`));
   expect(proxy.services.edge).toBeUndefined();
   expect(Object.keys(proxy.services).sort()).toEqual(["migrate", "postgres", "server", "storage-init"]);
@@ -96,7 +117,7 @@ test("proxy mode is core behind Platform Edge: no Caddy overlay and no gateway f
   expect(JSON.stringify(everything)).not.toMatch(/BP_AUTH_URL|BP_WORKERD_DIGEST|BP_WORKERD_REPOSITORY/);
   // The standalone edge is the only Caddy: loopback ports, project network only, no proxy or console settings.
   expect(Object.keys(everything.services.edge.networks)).toEqual(["default"]);
-  expect(Object.keys(everything.services.edge.environment).sort()).toEqual(["BP_ACCESS_MODE", "BP_EDGE_HOST", "BP_PUBLIC_URL"]);
+  expect(Object.keys(everything.services.edge.environment).sort()).toEqual(["BP_ACCESS_MODE", "BP_ACME_CA", "BP_ACME_EMAIL", "BP_EDGE_HOST", "BP_PUBLIC_URL", "BP_TLS_ISSUER"]);
   expect(everything.services.edge.ports.map((port: { host_ip: string }) => port.host_ip)).toEqual(["127.0.0.1", "127.0.0.1"]);
   expect(everything.services.rustfs.environment.RUSTFS_CONSOLE_ENABLE).toBe("true");
   expect(Object.keys(everything.services.rustfs.networks)).toEqual(["blob-internal"]);
@@ -235,7 +256,7 @@ test("the server receives every configured image reference and Caddy proxies /st
   expect(dev.services.server.environment.BP_SERVER_IMAGE).toBe(dev.services.server.image);
   expect(dev.services.server.environment.BP_WORKERD_IMAGE).toBe(dev.services.workerd.image);
 
-  const adapt = Bun.spawn(["docker", "run", "--rm", "-e", "BP_ACCESS_MODE=local", "-e", "BP_EDGE_HOST=backplane.example.com", "-e", "BP_PUBLIC_URL=http://localhost",
+  const adapt = Bun.spawn(["docker", "run", "--rm", "-e", "BP_ACCESS_MODE=local", "-e", "BP_TLS_ISSUER=internal", "-e", "BP_EDGE_HOST=backplane.example.com", "-e", "BP_PUBLIC_URL=http://localhost",
     "-v", `${join(root, "infra/compose/Caddyfile")}:/etc/caddy/Caddyfile:ro`, standalone.services.edge.image, "caddy", "adapt", "--config", "/etc/caddy/Caddyfile"],
     { stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, code] = await Promise.all([new Response(adapt.stdout).text(), new Response(adapt.stderr).text(), adapt.exited]);

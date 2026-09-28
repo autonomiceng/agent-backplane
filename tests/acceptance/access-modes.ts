@@ -1,7 +1,7 @@
 // Disposable Caddy probes, no application database or installed volumes.
 // Block public certificate requests through a closed loopback proxy.
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { request } from "node:https";
 import { checkServerIdentity } from "node:tls";
 import { tmpdir } from "node:os";
@@ -26,7 +26,7 @@ async function command(args: string[]) {
     return out.trim();
   } finally { clearTimeout(timer); }
 }
-async function start(mode: "local" | "public") {
+async function start(mode: "local" | "public", issuer: "internal" | "acme" | "files" = mode === "public" ? "acme" : "internal") {
   await Bun.write(join(directory, "upstream"), ':3000 {\n respond "backplane-fixture" 200\n}\n');
   const logging = { driver: "journald", options: { "cache-disabled": "true" } };
   await Bun.write(join(directory, "compose.json"), JSON.stringify({
@@ -35,10 +35,11 @@ async function start(mode: "local" | "public") {
         command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"],
         volumes: [`${join(directory, "upstream")}:/etc/caddy/Caddyfile:ro`] },
       edge: { image, pull_policy: "never", logging, tmpfs: ["/data", "/config"],
-        environment: { BP_ACCESS_MODE: mode, BP_EDGE_HOST: "backplane.example.com", BP_PUBLIC_URL: "https://backplane.example.com",
+        environment: { BP_ACCESS_MODE: mode, BP_TLS_ISSUER: issuer, BP_EDGE_HOST: "backplane.example.com", BP_PUBLIC_URL: "https://backplane.example.com",
           HTTP_PROXY: "http://127.0.0.1:9", HTTPS_PROXY: "http://127.0.0.1:9", NO_PROXY: "server,localhost,127.0.0.1" },
         ports: ["127.0.0.1::80", "127.0.0.1::443"],
-        volumes: [`${join(root, "infra/compose/Caddyfile")}:/etc/caddy/Caddyfile:ro`] },
+        volumes: [`${join(root, "infra/compose/Caddyfile")}:/etc/caddy/Caddyfile:ro`,
+          ...(issuer === "files" ? [`${join(directory, "certs")}:/certs:ro`] : [])] },
     }, networks: { default: {} },
   }));
   await command([...base, "up", "-d", "--pull", "never"]);
@@ -94,6 +95,22 @@ try {
   assert.equal(redirect.headers.get("strict-transport-security"), null);
   assert.equal((await fetch(`${publicEdge.http}/health`, { redirect: "manual" })).status, 200);
   console.log("PASS 4: public HTTP redirects to the canonical HTTPS origin except health");
+  await command([...base, "down", "--volumes"]);
+  const certs = join(directory, "certs");
+  await mkdir(certs, { mode: 0o700 });
+  await command(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-subj", "/CN=fixture CA",
+    "-keyout", join(directory, "ca.key"), "-out", join(directory, "ca.crt"), "-days", "1", "-addext", "basicConstraints=critical,CA:TRUE",
+    "-addext", "keyUsage=critical,keyCertSign,cRLSign"]);
+  await command(["openssl", "req", "-new", "-newkey", "rsa:2048", "-nodes", "-subj", "/CN=backplane.example.com",
+    "-keyout", join(certs, "tls.key"), "-out", join(directory, "leaf.csr")]);
+  await Bun.write(join(directory, "leaf.ext"), "basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nsubjectAltName=DNS:backplane.example.com\n");
+  await command(["openssl", "x509", "-req", "-in", join(directory, "leaf.csr"), "-CA", join(directory, "ca.crt"),
+    "-CAkey", join(directory, "ca.key"), "-CAcreateserial", "-out", join(certs, "tls.crt"), "-days", "1", "-sha256", "-extfile", join(directory, "leaf.ext")]);
+  await chmod(join(certs, "tls.key"), 0o644);
+  const filesEdge = await start("public", "files");
+  const files = await tls("backplane.example.com", filesEdge.tlsPort, Buffer.from(await Bun.file(join(directory, "ca.crt")).arrayBuffer()));
+  assert.equal(files.status, 200); assert.equal(files.body, "backplane-fixture");
+  console.log("PASS 5: public files issuer serves a verified operator certificate");
 } finally {
   try { if (await Bun.file(join(directory, "compose.json")).exists()) await command([...base, "down", "--volumes"]); }
   finally { await rm(directory, { recursive: true, force: true }); }

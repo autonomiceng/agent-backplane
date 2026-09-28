@@ -85,6 +85,9 @@ status-only health path per component; the standalone edge proxies `/status.json
 answers `/health/caddy` itself. The stack installs no host
 observer or timer; installs that still carry the version 1 timer run
 `scripts/retire-status-timer.sh` once ([health](operations/health.md#public-status)).
+The standalone edge supports internal CA certificates, public or private ACME, and operator
+certificate files. Bootstrap validates the selected Issuer and mounted inputs, then probes
+HTTPS with the appropriate CA trust. Proxy mode leaves certificate ownership with the gateway.
 
 ## Tenancy and identity
 

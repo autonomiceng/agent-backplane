@@ -95,6 +95,8 @@ starts the stack and exports the enrollment capability; profiles `blobs`, `compu
 `edge` are opt-in and a recorded selection is preserved on rerun.
 _Avoid_: prepare, preparation, installer
 
+**Issuer**: the standalone edge's certificate source, selected by `BP_TLS_ISSUER` as its internal CA, an ACME directory, or operator certificate files.
+
 **Enrollment**: creating the first User from the capability file with `bp bootstrap`, run
 through `compose.enroll.yaml` inside the server image; the claim is permanent (ADR-0020).
 _Avoid_: sign-up, onboarding, registration

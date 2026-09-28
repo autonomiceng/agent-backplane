@@ -1,0 +1,9 @@
+services:
+  edge:
+    volumes:
+      - type: bind
+        source: ${BP_TLS_DIR:?BP_TLS_DIR must hold tls.crt and tls.key}
+        target: /certs
+        read_only: true
+        bind:
+          create_host_path: false
