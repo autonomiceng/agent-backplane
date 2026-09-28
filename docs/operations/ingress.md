@@ -21,11 +21,11 @@ Tailscale, local certificate trust, and the RustFS console.
 
 Choose `BP_ACCESS_MODE` with `--access-mode` or in the environment file used by bootstrap:
 
-| Mode | What you get | Setup |
-| --- | --- | --- |
-| Local (`local`, default) | HTTP and HTTPS from the internal CA by default, or certificate files | Add `--profile edge` for both protocols. Core alone serves HTTP on port 3000. |
-| Public (`public`) | Automatically renewed ACME HTTPS by default, or certificate files | Set `BP_PUBLIC_DOMAIN`, publish the edge on `BP_BIND_HOST=0.0.0.0`, and add `--profile edge`. |
-| Behind Platform Edge or another gateway (`proxy`) | That gateway handles HTTPS and reaches the server directly | Pass `--access-mode proxy --public-url` with the gateway's backplane URL and omit `--profile edge`. |
+| Mode | Issuer (`BP_TLS_ISSUER`) | What you get | Setup |
+| --- | --- | --- | --- |
+| Local (`local`, default) | `internal` (default) or `files` | HTTP and HTTPS from the internal CA or certificate files | Add `--profile edge` for both protocols. Core alone serves HTTP on port 3000. |
+| Public (`public`) | `acme` (default) or `files` | Automatically renewed ACME HTTPS or certificate files | Set `BP_PUBLIC_DOMAIN`, publish the edge on `BP_BIND_HOST=0.0.0.0`, and add `--profile edge`. |
+| Behind Platform Edge or another gateway (`proxy`) | Gateway-owned | That gateway handles HTTPS and reaches the server directly | Pass `--access-mode proxy --public-url` with the gateway's backplane URL and omit `--profile edge`. |
 
 ## Local Mode (default)
 
@@ -121,6 +121,7 @@ Configuration tests render isolated environment files without contacting Docker'
 ```sh
 python3 -m unittest discover -s tests -p 'test_bootstrap*.py'
 bun test infra/compose/compose.test.ts apps/server/platform/config.test.ts
+python3 tests/acceptance/tls-issuers.py
 ```
 
 The disposable listener probes require Docker with journald and the pinned Caddy image already cached. They use a unique project, random loopback ports, a dedicated network with outbound certificate requests blocked, and temporary certificate storage. Only the public CA certificate is exported. No application database or installed deployment is used:
@@ -129,7 +130,7 @@ The disposable listener probes require Docker with journald and the pinned Caddy
 bun tests/acceptance/access-modes.ts
 ```
 
-These three probes cover local dual protocols, verified hostname/localhost/IP certificates, and public HTTP redirects with the health exception. Public certificate issuance and renewal require reachable public DNS and cannot be proven by this isolated probe.
+These probes cover local dual protocols, verified hostname/localhost/IP certificates, public HTTP redirects with the health exception, and a certificate-files listener. The Issuer matrix renders seven mode combinations, validates the six that run Caddy, and compares both default Caddy adapters byte for byte with the pre-T4 main Caddyfile. Public certificate issuance and renewal require reachable public DNS and cannot be proven by these isolated probes.
 
 The existing application ingress acceptance uses a disposable, enrolled local core plus edge deployment with a configured HTTPS address. Supply its matching environment and project, `BP_EDGE_CA_CERT`, `BP_USER_EMAIL`, `BP_USER_PASSWORD`, and `BP_OPERATIONS_TOKEN`, then run `bun tests/acceptance/public-ingress.ts`. It checks cookie/CSRF policy, operator exclusions, actual loopback bindings and SSE lifetime/resume through Caddy. Missing prerequisites fail. For direct application checks against temporary PostgreSQL, run `bun run test apps/server/platform/forwarded-headers.test.ts`.
 

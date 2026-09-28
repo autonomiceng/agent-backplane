@@ -610,7 +610,7 @@ def probe_trust(entries: dict[str, str], runner: Runner, compose: list[str]) -> 
             raise Refused("not_ready", "cannot read the standalone edge's public root certificate")
         return certificate.stdout
     for key in ("BP_TLS_CA", "BP_ACME_CA_ROOT"):
-        if entries.get(key):
+        if entries.get(key) and (key != "BP_ACME_CA_ROOT" or entries["BP_TLS_ISSUER"] == "acme"):
             return trust_file(entries, key).read_text(encoding="utf-8")
     return ""
 
@@ -830,16 +830,16 @@ def settings(env: EnvFile, args, selection: dict, runner: Runner = run) -> dict:
     profiles = selection["profiles"]
     access = resolve_access(entries, "edge" in profiles)
     issuer = tls_issuer(access["mode"], entries.get("BP_TLS_ISSUER", "")) if "edge" in profiles else ""
+    tls = {**entries, "BP_TLS_ISSUER": issuer}
     if issuer:
-        env.save("BP_TLS_ISSUER", issuer)
-        check_tls_inputs(runner, entries, access)
+        check_tls_inputs(runner, tls, access)
     files = selection["files"]
     if issuer:
         edge_file = str(ROOT / "compose.edge.yaml")
         if edge_file not in files:
             raise Refused("selection_conflict", "the edge profile requires compose.edge.yaml in COMPOSE_FILE")
         at = files.index(edge_file) + 1
-        overlays = (["compose.public.yaml"] if access["mode"] == "public" else []) + tls_overlays(entries)
+        overlays = (["compose.public.yaml"] if access["mode"] == "public" else []) + tls_overlays(tls)
         files[at:at] = [str(ROOT / name) for name in overlays]
     selected = ":".join(files)
     if os.environ.get("COMPOSE_FILE") and os.environ["COMPOSE_FILE"] != selected:
@@ -856,7 +856,7 @@ def settings(env: EnvFile, args, selection: dict, runner: Runner = run) -> dict:
     if not SAFE_NAME.match(prefix):
         raise Refused("invalid_volume_prefix", "BP_VOLUME_PREFIX must be a Docker volume name prefix")
     subnet, ip_range, gateway = platform_allocation(entries)
-    return {"access": access, "network": network, "prefix": prefix, "subnet": subnet, "ip_range": ip_range,
+    return {"access": access, "tls": tls, "network": network, "prefix": prefix, "subnet": subnet, "ip_range": ip_range,
             "gateway": gateway, "data_dir": (env.path.parent / (entries.get("BP_DATA_DIR") or "data")).resolve(),
             "secrets": {**CORE_SECRETS, **(BLOB_SECRETS if "blobs" in profiles else {}), **(COMPUTE_SECRETS if "compute" in profiles else {})}}
 
@@ -952,14 +952,14 @@ def prepare(args, env_file: Path, template: Path, explicit: list[str] | None, ru
     if not args.build:
         pull_missing_images(runner, child, config)
     if "edge" in profiles:
-        check_tls_files_readable(runner, entries, compose)
+        check_tls_files_readable(runner, resolved["tls"], compose)
     up = runner([*compose, "up", "--detach", "--build" if args.build else "--no-build", "--wait", "--wait-timeout", "300"], env=child)
     if up.returncode:
         raise Refused("compose_up_failed", output(up))
     base = f"http://127.0.0.1:{entries.get('BP_PORT') or '3000'}"
     enrollment = wait_ready(base)
     if "edge" in profiles:
-        probe_edge(entries, resolved["access"], runner, compose)
+        probe_edge(resolved["tls"], resolved["access"], runner, compose)
     wait_capabilities(base, entries["BP_OPERATIONS_TOKEN"], {"files": backend, **({"functions": "workerd"} if "compute" in profiles else {})})
     capability = Path(args.capability_file).resolve() if args.capability_file else None
     if enrollment == "pending":

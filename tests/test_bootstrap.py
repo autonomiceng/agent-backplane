@@ -382,6 +382,19 @@ class BootstrapTests(unittest.TestCase):
         with contextlib.redirect_stdout(out):
             bootstrap.bootstrap(["--dry-run", "--env-file", str(self.env), "--profile", "edge"])
         self.assertEqual(json.loads(out.getvalue())["composeFiles"], [str(ROOT / name) for name in ("compose.yaml", "compose.edge.yaml", "compose.public.yaml")])
+        self.env.unlink()
+        code, _, _ = self.bootstrap(profiles=("edge",))
+        self.assertEqual(code, 0)
+        saved = self.env.read_text()
+        self.assertIn("BP_TLS_ISSUER=\n", saved)
+        self.assertNotIn("BP_TLS_ISSUER='internal'", saved)
+        self.env.write_text(saved.replace("BP_ACCESS_MODE=local", "BP_ACCESS_MODE=public")
+                            .replace("BP_PUBLIC_URL='http://localhost'", "BP_PUBLIC_URL='https://backplane.example.com'")
+                            .replace("BP_PUBLIC_DOMAIN=\n", "BP_PUBLIC_DOMAIN=example.com\n"))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            bootstrap.bootstrap(["--dry-run", "--env-file", str(self.env)])
+        self.assertIn(str(ROOT / "compose.public.yaml"), json.loads(out.getvalue())["composeFiles"])
 
     def test_tls_files_require_key_and_cover_every_site_with_one_label_wildcards(self):
         directory = self.dir / "certs"
@@ -430,9 +443,11 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(bootstrap.probe_trust(entries, runner_with(), []), ca.read_text())
         del entries["BP_TLS_CA"]
         self.assertEqual(bootstrap.probe_trust(entries, runner_with(), []), ca.read_text())
-        del entries["BP_ACME_CA_ROOT"]
+        entries["BP_TLS_ISSUER"] = "files"
+        entries["BP_ACME_CA_ROOT"] = "/deleted/acme-root.pem"
         self.assertEqual(bootstrap.probe_trust(entries, runner_with(), []), "")
         entries["BP_TLS_ISSUER"] = "internal"
+        entries["BP_TLS_CA"] = str(ca)
         def root(argv):
             return subprocess.CompletedProcess(argv, 0, "internal root", "")
         self.assertEqual(bootstrap.probe_trust(entries, root, ["docker", "compose"]), "internal root")
