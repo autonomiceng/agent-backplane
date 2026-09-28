@@ -33,7 +33,7 @@ services:
 
   blob-bootstrap:
     # scripts/bootstrap.py validates BP_RUSTFS_IMAGE and BP_BLOB_BOOTSTRAP_IMAGE before RustFS starts.
-    image: &blob-helper-image ${BP_BLOB_BOOTSTRAP_IMAGE:-${BP_SERVER_IMAGE:-ghcr.io/autonomiceng/agent-backplane-server:main-88b39bb@sha256:95b04dd5893ebac0e1db3bb5f634cd78dba3a56d160e7555e99d5f6aeaa846d0}}
+    image: &blob-helper-image ${BP_BLOB_BOOTSTRAP_IMAGE:-${BP_SERVER_IMAGE:-ghcr.io/autonomiceng/agent-backplane-server:main-0983ca8@sha256:e0922c77eb3c3d22e09b9ed02b0f803476edcc62ecec4d0e145cb8fddef750b6}}
     profiles: [blobs]
     depends_on:
       rustfs:
