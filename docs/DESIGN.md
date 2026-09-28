@@ -137,7 +137,7 @@ REST with OpenAPI is canonical. The CLI and a local stdio MCP server are generat
 
 ## Dashboard
 
-The dashboard (`apps/web/screens/`) has a sign-in screen, a home screen with backplane health, the Run timeline (which harnesses touched which tables, queue depth, held Messages), the approvals inbox, and a Principals screen with key last-use and revoke. It reads through the server's API as the signed-in User, never through a direct database connection, so no browser bypasses authorization or provenance. A table browser is not built.
+The dashboard (`apps/web/screens/`) has a sign-in screen, a home screen with backplane health, the Run timeline (which harnesses touched which tables, queue depth, held Messages), the approvals inbox, and a Principals screen with key last-use and revoke. It reads through the server's API as the signed-in User, never through a direct database connection, so no browser bypasses authorization or provenance. A table browser is not built. It uses the shared platform UI kit (`apps/web/platform.css`, vendored from platform-edge; `bun run check` verifies the copy), and the server redirects `/` to `/dashboard/`.
 
 ## Files and Functions (selectable overlays, experimental)
 

@@ -53,6 +53,7 @@ bootstrap with `--access-mode proxy --public-url URL`. By hand, run bootstrap wi
 `--access-mode proxy --public-url <exact external URL>` and no ingress profile.
 Edge reaches the server directly at `bp-server:3000` on `BP_PLATFORM_NETWORK` (default `platform`); no Backplane Caddy runs, and the `gateway` profile is refused (`gateway_profile_retired`, see [Upgrading from the internal gateway](#upgrading-from-the-internal-gateway)).
 Edge owns certificates, HTTP-to-HTTPS redirects, the operator-route exclusion and SSE pass-through; the server strips forwarded headers and authenticates on `BP_PUBLIC_URL` (ADR-0021).
+Set `BP_PLATFORM_URL` to the Edge console origin (for example `https://platform.example.com`) and restart the server to show a Platform link in the dashboard header; leave it empty for a standalone stack. The server refuses a value that is not a bare HTTP(S) origin.
 
 ## Shared network
 

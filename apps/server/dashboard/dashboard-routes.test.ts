@@ -8,7 +8,7 @@ import { createApi } from "../../web/client/api.ts";
 import { eventId, initialTimeline, reduceAudit, timelineEvents, type AuditEvent } from "../../web/client/audit-state.ts";
 import { renderTimeline } from "../../web/testing/render-timeline.tsx";
 import { createRun, sqlFixture } from "../testing/session.ts";
-import { dashboardRoutes } from "./dashboard-routes.ts";
+import { dashboardRoutes, readPlatformUrl } from "./dashboard-routes.ts";
 
 test("dashboard static wiring or Eden pagination includes another Run or misorders timeline rows", async () => {
   const f = await sqlFixture("CREATE TABLE items (id int PRIMARY KEY)");
@@ -84,4 +84,30 @@ test("dashboard static wiring or Eden pagination includes another Run or misorde
     expect(markup).not.toContain("<details open");
     expect(markup).toContain(selected[0]?.occurred_at ?? "missing timestamp");
   } finally { try { await f.pool.close(); } finally { await rm(root, { recursive: true, force: true }); } }
+});
+
+test("root redirects to the dashboard and the index carries only a valid configured Platform origin", async () => {
+  const root = await mkdtemp(join(tmpdir(), "bp-dashboard-platform-"));
+  try {
+    const html = '<!doctype html><html><head><title>Agent Backplane</title></head><body></body></html>';
+    await Bun.write(join(root, "index.html"), html);
+    const standalone = new Elysia().use(dashboardRoutes(pathToFileURL(root + "/")));
+    const redirect = await standalone.handle(new Request("http://localhost/"));
+    expect(redirect.status).toBe(302);
+    expect(redirect.headers.get("location")).toBe("/dashboard/");
+    expect(await (await standalone.handle(new Request("http://localhost/dashboard/"))).text()).toBe(html);
+    const platformUrl = readPlatformUrl({ BP_PLATFORM_URL: "https://Platform.Example.test:443/" });
+    expect(platformUrl).toBe("https://platform.example.test");
+    const bundled = new Elysia().use(dashboardRoutes(pathToFileURL(root + "/"), false, platformUrl));
+    const page = await bundled.handle(new Request("http://localhost/dashboard/workspaces"));
+    expect(page.headers.get("cache-control")).toBe("no-cache");
+    expect(page.headers.get("content-type")).toContain("text/html");
+    expect(await page.text()).toBe(html.replace("</head>", '<meta name="bp-platform-url" content="https://platform.example.test"></head>'));
+    expect(readPlatformUrl({ BP_PLATFORM_URL: "" })).toBeNull();
+    for (const value of ["javascript:alert(1)", "https://platform.example.test/console", "https://user@platform.example.test"]) {
+      expect(() => readPlatformUrl({ BP_PLATFORM_URL: value })).toThrow("BP_PLATFORM_URL");
+    }
+    expect(await (await new Elysia().use(dashboardRoutes(pathToFileURL(root + "/"), false, 'http://a"b'))
+      .handle(new Request("http://localhost/dashboard"))).text()).toContain('content="http://a&quot;b"');
+  } finally { await rm(root, { recursive: true, force: true }); }
 });

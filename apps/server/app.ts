@@ -65,6 +65,7 @@ export type AppDeps = {
   status?: StatusConfig;
   capabilitySampler?: CapabilitySampler;
   insecureOrigin?: boolean;
+  platformUrl?: string | null;
 };
 
 export function createApp(deps: AppDeps) {
@@ -119,7 +120,7 @@ export function createApp(deps: AppDeps) {
     .use(invokeFunctionRoute(pool, deps.compute))
     .use(approvalRoutes(pool, auth, authUrl))
     .use(reconciliationRoutes(pool, auth, authUrl))
-    .use(dashboardRoutes(new URL("../web/dist/", import.meta.url), deps.production));
+    .use(dashboardRoutes(new URL("../web/dist/", import.meta.url), deps.production, deps.platformUrl));
   return new Elysia().onRequest(({ request }) => {
     stripForwardedHeaders(request.headers);
   }).use(platform).use(queue).use(schema).use(governance);

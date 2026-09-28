@@ -39,7 +39,7 @@ BP_SERVER_IMAGE=<the server image> docker compose -f compose.yaml -f compose.enr
   -e BP_DATA_DIR="$HOME/.local/state/backplane" enroll --url http://localhost:3000 --email you@example.com
 ```
 
-Backups land in `./backups` beside `.env` until you pass `--backup-dir` with an encrypted, off-host mount. The first command writes `.env`, creates the `platform` network with the shared allocation (`BP_PLATFORM_SUBNET=172.30.0.0/24`, `BP_PLATFORM_IP_RANGE=172.30.0.128/25`), starts Postgres and the server, waits for them and prints the enrollment command. The second enrolls you as the first user and creates a Workspace and a Principal. Paste the printed `mcpServers.backplane` block into your agent's `.mcp.json`, and open `http://localhost:3000/dashboard`. Agent machines run the `bp` CLI from a Bun install of this checkout (`bun install`, then link `packages/cli/runtime/main.ts` as `bp`) or the compiled artifact; see [agent client setup](skills/backplane/references/client-setup.md).
+Backups land in `./backups` beside `.env` until you pass `--backup-dir` with an encrypted, off-host mount. The first command writes `.env`, creates the `platform` network with the shared allocation (`BP_PLATFORM_SUBNET=172.30.0.0/24`, `BP_PLATFORM_IP_RANGE=172.30.0.128/25`), starts Postgres and the server, waits for them and prints the enrollment command. The second enrolls you as the first user and creates a Workspace and a Principal. Paste the printed `mcpServers.backplane` block into your agent's `.mcp.json`, and open `http://localhost:3000/` (it redirects to the dashboard). Agent machines run the `bp` CLI from a Bun install of this checkout (`bun install`, then link `packages/cli/runtime/main.ts` as `bp`) or the compiled artifact; see [agent client setup](skills/backplane/references/client-setup.md).
 
 A fresh install is minimal. `--profile blobs` adds S3 blob storage on RustFS, `--profile compute` a workerd sandbox for small functions, and `--profile edge` a standalone Caddy. See [bootstrap and enrollment](infra/bootstrap/README.md).
 
@@ -111,7 +111,7 @@ Each runs alone. Shared conventions live in [docs/conventions.md](docs/conventio
 ## Development
 
 ```sh
-bun run check   # typecheck, lint, generated-contract drift, conventions, dashboard build
+bun run check   # typecheck, lint, generated-contract drift, conventions and UI kit copies, dashboard build
 bun run test    # tests against a real embedded Postgres
 bun run test:examples  # examples/, outside the default suite
 python3 -m unittest discover -s tests -p 'test_bootstrap*.py'  # bootstrap, fake runner

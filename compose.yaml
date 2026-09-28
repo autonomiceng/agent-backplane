@@ -103,6 +103,7 @@ services:
       BP_ACCESS_MODE: ${BP_ACCESS_MODE:-local}
       BP_PUBLIC_URL: ${BP_PUBLIC_URL:-}
       BP_SIGNUP: ${BP_SIGNUP:-closed}
+      BP_PLATFORM_URL: ${BP_PLATFORM_URL:-}
       # Configured image references for the public Status Document (GET /status.json); the
       # optional pins repeat their overlay defaults so a core install can report them disabled.
       BP_SERVER_IMAGE: *server-image

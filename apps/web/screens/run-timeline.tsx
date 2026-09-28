@@ -19,16 +19,20 @@ export function RunTimeline({ workspaceId, runId }: { workspaceId: string; runId
 export function TimelineView({ state }: { state: TimelineState }): ReactNode {
   const [page, setPage] = useState(0);
   const events = timelineEvents(state);
-  return <section>
+  return <section className="screen">
     <a href={`/dashboard/workspaces/${state.workspaceId}/principals`}>Principals</a>
-    <h1>Run timeline</h1><p>Workspace: {state.workspaceId}</p><p>Run: {state.runId}</p>
-    {state.error ? <p role="alert">Timeline unavailable: {state.error}</p> : <LiveIndicator phase={state.phase} />}
-    {state.phase === "live" && events.length === 0 && <p>No Audit Events for this Run.</p>}
-    <ol>{events.slice(page * 100, (page + 1) * 100).map(([id, event]) => <AuditEventRow key={id} event={event} />)}</ol>
-    {events.length > 100 && <nav aria-label="Timeline pages">
-      <button disabled={page === 0} onClick={() => setPage(page - 1)}>Previous</button>
+    <div className="toolbar"><h1>Run timeline</h1>{!state.error && <LiveIndicator phase={state.phase} />}</div>
+    <div className="pk-endpoints run-ids">
+      <div className="pk-endpoint"><span>Workspace</span><code>{state.workspaceId}</code></div>
+      <div className="pk-endpoint"><span>Run</span><code>{state.runId}</code></div>
+    </div>
+    {state.error && <p className="pk-notice" data-state="danger" role="alert">Timeline unavailable: {state.error}</p>}
+    {state.phase === "live" && events.length === 0 && <p className="pk-notice">No Audit Events for this Run.</p>}
+    <ol className="timeline">{events.slice(page * 100, (page + 1) * 100).map(([id, event]) => <AuditEventRow key={id} event={event} />)}</ol>
+    {events.length > 100 && <nav className="pager" aria-label="Timeline pages">
+      <button className="pk-button" disabled={page === 0} onClick={() => setPage(page - 1)}>Previous</button>
       <span> Page {page + 1} </span>
-      <button disabled={(page + 1) * 100 >= events.length} onClick={() => setPage(page + 1)}>Next</button>
+      <button className="pk-button" disabled={(page + 1) * 100 >= events.length} onClick={() => setPage(page + 1)}>Next</button>
     </nav>}
   </section>;
 }
