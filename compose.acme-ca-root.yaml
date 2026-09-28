@@ -1,0 +1,11 @@
+services:
+  edge:
+    environment:
+      BP_ACME_TRUST: file
+    volumes:
+      - type: bind
+        source: ${BP_ACME_CA_ROOT:?BP_ACME_CA_ROOT must be the ACME server's CA file}
+        target: /certs/acme-ca-root.crt
+        read_only: true
+        bind:
+          create_host_path: false

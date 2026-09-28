@@ -1,0 +1,4 @@
+services:
+  edge:
+    environment:
+      BP_TLS_ISSUER: ${BP_TLS_ISSUER:-acme}

@@ -11,6 +11,7 @@ Tailscale, local certificate trust, and the RustFS console.
 - [Shared network](#shared-network)
 - [Browser address for authentication](#browser-address-for-authentication)
 - [Local certificate trust](#local-certificate-trust)
+- [Corporate certificates and private ACME](#corporate-certificates-and-private-acme)
 - [Verification](#verification)
 - [Upgrading from the internal gateway](#upgrading-from-the-internal-gateway)
 - [Native RustFS console](#native-rustfs-console)
@@ -20,11 +21,11 @@ Tailscale, local certificate trust, and the RustFS console.
 
 Choose `BP_ACCESS_MODE` with `--access-mode` or in the environment file used by bootstrap:
 
-| Mode | What you get | Setup |
-| --- | --- | --- |
-| Local (`local`, default) | HTTP and self-signed HTTPS, no domain needed | Add `--profile edge` for both protocols. Core alone serves HTTP on port 3000. |
-| Public (`public`) | Automatically renewed trusted HTTPS certificates for your own domain | Set `BP_PUBLIC_DOMAIN`, publish the edge on `BP_BIND_HOST=0.0.0.0`, and add `--profile edge`. |
-| Behind Platform Edge or another gateway (`proxy`) | That gateway handles HTTPS and reaches the server directly | Pass `--access-mode proxy --public-url` with the gateway's backplane URL and omit `--profile edge`. |
+| Mode | Issuer (`BP_TLS_ISSUER`) | What you get | Setup |
+| --- | --- | --- | --- |
+| Local (`local`, default) | `internal` (default) or `files` | HTTP and HTTPS from the internal CA or certificate files | Add `--profile edge` for both protocols. Core alone serves HTTP on port 3000. |
+| Public (`public`) | `acme` (default) or `files` | Automatically renewed ACME HTTPS or certificate files | Set `BP_PUBLIC_DOMAIN`, publish the edge on `BP_BIND_HOST=0.0.0.0`, and add `--profile edge`. |
+| Behind Platform Edge or another gateway (`proxy`) | Gateway-owned | That gateway handles HTTPS and reaches the server directly | Pass `--access-mode proxy --public-url` with the gateway's backplane URL and omit `--profile edge`. |
 
 ## Local Mode (default)
 
@@ -57,7 +58,7 @@ Edge owns certificates, HTTP-to-HTTPS redirects, the operator-route exclusion an
 
 The Platform Network has one allocation on every host, defined in the [platform contract](../conventions.md#platform-contract): subnet `172.30.0.0/24` (`BP_PLATFORM_SUBNET`), dynamic range `172.30.0.128/25` (`BP_PLATFORM_IP_RANGE`) and gateway `172.30.0.1`, the subnet's first host. Platform Edge holds the reserved address `172.30.0.2` outside the dynamic range. Whichever bootstrap runs first creates the network with these parameters. Bootstrap validates an existing network and refuses a different subnet, range or gateway, or a network with no IPv4 IPAM configuration, with `platform_network_mismatch` and the observed and expected values. To repair a network created before this contract, stop every stack on it, run `docker network rm` on the network the error names, then rerun bootstrap. Bootstrap also refuses a dynamic range that contains Edge's reserved address.
 
-Bootstrap preserves existing secrets and rejects conflicting mode/origin settings before starting services. Set one mode directly; the previous scheme, issuer and edge override settings (`BP_SCHEME`, `BP_TLS_ISSUER`, `BP_EDGE_CA`, `BP_PUBLIC_HOST`, `BP_EDGE_BIND_HOST`) are refused with `unsupported_setting`, which names each key and its replacement. The standalone edge issues certificates from its internal CA (local) or Let's Encrypt (public) only; for a private ACME CA or certificate files, run behind Platform Edge, which has `PE_TLS_ISSUER`. No configuration or data migration runs. Existing volume names and backup contents remain unchanged. On a host with several deployments, choose distinct `BP_VOLUME_PREFIX` and `BP_PLATFORM_NETWORK` values so the `bp-server` alias resolves uniquely; each additional network needs its own non-overlapping `BP_PLATFORM_SUBNET` and `BP_PLATFORM_IP_RANGE`.
+Bootstrap preserves existing secrets and rejects conflicting mode/origin settings before starting services. Set one mode directly; retired scheme and edge override settings (`BP_SCHEME`, `BP_EDGE_CA`, `BP_PUBLIC_HOST`, `BP_EDGE_BIND_HOST`) are refused with `unsupported_setting`, which names each key and its replacement. No configuration or data migration runs. Existing volume names and backup contents remain unchanged. On a host with several deployments, choose distinct `BP_VOLUME_PREFIX` and `BP_PLATFORM_NETWORK` values so the `bp-server` alias resolves uniquely; each additional network needs its own non-overlapping `BP_PLATFORM_SUBNET` and `BP_PLATFORM_IP_RANGE`.
 
 ## Tailscale
 
@@ -91,7 +92,7 @@ The standalone edge shares only the project network with the server; Platform Ed
 
 ## Local certificate trust
 
-Local mode uses a self-signed root certificate to sign the server certificates. Public mode obtains and renews trusted certificates for your domain. Caddy stores certificates and private CA keys in `edge-data`, with configuration state in `edge-config`. Preserve and back up both securely. Automatic trust installation is disabled. Export only the public root certificate from the matching Compose project:
+With the default internal Issuer, local mode uses a self-signed root certificate to sign the server certificates. Public mode defaults to public ACME. Caddy stores certificates and private CA keys in `edge-data`, with configuration state in `edge-config`. Preserve and back up both securely. Automatic trust installation is disabled. Export only the public root certificate from the matching Compose project:
 
 ```sh
 docker compose --env-file .env --project-name agent-backplane \
@@ -103,6 +104,16 @@ Use the same environment file and project name as bootstrap: replace `.env` if y
 
 Verify and distribute that certificate through an authenticated channel, then install it into each browser, OS or runtime trust store. Never distribute `root.key` or disable certificate verification. If choosing a configured HTTPS address for local bootstrap, install trust before running the emitted `bp bootstrap` command. See [Caddy local HTTPS](https://caddyserver.com/docs/automatic-https#local-https).
 
+## Corporate certificates and private ACME
+
+Set `BP_TLS_ISSUER` to `internal`, `acme`, or `files` for the standalone `edge` profile. Empty defaults to `internal` in local mode and `acme` in public mode. Local mode cannot use ACME; public mode cannot use the internal CA. Proxy mode ignores the Issuer because its gateway owns TLS.
+
+For certificate files, set `BP_TLS_ISSUER=files` and `BP_TLS_DIR` to a directory containing regular `tls.crt` and `tls.key` files. Bootstrap checks the certificate's subject alternative names against `backplane.<BP_PUBLIC_DOMAIN>` and, in local mode, `localhost` and `127.0.0.1`. A wildcard covers one DNS label. The directory is mounted read-only at `/certs`; bootstrap also checks readability from a disposable Caddy container before starting. Protect the private key and the directory holding it.
+
+For private ACME, set `BP_TLS_ISSUER=acme`, `BP_ACME_CA` to its HTTPS directory URL, and optionally `BP_ACME_CA_ROOT` to the ACME server's PEM trust root. External account binding needs both `BP_ACME_EAB_KEY_ID` and `BP_ACME_EAB_HMAC`. `BP_ACME_EMAIL` is optional. For an Issuer whose certificate chain is absent from the host trust store, set `BP_TLS_CA` to a PEM CA file for bootstrap's HTTPS probe. Probe trust uses the internal root, then `BP_TLS_CA`, then `BP_ACME_CA_ROOT`, then system roots. Caddy's ACME trust root configures its connection to the directory; it does not install client trust. Public ACME requires reachable ports 80 and 443; DNS-01 is unavailable.
+
+Bootstrap records the certificate overlays in `COMPOSE_FILE` and removes stale managed overlays when the Issuer changes. Certificate files and CA roots remain operator-owned. To replace a certificate, swap the files, run `docker compose exec edge caddy reload --force --config /etc/caddy/Caddyfile --adapter caddyfile` with the recorded environment and project, then rerun bootstrap to verify HTTPS.
+
 ## Verification
 
 Configuration tests render isolated environment files without contacting Docker's daemon; the bootstrap tests use a fake runner and never call Docker:
@@ -110,6 +121,7 @@ Configuration tests render isolated environment files without contacting Docker'
 ```sh
 python3 -m unittest discover -s tests -p 'test_bootstrap*.py'
 bun test infra/compose/compose.test.ts apps/server/platform/config.test.ts
+python3 tests/acceptance/tls-issuers.py
 ```
 
 The disposable listener probes require Docker with journald and the pinned Caddy image already cached. They use a unique project, random loopback ports, a dedicated network with outbound certificate requests blocked, and temporary certificate storage. Only the public CA certificate is exported. No application database or installed deployment is used:
@@ -118,7 +130,7 @@ The disposable listener probes require Docker with journald and the pinned Caddy
 bun tests/acceptance/access-modes.ts
 ```
 
-These three probes cover local dual protocols, verified hostname/localhost/IP certificates, and public HTTP redirects with the health exception. Public certificate issuance and renewal require reachable public DNS and cannot be proven by this isolated probe.
+These probes cover local dual protocols, verified hostname/localhost/IP certificates, public HTTP redirects with the health exception, and a certificate-files listener. The Issuer matrix renders seven mode combinations, validates the six that run Caddy, and compares both default Caddy adapters byte for byte with the pre-T4 main Caddyfile. Public certificate issuance and renewal require reachable public DNS and cannot be proven by these isolated probes.
 
 The existing application ingress acceptance uses a disposable, enrolled local core plus edge deployment with a configured HTTPS address. Supply its matching environment and project, `BP_EDGE_CA_CERT`, `BP_USER_EMAIL`, `BP_USER_PASSWORD`, and `BP_OPERATIONS_TOKEN`, then run `bun tests/acceptance/public-ingress.ts`. It checks cookie/CSRF policy, operator exclusions, actual loopback bindings and SSE lifetime/resume through Caddy. Missing prerequisites fail. For direct application checks against temporary PostgreSQL, run `bun run test apps/server/platform/forwarded-headers.test.ts`.
 

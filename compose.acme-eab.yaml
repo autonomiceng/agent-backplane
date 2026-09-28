@@ -1,0 +1,6 @@
+services:
+  edge:
+    environment:
+      BP_ACME_ACCOUNT: eab
+      BP_ACME_EAB_KEY_ID: ${BP_ACME_EAB_KEY_ID:?BP_ACME_EAB_KEY_ID is required with BP_ACME_EAB_HMAC}
+      BP_ACME_EAB_HMAC: ${BP_ACME_EAB_HMAC:?BP_ACME_EAB_HMAC is required with BP_ACME_EAB_KEY_ID}

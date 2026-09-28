@@ -109,6 +109,7 @@ class BootstrapTests(unittest.TestCase):
                 *(part for name in profiles for part in ("--profile", name)), *extra]
         out = io.StringIO()
         with patch.object(bootstrap, "http_get", http or fake_http("pending", "s3" if "blobs" in profiles else "filesystem")), \
+                patch.object(bootstrap, "probe_edge"), \
                 patch.object(bootstrap.time, "sleep"), contextlib.redirect_stdout(out):
             code = bootstrap.bootstrap(argv, runner)
         return code, json.loads(out.getvalue()), runner.calls
@@ -268,7 +269,7 @@ class BootstrapTests(unittest.TestCase):
             self.bootstrap("--dry-run")
         self.assertEqual(refused.exception.code, "unsupported_setting")
         self.assertIn("BP_AUTH_URL is unsupported, use BP_PUBLIC_URL", refused.exception.detail)
-        self.assertEqual(set(bootstrap.UNSUPPORTED), {"BP_SCHEME", "BP_TLS_ISSUER", "BP_EDGE_CA", "BP_PUBLIC_HOST", "BP_EDGE_BIND_HOST",
+        self.assertEqual(set(bootstrap.UNSUPPORTED), {"BP_SCHEME", "BP_EDGE_CA", "BP_PUBLIC_HOST", "BP_EDGE_BIND_HOST",
                                                       "BP_AUTH_URL", "BP_WORKERD_REPOSITORY", "BP_WORKERD_DIGEST"})
 
     def test_malformed_blob_image_reference_is_refused_before_docker(self):
@@ -367,6 +368,118 @@ class BootstrapTests(unittest.TestCase):
         self.assertIn("Connection refused", error["detail"])
         self.assertTrue(self.env.exists(), "the selection and secrets stay recorded for the rerun")
         self.assertFalse(self.capability.exists())
+
+    def test_tls_issuer_defaults_and_mode_restrictions(self):
+        self.assertEqual(bootstrap.tls_issuer("local", ""), "internal")
+        self.assertEqual(bootstrap.tls_issuer("public", ""), "acme")
+        self.assertEqual(bootstrap.tls_issuer("proxy", "files"), "")
+        for mode, value in (("local", "acme"), ("public", "internal"), ("local", "other")):
+            with self.assertRaises(bootstrap.Refused) as refused:
+                bootstrap.tls_issuer(mode, value)
+            self.assertEqual(refused.exception.code, "invalid_settings")
+        self.env.write_text("BP_ACCESS_MODE=public\nBP_PUBLIC_DOMAIN=example.com\n")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            bootstrap.bootstrap(["--dry-run", "--env-file", str(self.env), "--profile", "edge"])
+        self.assertEqual(json.loads(out.getvalue())["composeFiles"], [str(ROOT / name) for name in ("compose.yaml", "compose.edge.yaml", "compose.public.yaml")])
+        self.env.unlink()
+        code, _, _ = self.bootstrap(profiles=("edge",))
+        self.assertEqual(code, 0)
+        saved = self.env.read_text()
+        self.assertIn("BP_TLS_ISSUER=\n", saved)
+        self.assertNotIn("BP_TLS_ISSUER='internal'", saved)
+        self.env.write_text(saved.replace("BP_ACCESS_MODE=local", "BP_ACCESS_MODE=public")
+                            .replace("BP_PUBLIC_URL='http://localhost'", "BP_PUBLIC_URL='https://backplane.example.com'")
+                            .replace("BP_PUBLIC_DOMAIN=\n", "BP_PUBLIC_DOMAIN=example.com\n"))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            bootstrap.bootstrap(["--dry-run", "--env-file", str(self.env)])
+        self.assertIn(str(ROOT / "compose.public.yaml"), json.loads(out.getvalue())["composeFiles"])
+
+    def test_tls_files_require_key_and_cover_every_site_with_one_label_wildcards(self):
+        directory = self.dir / "certs"
+        directory.mkdir()
+        (directory / "tls.crt").write_text("fixture")
+        access = {"mode": "local", "host": "backplane.example.com"}
+        entries = {"BP_TLS_ISSUER": "files", "BP_TLS_DIR": str(directory)}
+        with self.assertRaises(bootstrap.Refused) as refused:
+            bootstrap.check_tls_inputs(runner_with(), entries, access)
+        self.assertEqual(refused.exception.code, "invalid_settings")
+        (directory / "tls.key").write_text("fixture")
+        def san(argv):
+            return subprocess.CompletedProcess(argv, 0, "X509v3 Subject Alternative Name:\n DNS:*.example.com, DNS:localhost, IP Address:127.0.0.1\n", "")
+        bootstrap.check_tls_inputs(san, entries, access)
+        self.assertTrue(bootstrap.certificate_covers({"*.example.com"}, set(), "backplane.example.com"))
+        self.assertFalse(bootstrap.certificate_covers({"*.example.com"}, set(), "x.backplane.example.com"))
+        self.assertFalse(bootstrap.certificate_covers({"127.0.0.1"}, set(), "127.0.0.1"))
+        with self.assertRaises(bootstrap.Refused) as refused:
+            bootstrap.check_tls_inputs(san, entries, {"mode": "local", "host": "x.backplane.example.com"})
+        self.assertIn("x.backplane.example.com", refused.exception.detail)
+        def dns_ip(argv):
+            return subprocess.CompletedProcess(argv, 0, "DNS:*.example.com, DNS:localhost, DNS:127.0.0.1", "")
+        with self.assertRaises(bootstrap.Refused) as refused:
+            bootstrap.check_tls_inputs(dns_ip, entries, access)
+        self.assertIn("127.0.0.1", refused.exception.detail)
+
+    def test_tls_files_reject_a_mismatched_private_key(self):
+        directory = self.dir / "certs"
+        directory.mkdir()
+        certificate, key = directory / "tls.crt", directory / "tls.key"
+        subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-subj", "/CN=backplane.example.com",
+                        "-keyout", str(key), "-out", str(certificate), "-days", "1",
+                        "-addext", "subjectAltName=DNS:backplane.example.com,DNS:localhost,IP:127.0.0.1"],
+                       check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        entries = {"BP_TLS_ISSUER": "files", "BP_TLS_DIR": str(directory)}
+        access = {"mode": "local", "host": "backplane.example.com"}
+        bootstrap.check_tls_inputs(bootstrap.run, entries, access)
+        subprocess.run(["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048", "-out", str(key)],
+                       check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        with self.assertRaises(bootstrap.Refused) as refused:
+            bootstrap.check_tls_inputs(bootstrap.run, entries, access)
+        self.assertEqual(refused.exception.code, "invalid_settings")
+        self.assertIn("matching certificate and private key", refused.exception.detail)
+
+    def test_private_acme_inputs_and_overlay_selection(self):
+        access = {"mode": "public", "host": "backplane.example.com"}
+        for entries in ({"BP_ACME_CA_ROOT": "/tmp/root.pem"}, {"BP_ACME_EAB_KEY_ID": "only"}, {"BP_ACME_CA": "http://ca.example/directory"}):
+            with self.assertRaises(bootstrap.Refused) as refused:
+                bootstrap.check_tls_inputs(runner_with(), {"BP_TLS_ISSUER": "acme", **entries}, access)
+            self.assertEqual(refused.exception.code, "invalid_settings")
+        bootstrap.check_tls_inputs(runner_with(), {"BP_TLS_ISSUER": "acme", "BP_ACME_CA": "https://ca.example/directory"}, access)
+        self.env.write_text(f"COMPOSE_PROFILES=edge\nCOMPOSE_FILE={ROOT / 'compose.yaml'}:{ROOT / 'compose.edge.yaml'}:{ROOT / 'compose.files.yaml'}:{ROOT / 'compose.dev.yaml'}\n"
+                            "BP_ACCESS_MODE=public\nBP_PUBLIC_DOMAIN=example.com\nBP_ACME_EAB_KEY_ID=fixture\nBP_ACME_EAB_HMAC=fixture\n")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            bootstrap.bootstrap(["--dry-run", "--env-file", str(self.env)])
+        self.assertEqual(json.loads(out.getvalue())["composeFiles"], [str(ROOT / name) for name in
+                         ("compose.yaml", "compose.edge.yaml", "compose.public.yaml", "compose.acme-eab.yaml", "compose.dev.yaml")])
+        self.env.write_text(f"COMPOSE_PROFILES=edge\nCOMPOSE_FILE={ROOT / 'compose.yaml'}\n")
+        with self.assertRaises(bootstrap.Refused) as refused:
+            bootstrap.bootstrap(["--dry-run", "--env-file", str(self.env)])
+        self.assertEqual(refused.exception.code, "selection_conflict")
+
+    def test_probe_trust_order_and_unreadable_mount(self):
+        ca = self.dir / "ca.pem"
+        subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-subj", "/CN=fixture",
+                        "-keyout", str(self.dir / "ca.key"), "-out", str(ca), "-days", "1"], check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        entries = {"BP_TLS_ISSUER": "acme", "BP_TLS_CA": str(ca), "BP_ACME_CA_ROOT": str(ca)}
+        self.assertEqual(bootstrap.probe_trust(entries, runner_with(), []), ca.read_text())
+        del entries["BP_TLS_CA"]
+        self.assertEqual(bootstrap.probe_trust(entries, runner_with(), []), ca.read_text())
+        entries["BP_TLS_ISSUER"] = "files"
+        entries["BP_ACME_CA_ROOT"] = "/deleted/acme-root.pem"
+        self.assertEqual(bootstrap.probe_trust(entries, runner_with(), []), "")
+        entries["BP_TLS_ISSUER"] = "internal"
+        entries["BP_TLS_CA"] = str(ca)
+        def root(argv):
+            return subprocess.CompletedProcess(argv, 0, "internal root", "")
+        self.assertEqual(bootstrap.probe_trust(entries, root, ["docker", "compose"]), "internal root")
+        def denied(argv):
+            return subprocess.CompletedProcess(argv, 1, "", "permission denied")
+        with self.assertRaises(bootstrap.Refused) as refused:
+            bootstrap.check_tls_files_readable(denied, {"BP_TLS_ISSUER": "files"}, ["docker", "compose"])
+        self.assertEqual(refused.exception.code, "tls_files_unreadable")
 
 
 if __name__ == "__main__":

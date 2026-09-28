@@ -78,6 +78,33 @@
 	}
 }
 
+(tls-internal) {
+	tls internal
+}
+(tls-acme) {
+	tls {
+		issuer acme {
+			email "{$BP_ACME_EMAIL}"
+			dir "{$BP_ACME_CA}"
+			import acme-trust-{$BP_ACME_TRUST:system}
+			import acme-account-{$BP_ACME_ACCOUNT:none}
+		}
+	}
+}
+(acme-trust-system) {
+}
+(acme-trust-file) {
+	trusted_roots /certs/acme-ca-root.crt
+}
+(acme-account-none) {
+}
+(acme-account-eab) {
+	eab "{$BP_ACME_EAB_KEY_ID}" "{$BP_ACME_EAB_HMAC}"
+}
+(tls-files) {
+	tls /certs/tls.crt /certs/tls.key
+}
+
 (mode-local) {
 	http://:80 {
 		import access-log
@@ -90,7 +117,7 @@
 		}
 	}
 	https://{$BP_EDGE_HOST}, https://localhost, https://127.0.0.1 {
-		tls internal
+		import tls-{$BP_TLS_ISSUER:internal}
 		import access-log
 		route {
 			import public-status
@@ -112,9 +139,7 @@
 		}
 	}
 	https://{$BP_EDGE_HOST} {
-		tls {
-			issuer acme
-		}
+		import tls-{$BP_TLS_ISSUER:acme}
 		header Strict-Transport-Security "max-age=31536000"
 		import access-log
 		route {

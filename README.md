@@ -52,7 +52,7 @@ A fresh install is minimal. `--profile blobs` adds S3 blob storage on RustFS, `-
 | Localhost only (default) | `local`; core serves HTTP on `127.0.0.1:3000`, `--profile edge` adds HTTP on 80 and self-signed HTTPS on 443 | [Local Mode](docs/operations/ingress.md#local-mode-default) |
 | Private access from your devices over Tailscale | Behind Platform Edge: its `bootstrap.py --tailscale --with backplane` writes `BP_PUBLIC_URL=https://backplane.<tailnet>.ts.net`; no standalone recipe, see why | [Tailscale](docs/operations/ingress.md#tailscale) |
 | Public hostname with Let's Encrypt | `public`, `BP_PUBLIC_DOMAIN`, `BP_BIND_HOST=0.0.0.0`, `--profile edge` | [Public Mode](docs/operations/ingress.md#public-mode) |
-| Corporate CA or certificate files | Not offered by the standalone edge; put the server behind Platform Edge, which has `PE_TLS_ISSUER` | [Behind Platform Edge](docs/operations/ingress.md#behind-platform-edge) |
+| Corporate CA or certificate files | Standalone `edge` with `BP_TLS_ISSUER=acme` or `files` | [Corporate certificates and private ACME](docs/operations/ingress.md#corporate-certificates-and-private-acme) |
 | Behind Platform Edge on a shared host | `proxy` with `BP_PUBLIC_URL`; Edge's bundle installer passes both | [Behind Platform Edge](docs/operations/ingress.md#behind-platform-edge) |
 
 ## What's inside
