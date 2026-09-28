@@ -32,7 +32,7 @@ test("home omits accessible Workspaces or sends Principals and Approvals links t
     const second = renderDashboardHome(client);
     const combined = first + second;
     for (const workspace of [{ id: f.workspaceId, name: "Research" }, other]) {
-      expect(combined).toContain(`<h3>${workspace.name}</h3>`);
+      expect(combined).toContain(`<h3 aria-level="2">${workspace.name}</h3>`);
       for (const screen of ["principals", "approvals"]) {
         const path = `/dashboard/workspaces/${workspace.id}/${screen}`;
         expect(combined).toContain(`href="${path}"`);

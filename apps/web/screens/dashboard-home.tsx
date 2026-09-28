@@ -35,7 +35,7 @@ export function DashboardHomeView({ state, actions }: { state: DashboardHomeStat
       {state.workspaces.length === 0
         ? <p className="pk-notice">{state.page === 0 ? "No Workspaces are available to your account. Ask the person who runs this Backplane to check your Organization access and Workspace setup." : "No more Workspaces. Refresh to see your current access."}</p>
         : <ul className="workspace-list">{state.workspaces.map(workspace => <li className="pk-app" key={workspace.id}>
-          <div className="pk-app-head"><h3>{workspace.name}</h3></div>
+          <div className="pk-app-head"><h3 aria-level={2}>{workspace.name}</h3></div>
           <div className="pk-endpoints"><div className="pk-endpoint"><span>Workspace ID</span><code>{workspace.id}</code></div></div>
           <nav className="pk-app-foot" aria-label={`${workspace.name} Workspace`}>
             <a href={`/dashboard/workspaces/${encodeURIComponent(workspace.id)}/principals`}>Principals</a>
