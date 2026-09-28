@@ -86,7 +86,7 @@ test("dashboard static wiring or Eden pagination includes another Run or misorde
   } finally { try { await f.pool.close(); } finally { await rm(root, { recursive: true, force: true }); } }
 });
 
-test("root redirects to the dashboard and the index carries only a valid configured Platform origin", async () => {
+test("root redirects to a built dashboard and the index carries only a valid configured Platform origin", async () => {
   const root = await mkdtemp(join(tmpdir(), "bp-dashboard-platform-"));
   try {
     const html = '<!doctype html><html><head><title>Agent Backplane</title></head><body></body></html>';
@@ -103,6 +103,8 @@ test("root redirects to the dashboard and the index carries only a valid configu
     expect(page.headers.get("cache-control")).toBe("no-cache");
     expect(page.headers.get("content-type")).toContain("text/html");
     expect(await page.text()).toBe(html.replace("</head>", '<meta name="bp-platform-url" content="https://platform.example.test"></head>'));
+    const unbuilt = new Elysia().use(dashboardRoutes(pathToFileURL(join(root, "missing") + "/"), false, platformUrl));
+    expect((await unbuilt.handle(new Request("http://localhost/"))).status).toBe(404);
     expect(readPlatformUrl({ BP_PLATFORM_URL: "" })).toBeNull();
     for (const value of ["javascript:alert(1)", "https://platform.example.test/console", "https://user@platform.example.test"]) {
       expect(() => readPlatformUrl({ BP_PLATFORM_URL: value })).toThrow("BP_PLATFORM_URL");

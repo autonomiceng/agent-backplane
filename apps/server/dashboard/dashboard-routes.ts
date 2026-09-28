@@ -27,7 +27,10 @@ export function dashboardRoutes(root: URL, production = false, platformUrl: stri
       { headers: { "cache-control": "no-cache", "content-type": "text/html;charset=utf-8" } });
   };
   return new Elysia({ name: "dashboard" })
-    .get("/", () => new Response(null, { status: 302, headers: { location: "/dashboard/" } }), { detail: { hide: true } })
+    // The browser origin lands on the dashboard only while a build is there to serve.
+    .get("/", async () => await Bun.file(new URL("index.html", root)).exists()
+      ? new Response(null, { status: 302, headers: { location: "/dashboard/" } })
+      : new Response("Not found", { status: 404 }), { detail: { hide: true } })
     .get("/dashboard", ({ request }) => serve(request), { detail: { hide: true } })
     .get("/dashboard/*", ({ request }) => serve(request), { detail: { hide: true } });
 }

@@ -30,7 +30,7 @@ export function DashboardHomeView({ state, actions }: { state: DashboardHomeStat
       <p className="pk-notice" data-state="danger" role="alert">Workspaces could not be loaded. Try again. If this continues, contact the person who runs this Backplane.</p>
       <button className="pk-button" onClick={() => { void actions.refresh(); }}>Try again</button>
     </div>}
-    {state.status === "ready" && <section className="pk-card" aria-label="Workspace list">
+    {state.status === "ready" && <section className="pk-card" aria-label="Workspace list"><div className="stack">
       <p className="lead">A Workspace keeps its schemas, Queues, and audit history together. Choose Principals to manage the identities and keys your agents use. Choose Approvals to review pending requests.</p>
       {state.workspaces.length === 0
         ? <p className="pk-notice">{state.page === 0 ? "No Workspaces are available to your account. Ask the person who runs this Backplane to check your Organization access and Workspace setup." : "No more Workspaces. Refresh to see your current access."}</p>
@@ -47,14 +47,14 @@ export function DashboardHomeView({ state, actions }: { state: DashboardHomeStat
         <span> Page {state.page + 1} </span>
         <button className="pk-button" disabled={state.nextCursor === null} onClick={() => { void actions.next(); }}>Next</button>
       </nav>
-    </section>}
-    <section className="pk-card help" aria-labelledby="connect-agent">
+    </div></section>}
+    <section className="pk-card" aria-labelledby="connect-agent"><div className="stack help">
       <h2 className="pk-section-label" id="connect-agent">Connect an agent</h2>
       <p>Each agent uses a Principal with its own key in a Workspace. After setup, add the printed <code>mcpServers.backplane</code> settings to your agent application. They connect it to Backplane using the private credential file saved during setup.</p>
       <p>For the CLI, set <code>BP_CREDENTIALS_FILE</code> to that file. Existing key-based setups use <code>BP_URL</code>, <code>BP_KEY</code>, and <code>BP_WORKSPACE_ID</code>.</p>
       <p><a href="https://github.com/autonomiceng/agent-backplane/blob/main/infra/bootstrap/README.md">Set up agent access</a>{" · "}
         <a href="https://github.com/autonomiceng/agent-backplane/blob/main/skills/backplane/SKILL.md">Agent CLI guide</a></p>
       <p>Open a Run timeline link from your agent to inspect that Run’s activity.</p>
-    </section>
+    </div></section>
   </section>;
 }

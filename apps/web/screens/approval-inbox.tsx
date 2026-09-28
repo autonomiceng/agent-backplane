@@ -31,8 +31,8 @@ export function ApprovalInboxView({ state, actions }: { state: ApprovalState; ac
       const disabled = !!submission || item.decision !== null || item.expired;
       const [badge, label] = item.decision === "approve" ? ["ok", "Approved"] : item.decision === "reject" ? ["danger", "Rejected"]
         : item.expired ? ["disabled", "Expired"] : ["warn", "Pending"];
-      return <article className="pk-card approval" key={item.id} aria-label={`Approval ${item.id}`} data-approval-id={item.id}>
-        <div className="pk-app-head"><h2>Approval {item.id}</h2><span className="pk-badge" data-state={badge}>{label}</span></div>
+      return <article className="pk-card" key={item.id} aria-label={`Approval ${item.id}`} data-approval-id={item.id}><div className="stack">
+        <div className="pk-app-head"><h3>Approval {item.id}</h3><span className="pk-badge" data-state={badge}>{label}</span></div>
         <div className="pk-endpoints">
           <div className="pk-endpoint"><span>Requested by</span><code>{item.requestedBy}</code></div>
           <div className="pk-endpoint"><span>Run</span><code><a href={`/dashboard/workspaces/${state.workspaceId}/runs/${item.requestedRunId}`}>Run {item.requestedRunId}</a></code></div>
@@ -56,7 +56,7 @@ export function ApprovalInboxView({ state, actions }: { state: ApprovalState; ac
         {submission?.phase === "confirmed" && <div className="pk-notice" role="status"><p>200: {submission.result?.decision}</p>
           <p>Released Delivery: {submission.result?.releasedDeliveryId ?? "none"}</p></div>}
         {submission && ["failed", "unknown"].includes(submission.phase) && <button className="pk-button" onClick={() => actions.dismiss(item.id)}>Dismiss submission</button>}
-      </article>;
+      </div></article>;
     })}
     <nav className="pager" aria-label="Approval pages">
       <button className="pk-button" disabled={loading || deciding || state.pagination.page === 0} onClick={() => { void actions.previous(); }}>Previous</button>

@@ -5,7 +5,7 @@ import { DashboardShell } from "../components/dashboard-shell.tsx";
 export function SignIn({ returnTo }: { returnTo: string | null }): ReactNode {
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
-  return <DashboardShell><section className="pk-card sign-in"><h1>Sign in</h1><form onSubmit={async (event) => {
+  return <DashboardShell><div className="sign-in"><section className="pk-card"><div className="stack"><h1>Sign in</h1><form onSubmit={async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
     const data = new FormData(form);
@@ -30,7 +30,7 @@ export function SignIn({ returnTo }: { returnTo: string | null }): ReactNode {
   }}>
     <label>Email<input className="pk-input" name="email" type="email" autoComplete="username" required /></label>
     <label>Password<input className="pk-input" name="password" type="password" autoComplete="current-password" required /></label>
-    <button className="pk-button" disabled={pending}>{pending ? "Signing in" : "Sign in"}</button>
+    <div className="actions"><button className="pk-button" disabled={pending}>{pending ? "Signing in" : "Sign in"}</button></div>
     {error && <p className="pk-notice" data-state="danger" role="alert">{error}</p>}
-  </form></section></DashboardShell>;
+  </form></div></section></div></DashboardShell>;
 }

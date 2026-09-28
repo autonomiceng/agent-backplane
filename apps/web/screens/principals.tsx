@@ -52,7 +52,7 @@ export function PrincipalsView({ state, actions }: { state: PrincipalsState; act
       <span> Page {state.page + 1} </span>
       <button className="pk-button" disabled={pending || loading || state.nextCursor === null} onClick={() => { void actions.next(); }}>Next</button>
     </nav>
-    {selected && <section className="pk-card revocation" aria-label="Principal revocation">
+    {selected && <section className="pk-card" aria-label="Principal revocation"><div className="stack">
       <h2>Revoke {selected.principal.name}</h2>
       <p>Principal: {selected.principal.id}. Displayed key prefix: {selected.principal.credential?.prefix ?? "No key issued"}.</p>
       {selected.phase === "confirming" && <>
@@ -68,6 +68,6 @@ export function PrincipalsView({ state, actions }: { state: PrincipalsState; act
       {selected.phase === "confirmed" && <div className="pk-notice" role="status"><p>Principal revoked.</p>
         <p>{selected.effectsPausedThisRequest} Effects paused by this request.</p>
         <p>Zero does not describe Effects paused by earlier requests.</p></div>}
-    </section>}
+    </div></section>}
   </section>;
 }
