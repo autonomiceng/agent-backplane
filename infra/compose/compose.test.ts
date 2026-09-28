@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { readConfig } from "../../apps/server/platform/config.ts";
@@ -71,7 +71,6 @@ test("TLS overlays mount operator files read-only and pass private ACME settings
   ]);
   expect(files.services.edge.volumes).toContainEqual(expect.objectContaining({
     type: "bind", source: "/tmp/bp-fixture-certs", target: "/certs", read_only: true,
-    bind: { create_host_path: false },
   }));
   const acme = await config(["compose.edge.yaml", "compose.public.yaml", "compose.acme-ca-root.yaml", "compose.acme-eab.yaml"], "edge", [
     "BP_ACCESS_MODE=public", "BP_PUBLIC_DOMAIN=example.com", "BP_PUBLIC_URL=https://backplane.example.com",
@@ -81,8 +80,10 @@ test("TLS overlays mount operator files read-only and pass private ACME settings
     BP_ACME_EAB_KEY_ID: "fixture-id", BP_ACME_EAB_HMAC: "fixture-hmac" });
   expect(acme.services.edge.volumes).toContainEqual(expect.objectContaining({
     type: "bind", source: "/tmp/bp-fixture-ca.pem", target: "/certs/acme-ca-root.crt", read_only: true,
-    bind: { create_host_path: false },
   }));
+  for (const overlay of ["compose.files.yaml", "compose.acme-ca-root.yaml"]) {
+    expect(await readFile(join(root, overlay), "utf8")).toContain("create_host_path: false");
+  }
 });
 
 test("compose publishes only the expected loopback ports", async () => {
