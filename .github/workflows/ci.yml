@@ -1,6 +1,10 @@
 name: CI
 
-on: [push, pull_request]
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -20,7 +24,49 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run check
       - run: python3 -m unittest discover -s tests -p 'test_bootstrap*.py'
-      - run: python3 scripts/bootstrap.py --dry-run --capability-file /tmp/cap
+      - name: Validate isolated bootstrap plan
+        run: |
+          render_dir="$(mktemp -d "$RUNNER_TEMP/backplane-render.XXXXXX")"
+          trap 'rm -rf "$render_dir"' EXIT
+          python3 - "$render_dir" <<'PY'
+          import os
+          import sys
+          from pathlib import Path
+
+          root = Path(sys.argv[1])
+          template = Path('.env.example').read_text()
+          for key, value in {
+              'BP_DATA_DIR': root / 'data',
+              'BP_BACKUP_DIR': root / 'backups',
+          }.items():
+              old = f'{key}=' + ('./data' if key == 'BP_DATA_DIR' else '')
+              assert template.count(old + '\n') == 1
+              template = template.replace(old + '\n', f'{key}={value}\n', 1)
+          env_file = root / '.env'
+          env_file.write_text(template)
+          os.chmod(env_file, 0o600)
+          PY
+          cp "$render_dir/.env" "$render_dir/.env.before"
+          python3 scripts/bootstrap.py --dry-run --env-file "$render_dir/.env" \
+            --capability-file "$render_dir/capability" --compose-project backplane-ci-render \
+            > "$render_dir/plan.json"
+          cmp "$render_dir/.env.before" "$render_dir/.env"
+          test ! -e "$render_dir/.env.lock"
+          test ! -e "$render_dir/capability"
+          test ! -e "$render_dir/data"
+          python3 - "$render_dir" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          root = Path(sys.argv[1])
+          plan = json.loads((root / 'plan.json').read_text())
+          assert plan['dryRun'] is True
+          assert plan['envFile'] == str(root / '.env')
+          assert plan['project'] == 'backplane-ci-render'
+          assert plan['profiles'] == []
+          assert plan['backupDir'] == str(root / 'backups')
+          PY
       # Tests start embedded PostgreSQL; no service container is needed.
       # Host rollout acceptance stays separate; the isolated storage/runtime gates run below.
       - run: bun run test

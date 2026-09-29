@@ -33,13 +33,11 @@ You need Docker with the Compose plugin, Python 3.11 and a Linux host with journ
 ```sh
 git clone https://github.com/autonomiceng/agent-backplane.git && cd agent-backplane
 python3 scripts/bootstrap.py --capability-file "$HOME/.bp-enrollment"
-# then run the `next` command bootstrap printed, for example:
-BP_SERVER_IMAGE=<the server image> docker compose -f compose.yaml -f compose.enroll.yaml run --rm --user "$(id -u):$(id -g)" \
-  -v "$HOME/.bp-enrollment:/tmp/capability:ro" -v "$HOME/.local/state/backplane:$HOME/.local/state/backplane" \
-  -e BP_DATA_DIR="$HOME/.local/state/backplane" enroll --url http://localhost:3000 --email you@example.com
 ```
 
-Backups land in `./backups` beside `.env` until you pass `--backup-dir` with an encrypted, off-host mount. The first command writes `.env`, creates the `platform` network with the shared allocation (`BP_PLATFORM_SUBNET=172.30.0.0/24`, `BP_PLATFORM_IP_RANGE=172.30.0.128/25`), starts Postgres and the server, waits for them and prints the enrollment command. The second enrolls you as the first user and creates a Workspace and a Principal. Paste the printed `mcpServers.backplane` block into your agent's `.mcp.json`, and open `http://localhost:3000/` (it redirects to the dashboard). Agent machines run the `bp` CLI from a Bun install of this checkout (`bun install`, then link `packages/cli/runtime/main.ts` as `bp`) or the compiled artifact; see [agent client setup](skills/backplane/references/client-setup.md).
+Backups land in `./backups` beside `.env` until you pass `--backup-dir` with an encrypted, off-host mount. Bootstrap writes `.env`, creates the `platform` network with the shared allocation (`BP_PLATFORM_SUBNET=172.30.0.0/24`, `BP_PLATFORM_IP_RANGE=172.30.0.128/25`), starts Postgres and the server, waits for them and prints a JSON `next` command. **Run that exact command** after replacing `USER_EMAIL` with your email; enter the password when prompted. It uses the selected env file, Compose project, server image and private capability path to enroll the first User and create a Workspace and Principal. Enrollment is required before agents can connect. Paste the resulting `mcpServers.backplane` block into your agent's `.mcp.json`, and open `http://localhost:3000/` (it redirects to the dashboard). Agent machines run the `bp` CLI from a Bun install of this checkout (`bun install`, then link `packages/cli/runtime/main.ts` as `bp`) or the compiled artifact; see [agent client setup](skills/backplane/references/client-setup.md).
+
+For a different env file, pass `--env-file /path/to/backplane.env` to bootstrap and keep using that same file for upgrades. Bootstrap's printed enrollment command includes the selected file. See [bootstrap and enrollment](infra/bootstrap/README.md) for the complete enrollment flow.
 
 A fresh install is minimal. `--profile blobs` adds S3 blob storage on RustFS, `--profile compute` a workerd sandbox for small functions, and `--profile edge` a standalone Caddy. See [bootstrap and enrollment](infra/bootstrap/README.md).
 
@@ -49,8 +47,8 @@ A fresh install is minimal. `--profile blobs` adds S3 blob storage on RustFS, `-
 
 | You want | Settings | Read |
 | --- | --- | --- |
-| Localhost only (default) | `local`; core serves HTTP on `127.0.0.1:3000`, `--profile edge` adds HTTP on 80 and self-signed HTTPS on 443 | [Local Mode](docs/operations/ingress.md#local-mode-default) |
-| Private access from your devices over Tailscale | Behind Platform Edge: its `bootstrap.py --tailscale --with backplane` writes `BP_PUBLIC_URL=https://backplane.<tailnet>.ts.net`; no standalone recipe, see why | [Tailscale](docs/operations/ingress.md#tailscale) |
+| Localhost only (default) | `local`; core serves HTTP on `127.0.0.1:3000`, `--profile edge` adds HTTP on 80 and internal-CA HTTPS on 443 | [Local Mode](docs/operations/ingress.md#local-mode-default) |
+| Private access from your devices over Tailscale | Behind Platform Edge: its `bootstrap.py --tailscale --with backplane --capability-file PATH` writes `BP_PUBLIC_URL=https://backplane.<tailnet>.ts.net`; see the bundle setup | [Tailscale](docs/operations/ingress.md#tailscale) |
 | Public hostname with Let's Encrypt | `public`, `BP_PUBLIC_DOMAIN`, `BP_BIND_HOST=0.0.0.0`, `--profile edge` | [Public Mode](docs/operations/ingress.md#public-mode) |
 | Corporate CA or certificate files | Standalone `edge` with `BP_TLS_ISSUER=acme` or `files` | [Corporate certificates and private ACME](docs/operations/ingress.md#corporate-certificates-and-private-acme) |
 | Behind Platform Edge on a shared host | `proxy` with `BP_PUBLIC_URL`; Edge's bundle installer passes both | [Behind Platform Edge](docs/operations/ingress.md#behind-platform-edge) |
@@ -81,11 +79,11 @@ Each push to `main` and each `vX.Y.Z` release tag publishes `ghcr.io/autonomicen
 ```sh
 scripts/backup.sh --fenced --env-file .env   # the rollback boundary
 git pull
-docker compose pull
-python3 scripts/bootstrap.py
+docker compose --env-file .env pull
+python3 scripts/bootstrap.py --env-file .env --capability-file "$HOME/.bp-enrollment"
 ```
 
-`git pull` brings new pins ([published images](docs/operations/upgrade.md) explains the tags); `docker compose pull` fetches them; bootstrap reuses the recorded selection, recreates what changed and waits for readiness. When the release notes name a migration that takes exclusive locks, stop the server first as [health](docs/operations/health.md#scheduled-retention) describes. An installation that ran the version 1 status timer retires it once with `scripts/retire-status-timer.sh` ([public status](docs/operations/health.md#public-status)); one that ran the internal gateway behind Edge follows [upgrading from the internal gateway](docs/operations/ingress.md#upgrading-from-the-internal-gateway).
+Use the original env file in all three commands that accept `--env-file`. The saved `COMPOSE_FILE`, `COMPOSE_PROFILES` and project name select the same services for pull and bootstrap. `git pull` brings new digest pins ([published images](docs/operations/upgrade.md) explains the tags); Compose fetches the selected images; bootstrap preserves the recorded capabilities, recreates what changed and waits for readiness. Complete `BP_*_IMAGE` references in the env file continue to override shipped pins; clear an override deliberately to adopt a new default. Keep the capability path available if enrollment is still pending. When the release notes name a migration that takes exclusive locks, stop the server first as [health](docs/operations/health.md#scheduled-retention) describes. An installation that ran the version 1 status timer retires it once with `scripts/retire-status-timer.sh` ([public status](docs/operations/health.md#public-status)); one that ran the internal gateway behind Edge follows [upgrading from the internal gateway](docs/operations/ingress.md#upgrading-from-the-internal-gateway).
 
 ## Day two
 
@@ -125,7 +123,7 @@ For host development, pass the cluster-owner URL only to migration:
 `BP_ADMIN_DATABASE_URL=postgres://postgres:YOUR_PASSWORD@localhost:5432/backplane bun run migrate`.
 Set `BP_DATABASE_URL` to the separate `bp_server` login before `bun run dev`.
 
-CI runs both Bun gates, the bootstrap unit tests and a bootstrap dry run, the storage acceptance scripts, both image builds with the workerd gates, and both backup drills on every push and pull request. See [CONTRIBUTING.md](CONTRIBUTING.md).
+CI runs both Bun gates, the bootstrap unit tests and an isolated bootstrap dry run, the storage acceptance scripts, both image builds with the workerd gates, and both backup drills on pull requests and pushes to `main`. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Security
 
