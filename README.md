@@ -48,7 +48,7 @@ A fresh install is minimal. `--profile blobs` adds S3 blob storage on RustFS, `-
 | You want | Settings | Read |
 | --- | --- | --- |
 | Localhost only (default) | `local`; core serves HTTP on `127.0.0.1:3000`, `--profile edge` adds HTTP on 80 and internal-CA HTTPS on 443 | [Local Mode](docs/operations/ingress.md#local-mode-default) |
-| Private access from your devices over Tailscale | Behind Platform Edge: its `bootstrap.py --tailscale --with backplane --capability-file PATH` writes `BP_PUBLIC_URL=https://backplane.<tailnet>.ts.net`; see the bundle setup | [Tailscale](docs/operations/ingress.md#tailscale) |
+| Private access from your devices over Tailscale | `proxy` behind Platform Edge: its `bootstrap.py --tailscale --with backplane --capability-file PATH` writes `BP_PUBLIC_URL=https://backplane.<tailnet>.ts.net`; see the bundle setup | [Tailscale](docs/operations/ingress.md#tailscale) |
 | Public hostname with Let's Encrypt | `public`, `BP_PUBLIC_DOMAIN`, `BP_BIND_HOST=0.0.0.0`, `--profile edge` | [Public Mode](docs/operations/ingress.md#public-mode) |
 | Corporate CA or certificate files | Standalone `edge` with `BP_TLS_ISSUER=acme` or `files` | [Corporate certificates and private ACME](docs/operations/ingress.md#corporate-certificates-and-private-acme) |
 | Behind Platform Edge on a shared host | `proxy` with `BP_PUBLIC_URL`; Edge's bundle installer passes both | [Behind Platform Edge](docs/operations/ingress.md#behind-platform-edge) |
@@ -79,11 +79,11 @@ Each push to `main` and each `vX.Y.Z` release tag publishes `ghcr.io/autonomicen
 ```sh
 scripts/backup.sh --fenced --env-file .env   # the rollback boundary
 git pull
-docker compose --env-file .env pull
+docker compose --env-file .env pull --policy missing
 python3 scripts/bootstrap.py --env-file .env --capability-file "$HOME/.bp-enrollment"
 ```
 
-Use the original env file in all three commands that accept `--env-file`. The saved `COMPOSE_FILE`, `COMPOSE_PROFILES` and project name select the same services for pull and bootstrap. `git pull` brings new digest pins ([published images](docs/operations/upgrade.md) explains the tags); Compose fetches the selected images; bootstrap preserves the recorded capabilities, recreates what changed and waits for readiness. Complete `BP_*_IMAGE` references in the env file continue to override shipped pins; clear an override deliberately to adopt a new default. Keep the capability path available if enrollment is still pending. When the release notes name a migration that takes exclusive locks, stop the server first as [health](docs/operations/health.md#scheduled-retention) describes. An installation that ran the version 1 status timer retires it once with `scripts/retire-status-timer.sh` ([public status](docs/operations/health.md#public-status)); one that ran the internal gateway behind Edge follows [upgrading from the internal gateway](docs/operations/ingress.md#upgrading-from-the-internal-gateway).
+Use the original env file in all three commands that accept `--env-file`. The saved `COMPOSE_FILE`, `COMPOSE_PROFILES` and project name select the same services for pull and bootstrap. `git pull` brings new digest pins ([published images](docs/operations/upgrade.md) explains the tags); Compose fetches missing selected images while retaining images already present locally; bootstrap preserves the recorded capabilities, recreates what changed and waits for readiness. Complete `BP_*_IMAGE` references in the env file continue to override shipped pins. An explicit `BP_WORKERD_IMAGE` is operator-managed and must already exist locally; `--policy missing` leaves it there. Clear an override deliberately to adopt a new default. Keep the capability path available if enrollment is still pending. When the release notes name a migration that takes exclusive locks, stop the server first as [health](docs/operations/health.md#scheduled-retention) describes. An installation that ran the version 1 status timer retires it once with `scripts/retire-status-timer.sh` ([public status](docs/operations/health.md#public-status)); one that ran the internal gateway behind Edge follows [upgrading from the internal gateway](docs/operations/ingress.md#upgrading-from-the-internal-gateway).
 
 ## Day two
 

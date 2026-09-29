@@ -22,7 +22,14 @@ jobs:
         with:
           bun-version: "1.4.2"
       - run: bun install --frozen-lockfile
+      - name: Check out canonical conventions and UI kit
+        run: |
+          git clone --filter=blob:none --no-tags --single-branch \
+            https://github.com/autonomiceng/platform-edge.git "$RUNNER_TEMP/platform-edge"
+          git -C "$RUNNER_TEMP/platform-edge" checkout --detach df1df93e18f3c56eb2234f7d04f23e996f36e611
       - run: bun run check
+        env:
+          PLATFORM_EDGE_DIR: ${{ runner.temp }}/platform-edge
       - run: python3 -m unittest discover -s tests -p 'test_bootstrap*.py'
       - name: Validate isolated bootstrap plan
         run: |
@@ -47,13 +54,15 @@ jobs:
           os.chmod(env_file, 0o600)
           PY
           cp "$render_dir/.env" "$render_dir/.env.before"
-          python3 scripts/bootstrap.py --dry-run --env-file "$render_dir/.env" \
+          XDG_STATE_HOME="$render_dir/state" python3 scripts/bootstrap.py --dry-run --env-file "$render_dir/.env" \
             --capability-file "$render_dir/capability" --compose-project backplane-ci-render \
             > "$render_dir/plan.json"
           cmp "$render_dir/.env.before" "$render_dir/.env"
           test ! -e "$render_dir/.env.lock"
           test ! -e "$render_dir/capability"
           test ! -e "$render_dir/data"
+          test ! -e "$render_dir/backups"
+          test ! -e "$render_dir/state"
           python3 - "$render_dir" <<'PY'
           import json
           import sys
