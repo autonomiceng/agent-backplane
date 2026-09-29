@@ -1,21 +1,20 @@
 # Model routing for agent-backplane
 
-Routing for every delegation from this repo, plus the risk paths and the brief templates every delegation carries. Launch mechanics: devloop `docs/agents/skills/codex-exec/SKILL.md`.
+Routing for every delegation from this repo, plus the risk paths and the brief templates every delegation carries. Launch durable jobs through `devloop agent`.
 
 ## Routing
 
-Decided by the Owner 2026-09-16 for the three stack repos (agent-backplane, llm-gateway-stack, observability-stack).
+Decided by the Owner 2026-09-28 for the three stack repos (agent-backplane, llm-gateway-stack, observability-stack).
 
 | Work | Model + effort | Verified by |
 | --- | --- | --- |
-| Orchestration, design, plans, prose, UI, AGENTS.md | Claude Fable 5.1 | gpt-6 high |
-| Final review of a risk path (below) or anything touching persistent data | Claude Fable 5.1 | none; this is the last gate |
-| Red team, design review, high-risk implementation (risk paths, Compose, bootstrap, migrations) | gpt-6 high | Claude Fable 5.1 |
-| Routine and mechanical implementation | gpt-5.6-sol medium | gpt-6 medium or Claude Fable 5.1 |
+| Medium and small implementation, prose, agent instructions | GPT-6 Sol high | GPT-5.6 Sol high |
+| Difficult planning and code, including risk paths, Compose, bootstrap and migrations | GPT-6 Astra high | GPT-6 Sol high |
+| UI design and implementation | Claude Opus 5.5 high | GPT-6 Astra high |
 
 Rules:
 
-- The verifier is from a different model family than the implementer when possible. If tokens or a service are unavailable, use the best available and say so in the report.
+- If the routed model is unavailable, use the best available and name the substitution in the report.
 - A verifier never sees the implementer's reasoning, only the diff and the brief. Refutation mandate, at most ten findings, each with an exact fix.
 - At most two concurrent workers on one host.
 - Launch durable jobs through `devloop agent` (skill: `codex-exec`) and wait in the background.
@@ -23,7 +22,7 @@ Rules:
 
 ## Risk paths
 
-A slice that touches any of these is high risk and gets a Fable review before merge:
+A slice that touches any of these is high risk and gets the difficult-code reviewer before merge:
 
 - Run context propagation and audit stamping (ADR-0001)
 - The SQL executor, statement allowlist, search_path, executor role (ADR-0004)
